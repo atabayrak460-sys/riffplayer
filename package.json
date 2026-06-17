@@ -1,0 +1,12 @@
+{
+  "name": "cadence",
+  "private": true,
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "server": "npm --workspace server run dev",
+    "web": "npm --workspace web run dev"
+  }
+}
