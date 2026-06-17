@@ -1,0 +1,140 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type { FastifyInstance } from 'fastify';
+import { buildApp } from '../../app.js';
+import { closeDb, getDb } from '../../db/database.js';
+import { seedLibrary, authParams } from './helpers.js';
+
+let app: FastifyInstance;
+let ids: ReturnType<typeof seedLibrary>;
+
+beforeEach(async () => {
+  app = await buildApp({ dbPath: ':memory:' });
+  await app.ready();
+  ids = seedLibrary(getDb());
+});
+
+afterEach(async () => {
+  await app.close();
+  closeDb();
+});
+
+const auth = authParams();
+
+function sr(body: string) {
+  return (JSON.parse(body) as Record<string, Record<string, unknown>>)['subsonic-response'];
+}
+
+describe('getLicense', () => {
+  it('returns a valid license', async () => {
+    const res = await app.inject({ url: `/rest/getLicense.view?${auth}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    expect((r.license as Record<string, unknown>).valid).toBe(true);
+  });
+});
+
+describe('getMusicFolders', () => {
+  it('lists configured folders', async () => {
+    const res = await app.inject({ url: `/rest/getMusicFolders.view?${auth}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const folders = (r.musicFolders as Record<string, unknown[]>).musicFolder;
+    expect(folders.length).toBeGreaterThan(0);
+  });
+});
+
+describe('getArtists', () => {
+  it('returns indexed artists', async () => {
+    const res = await app.inject({ url: `/rest/getArtists.view?${auth}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const artists = (r.artists as Record<string, unknown>);
+    expect(artists).toBeDefined();
+  });
+});
+
+describe('getIndexes', () => {
+  it('returns artist indexes', async () => {
+    const res = await app.inject({ url: `/rest/getIndexes.view?${auth}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const indexes = (r.indexes as Record<string, unknown>);
+    expect(indexes).toBeDefined();
+  });
+});
+
+describe('getArtist', () => {
+  it('returns an artist with albums', async () => {
+    const res = await app.inject({ url: `/rest/getArtist.view?${auth}&id=${ids.artistId}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const artist = r.artist as Record<string, unknown>;
+    expect(artist.name).toBe('Test Artist');
+    expect((artist.album as unknown[]).length).toBe(1);
+  });
+
+  it('returns error for unknown artist', async () => {
+    const res = await app.inject({ url: `/rest/getArtist.view?${auth}&id=99999` });
+    const r = sr(res.body);
+    expect(r.status).toBe('failed');
+    expect((r.error as Record<string, unknown>).code).toBe(70);
+  });
+});
+
+describe('getAlbum', () => {
+  it('returns an album with songs', async () => {
+    const res = await app.inject({ url: `/rest/getAlbum.view?${auth}&id=${ids.albumId}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const album = r.album as Record<string, unknown>;
+    expect(album.name).toBe('Test Album');
+    expect((album.song as unknown[]).length).toBe(1);
+  });
+});
+
+describe('getSong', () => {
+  it('returns a song with correct fields', async () => {
+    const res = await app.inject({ url: `/rest/getSong.view?${auth}&id=${ids.trackId}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const song = r.song as Record<string, unknown>;
+    expect(song.title).toBe('Test Track');
+    expect(song.type).toBe('music');
+    expect(song.isVideo).toBe(false);
+    expect(song.suffix).toBe('mp3');
+  });
+});
+
+describe('getAlbumList2', () => {
+  it('returns albums (newest)', async () => {
+    const res = await app.inject({ url: `/rest/getAlbumList2.view?${auth}&type=newest` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const list = (r.albumList2 as Record<string, unknown[]>).album;
+    expect(list.length).toBe(1);
+  });
+
+  it('returns albums (random)', async () => {
+    const res = await app.inject({ url: `/rest/getAlbumList2.view?${auth}&type=random` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+  });
+});
+
+describe('getMusicDirectory', () => {
+  it('browses an artist directory', async () => {
+    const res = await app.inject({ url: `/rest/getMusicDirectory.view?${auth}&id=${ids.artistId}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const dir = r.directory as Record<string, unknown>;
+    expect((dir.child as unknown[]).length).toBe(1);
+  });
+
+  it('browses an album directory', async () => {
+    const res = await app.inject({ url: `/rest/getMusicDirectory.view?${auth}&id=${ids.albumId}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const dir = r.directory as Record<string, unknown>;
+    expect((dir.child as unknown[]).length).toBe(1);
+  });
+});

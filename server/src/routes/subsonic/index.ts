@@ -1,6 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { sendOk, sendError, SubsonicErrorCode } from './response.js';
 import { subsonicAuth } from '../../auth/preHandler.js';
+import { browsePlugin } from './endpoints/browse.js';
+import { searchPlugin } from './endpoints/search.js';
+import { favoritesPlugin } from './endpoints/favorites.js';
+import { playlistsPlugin } from './endpoints/playlists.js';
 
 interface SubsonicQuery {
   f?: string;
@@ -19,6 +23,11 @@ export async function subsonicPlugin(app: FastifyInstance): Promise<void> {
   // All other Subsonic endpoints require auth
   app.register(async (api) => {
     api.addHook('preHandler', subsonicAuth);
+
+    api.register(browsePlugin);
+    api.register(searchPlugin);
+    api.register(favoritesPlugin);
+    api.register(playlistsPlugin);
 
     // Catch-all for unrecognised endpoints — returns a proper Subsonic error
     // instead of a raw Fastify 404. Must be registered last in this scope.
