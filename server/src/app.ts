@@ -4,6 +4,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import { initDb } from './db/database.js';
 import { runMigrations } from './db/migrate.js';
 import { subsonicPlugin } from './routes/subsonic/index.js';
+import { ensureAdminUser } from './auth/seed.js';
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -22,6 +23,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
   const dbPath = options.dbPath ?? process.env.DB_PATH ?? path.join(process.cwd(), 'cadence.db');
   const db = initDb(dbPath);
   await runMigrations(db, MIGRATIONS_DIR);
+  ensureAdminUser(db);
 
   app.register(subsonicPlugin, { prefix: '/rest' });
 

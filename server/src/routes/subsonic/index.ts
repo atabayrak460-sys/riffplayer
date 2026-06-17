@@ -1,21 +1,32 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { sendOk } from './response.js';
+import { sendOk, sendError, SubsonicErrorCode } from './response.js';
+import { subsonicAuth } from '../../auth/preHandler.js';
 
 interface SubsonicQuery {
   f?: string;
 }
 
 export async function subsonicPlugin(app: FastifyInstance): Promise<void> {
-  const pingHandler = (
-    request: FastifyRequest<{ Querystring: SubsonicQuery }>,
-    reply: FastifyReply,
-  ): void => {
-    sendOk(reply, request.query.f);
-  };
-
+  // ping is intentionally unauthenticated — clients use it to test connectivity
   app.route({
     method: ['GET', 'POST'],
     url: '/ping.view',
-    handler: pingHandler,
+    handler: (request: FastifyRequest<{ Querystring: SubsonicQuery }>, reply: FastifyReply) => {
+      sendOk(reply, request.query.f);
+    },
+  });
+
+  // All other Subsonic endpoints require auth
+  app.register(async (api) => {
+    api.addHook('preHandler', subsonicAuth);
+
+    // Catch-all for unrecognised endpoints — returns a proper Subsonic error
+    // instead of a raw Fastify 404. Must be registered last in this scope.
+    api.all('*', (request: FastifyRequest<{ Querystring: SubsonicQuery }>, reply: FastifyReply) => {
+      sendError(reply, request.query.f, {
+        code: SubsonicErrorCode.DATA_NOT_FOUND,
+        message: 'Unknown or unimplemented endpoint',
+      });
+    });
   });
 }
