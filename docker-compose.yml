@@ -1,0 +1,25 @@
+services:
+  cadence:
+    build: .
+    ports:
+      - "4533:4533"
+    environment:
+      DB_PATH: /data/cadence.db
+    volumes:
+      - cadence_data:/data
+      # Mount your music library here (read-only):
+      # - /path/to/music:/music:ro
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:4533/rest/ping.view?f=json').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  cadence_data:

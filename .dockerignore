@@ -1,0 +1,8 @@
+node_modules
+server/dist
+.git
+*.db
+*.db-shm
+*.db-wal
+covers/
+**/.gitkeep
