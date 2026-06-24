@@ -114,11 +114,11 @@ describe('Subsonic auth preHandler', () => {
       method: 'GET',
       url: `/rest/getLicense.view?f=json&u=admin&t=${token}&s=${salt}`,
     });
-    // Auth passed → catch-all fires → DATA_NOT_FOUND (70), not WRONG_CREDENTIALS (40)
+    // getLicense is now implemented — auth success returns status:'ok'
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body)['subsonic-response'];
-    expect(body.status).toBe('failed');
-    expect(body.error.code).toBe(70); // DATA_NOT_FOUND — auth succeeded, endpoint just isn't registered yet
+    expect(body.status).toBe('ok');
+    expect((body.license as Record<string, unknown>).valid).toBe(true);
   });
 
   it('accepts OpenSubsonic API key auth', async () => {
@@ -140,7 +140,6 @@ describe('Subsonic auth preHandler', () => {
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body)['subsonic-response'];
-    expect(body.status).toBe('failed');
-    expect(body.error.code).toBe(70); // DATA_NOT_FOUND — auth succeeded
+    expect(body.status).toBe('ok'); // API key auth succeeded
   });
 });

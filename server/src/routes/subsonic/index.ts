@@ -6,6 +6,7 @@ import { searchPlugin } from './endpoints/search.js';
 import { favoritesPlugin } from './endpoints/favorites.js';
 import { playlistsPlugin } from './endpoints/playlists.js';
 import { streamPlugin } from './endpoints/stream.js';
+import { coverArtPlugin } from './endpoints/coverArt.js';
 
 interface SubsonicQuery {
   f?: string;
@@ -30,6 +31,7 @@ export async function subsonicPlugin(app: FastifyInstance): Promise<void> {
     api.register(favoritesPlugin);
     api.register(playlistsPlugin);
     api.register(streamPlugin);
+    api.register(coverArtPlugin);
 
     // Catch-all for unrecognised endpoints — returns a proper Subsonic error
     // instead of a raw Fastify 404. Must be registered last in this scope.
