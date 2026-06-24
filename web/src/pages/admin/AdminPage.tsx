@@ -1,0 +1,37 @@
+import { NavLink, Outlet, Navigate } from 'react-router-dom';
+import { useAuthStore } from '../../store/auth';
+
+const TABS = [
+  { to: '/admin/users', label: 'Users' },
+  { to: '/admin/libraries', label: 'Libraries' },
+  { to: '/admin/settings', label: 'Settings' },
+];
+
+export function AdminPage() {
+  const user = useAuthStore((s) => s.user);
+  if (user?.role !== 'admin') return <Navigate to="/albums" replace />;
+
+  return (
+    <div className="p-6">
+      <h1 className="text-2xl font-bold text-white mb-6">Admin</h1>
+      <div className="flex gap-1 mb-8 border-b border-zinc-800">
+        {TABS.map(({ to, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              `px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                isActive
+                  ? 'border-brand text-brand'
+                  : 'border-transparent text-zinc-400 hover:text-white'
+              }`
+            }
+          >
+            {label}
+          </NavLink>
+        ))}
+      </div>
+      <Outlet />
+    </div>
+  );
+}

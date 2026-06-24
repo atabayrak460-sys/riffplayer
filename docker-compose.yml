@@ -1,13 +1,18 @@
 services:
   cadence:
     build: .
+    image: cadence:latest
     ports:
       - "4533:4533"
     environment:
       DB_PATH: /data/cadence.db
+      COVERS_DIR: /data/covers
+      # Override defaults before first run:
+      # CADENCE_ADMIN_USER: admin
+      # CADENCE_ADMIN_PASSWORD: changeme
     volumes:
       - cadence_data:/data
-      # Mount your music library here (read-only):
+      # Mount your music library here (read-only is fine):
       # - /path/to/music:/music:ro
     restart: unless-stopped
     healthcheck:
@@ -18,7 +23,7 @@ services:
         - "fetch('http://localhost:4533/rest/ping.view?f=json').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"
       interval: 30s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 3
 
 volumes:

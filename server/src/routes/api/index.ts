@@ -3,6 +3,10 @@ import path from 'path';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../db/database.js';
 import { subsonicAuth } from '../../auth/preHandler.js';
+import { signToken, verifyToken } from '../../auth/jwt.js';
+import { decryptPassword, hashPassword, encryptPassword, verifyPasswordHash } from '../../auth/crypto.js';
+import { getOrCreateServerSecret } from '../../auth/seed.js';
+import { scanLibrary } from '../../indexer/scan.js';
 
 function getCoversDir(): string {
   return process.env.COVERS_DIR ?? path.join(process.cwd(), 'covers');
@@ -12,27 +16,265 @@ function jsonError(reply: FastifyReply, statusCode: number, message: string): vo
   reply.code(statusCode).send({ error: message });
 }
 
+// ── Auth preHandler (Bearer JWT preferred; Subsonic fallback) ─────────────────
+
+async function apiAuth(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    try {
+      const payload = verifyToken(token);
+      const db = getDb();
+      const user = db
+        .prepare('SELECT id, username, role FROM users WHERE id = ?')
+        .get(Number(payload.sub)) as { id: number; username: string; role: string } | undefined;
+      if (!user) return reply.code(401).send({ error: 'Unauthorized' }) as unknown as void;
+      req.subsonicUser = user;
+      return;
+    } catch {
+      return reply.code(401).send({ error: 'Invalid or expired token' }) as unknown as void;
+    }
+  }
+  // Fall back to Subsonic token auth (supports existing integrations)
+  await subsonicAuth(req, reply);
+}
+
+function requireAdmin(req: FastifyRequest, reply: FastifyReply, done: () => void): void {
+  if (req.subsonicUser?.role !== 'admin') {
+    reply.code(403).send({ error: 'Admin access required' });
+    return;
+  }
+  done();
+}
+
+// ── Plugin ────────────────────────────────────────────────────────────────────
+
 export async function apiPlugin(app: FastifyInstance): Promise<void> {
-  // All /api/v1 routes require Subsonic auth (JWT will replace this in Phase 4)
-  app.addHook('preHandler', async (req, reply) => {
-    await subsonicAuth(req, reply);
+
+  // ── POST /api/v1/auth/login — exchange credentials for a JWT ───────────────
+  app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { username, password } = req.body as { username?: string; password?: string };
+    if (!username || !password)
+      return jsonError(reply, 400, 'username and password required');
+
+    const db = getDb();
+    const user = db
+      .prepare('SELECT id, username, role, subsonic_token, password_hash FROM users WHERE username = ? COLLATE NOCASE')
+      .get(username) as { id: number; username: string; role: string; subsonic_token: string | null; password_hash: string } | undefined;
+
+    if (!user) return jsonError(reply, 401, 'Wrong username or password');
+
+    // Verify via decrypted subsonic_token or a dedicated hash
+    let valid = false;
+    if (user.subsonic_token) {
+      try {
+        const secret = getOrCreateServerSecret(db);
+        const plain = decryptPassword(user.subsonic_token, secret);
+        valid = plain === password;
+      } catch {
+        valid = false;
+      }
+    }
+    // Also try bcrypt hash (future-proof)
+    if (!valid) {
+      valid = verifyPasswordHash(password, user.password_hash);
+    }
+
+    if (!valid) return jsonError(reply, 401, 'Wrong username or password');
+
+    const token = signToken(user);
+    reply.send({ token, user: { id: user.id, username: user.username, role: user.role } });
   });
 
-  // ── PUT /api/v1/playlists/:id/tracks ───────────────────────────────────────
-  // Replace the ordered track list for a playlist (enables drag-to-reorder).
-  // Body: { "trackIds": ["1", "2", "3"] }
+  // ── GET /api/v1/users/me ────────────────────────────────────────────────────
+  app.get('/users/me', { preHandler: apiAuth }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const db = getDb();
+    const user = req.subsonicUser!;
+    const prefs = db
+      .prepare('SELECT transcode_format, transcode_bitrate, lastfm_session_key, listenbrainz_token FROM user_preferences WHERE user_id = ?')
+      .get(user.id) as {
+        transcode_format: string | null;
+        transcode_bitrate: number | null;
+        lastfm_session_key: string | null;
+        listenbrainz_token: string | null;
+      } | undefined;
+
+    reply.send({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      preferences: prefs ?? null,
+    });
+  });
+
+  // ── PATCH /api/v1/users/me/preferences ──────────────────────────────────────
+  app.patch('/users/me/preferences', { preHandler: apiAuth }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = req.subsonicUser!.id;
+    const body = req.body as Record<string, unknown>;
+    const db = getDb();
+
+    const exists = db.prepare('SELECT user_id FROM user_preferences WHERE user_id = ?').get(userId);
+    if (!exists) {
+      db.prepare('INSERT INTO user_preferences (user_id) VALUES (?)').run(userId);
+    }
+
+    const allowed = ['transcode_format', 'transcode_bitrate', 'lastfm_session_key', 'listenbrainz_token'];
+    for (const key of allowed) {
+      if (key in body) {
+        db.prepare(`UPDATE user_preferences SET ${key} = ? WHERE user_id = ?`).run(
+          body[key] ?? null,
+          userId,
+        );
+      }
+    }
+    reply.send({ ok: true });
+  });
+
+  // ── Admin routes ──────────────────────────────────────────────────────────
+
+  // GET /api/v1/admin/users
+  app.get('/admin/users', { preHandler: [apiAuth, requireAdmin] }, async (_req, reply) => {
+    const users = getDb()
+      .prepare('SELECT id, username, role, created_at FROM users ORDER BY created_at')
+      .all();
+    reply.send({ users });
+  });
+
+  // POST /api/v1/admin/users — create a user
+  app.post('/admin/users', { preHandler: [apiAuth, requireAdmin] }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const { username, password, role = 'user' } = req.body as {
+      username?: string;
+      password?: string;
+      role?: string;
+    };
+    if (!username || !password) return jsonError(reply, 400, 'username and password required');
+    if (!['admin', 'user'].includes(role)) return jsonError(reply, 400, 'role must be admin or user');
+
+    const db = getDb();
+    const secret = getOrCreateServerSecret(db);
+    try {
+      const id = Number(
+        db.prepare(
+          `INSERT INTO users (username, password_hash, subsonic_token, role)
+           VALUES (?, ?, ?, ?)`,
+        ).run(
+          username,
+          hashPassword(password),
+          encryptPassword(password, secret),
+          role,
+        ).lastInsertRowid,
+      );
+      reply.code(201).send({ id, username, role });
+    } catch {
+      jsonError(reply, 409, 'Username already exists');
+    }
+  });
+
+  // PATCH /api/v1/admin/users/:id — update role or password
+  app.patch('/admin/users/:id', { preHandler: [apiAuth, requireAdmin] }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const { password, role } = req.body as { password?: string; role?: string };
+    const userId = Number((req.params as { id: string }).id);
+    const db = getDb();
+    const secret = getOrCreateServerSecret(db);
+
+    if (role) {
+      if (!['admin', 'user'].includes(role)) return jsonError(reply, 400, 'invalid role');
+      db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
+    }
+    if (password) {
+      db.prepare('UPDATE users SET password_hash = ?, subsonic_token = ? WHERE id = ?').run(
+        hashPassword(password),
+        encryptPassword(password, secret),
+        userId,
+      );
+    }
+    reply.send({ ok: true });
+  });
+
+  // DELETE /api/v1/admin/users/:id
+  app.delete('/admin/users/:id', { preHandler: [apiAuth, requireAdmin] }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = Number((req.params as { id: string }).id);
+    if (userId === req.subsonicUser!.id)
+      return jsonError(reply, 400, 'Cannot delete your own account');
+    getDb().prepare('DELETE FROM users WHERE id = ?').run(userId);
+    reply.send({ ok: true });
+  });
+
+  // GET /api/v1/admin/libraries
+  app.get('/admin/libraries', { preHandler: [apiAuth, requireAdmin] }, async (_req, reply) => {
+    const libs = getDb().prepare('SELECT id, name, fs_path FROM libraries').all();
+    reply.send({ libraries: libs });
+  });
+
+  // POST /api/v1/admin/libraries
+  app.post('/admin/libraries', { preHandler: [apiAuth, requireAdmin] }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const { name, path: fsPath } = req.body as { name?: string; path?: string };
+    if (!name || !fsPath) return jsonError(reply, 400, 'name and path required');
+    const id = Number(
+      getDb().prepare('INSERT INTO libraries (name, fs_path) VALUES (?, ?)').run(name, fsPath).lastInsertRowid,
+    );
+    reply.code(201).send({ id, name, path: fsPath });
+  });
+
+  // DELETE /api/v1/admin/libraries/:id
+  app.delete('/admin/libraries/:id', { preHandler: [apiAuth, requireAdmin] }, async (req: FastifyRequest, reply: FastifyReply) => {
+    getDb().prepare('DELETE FROM libraries WHERE id = ?').run(Number((req.params as { id: string }).id));
+    reply.send({ ok: true });
+  });
+
+  // POST /api/v1/admin/libraries/:id/scan — trigger a scan in the background
+  app.post('/admin/libraries/:id/scan', { preHandler: [apiAuth, requireAdmin] }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const lib = getDb()
+      .prepare('SELECT fs_path FROM libraries WHERE id = ?')
+      .get(Number((req.params as { id: string }).id)) as { fs_path: string } | undefined;
+    if (!lib) return jsonError(reply, 404, 'Library not found');
+
+    // Fire-and-forget; client can poll /admin/libraries to see changes
+    scanLibrary(lib.fs_path).catch((err) => {
+      req.log.error({ err }, '[scan] background scan failed');
+    });
+    reply.send({ ok: true, message: 'Scan started' });
+  });
+
+  // GET /api/v1/admin/settings
+  app.get('/admin/settings', { preHandler: [apiAuth, requireAdmin] }, async (_req, reply) => {
+    const rows = getDb()
+      .prepare("SELECT key, value FROM settings WHERE key NOT IN ('server_secret', 'jwt_secret')")
+      .all() as { key: string; value: string }[];
+    const settings: Record<string, string> = {};
+    for (const { key, value } of rows) settings[key] = value;
+    reply.send({ settings });
+  });
+
+  // PATCH /api/v1/admin/settings
+  app.patch('/admin/settings', { preHandler: [apiAuth, requireAdmin] }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const db = getDb();
+    const body = req.body as Record<string, string | null>;
+    const upsert = db.prepare(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    );
+    for (const [key, value] of Object.entries(body)) {
+      if (value === null) {
+        db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+      } else {
+        upsert.run(key, String(value));
+      }
+    }
+    reply.send({ ok: true });
+  });
+
+  // ── Playlist endpoints (from Phase 3, now auth-upgraded) ───────────────────
+
   app.put(
     '/playlists/:id/tracks',
-    async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-      const playlistId = Number(req.params.id);
+    { preHandler: apiAuth },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const playlistId = Number((req.params as { id: string }).id);
       const { trackIds } = req.body as { trackIds: string[] };
-
-      if (!Array.isArray(trackIds))
-        return jsonError(reply, 400, 'trackIds must be an array');
+      if (!Array.isArray(trackIds)) return jsonError(reply, 400, 'trackIds must be an array');
 
       const db = getDb();
       const userId = req.subsonicUser!.id;
-
       const playlist = db
         .prepare('SELECT id FROM playlists WHERE id = ? AND owner_id = ?')
         .get(playlistId, userId);
@@ -44,21 +286,18 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
           'INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)',
         );
         trackIds.forEach((tid, i) => ins.run(playlistId, Number(tid), i));
-        db.prepare(
-          'UPDATE playlists SET updated_at = unixepoch() WHERE id = ?',
-        ).run(playlistId);
+        db.prepare('UPDATE playlists SET updated_at = unixepoch() WHERE id = ?').run(playlistId);
       })();
 
       reply.send({ ok: true });
     },
   );
 
-  // ── POST /api/v1/playlists/:id/cover ───────────────────────────────────────
-  // Upload a custom cover image for a playlist.
   app.post(
     '/playlists/:id/cover',
-    async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-      const playlistId = Number(req.params.id);
+    { preHandler: apiAuth },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const playlistId = Number((req.params as { id: string }).id);
       const db = getDb();
       const userId = req.subsonicUser!.id;
 
@@ -70,30 +309,21 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
       const data = await req.file();
       if (!data) return jsonError(reply, 400, 'No file uploaded');
 
-      const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-      const mime = data.mimetype;
-      if (!ALLOWED_TYPES.has(mime)) return jsonError(reply, 400, 'Unsupported image type');
-
-      const coversDir = getCoversDir();
-      await mkdir(coversDir, { recursive: true });
+      const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+      if (!ALLOWED.has(data.mimetype)) return jsonError(reply, 400, 'Unsupported image type');
 
       const extMap: Record<string, string> = {
-        'image/jpeg': 'jpg',
-        'image/png': 'png',
-        'image/gif': 'gif',
-        'image/webp': 'webp',
+        'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
       };
-      const ext = extMap[mime] ?? 'jpg';
-      const coverPath = path.join(coversDir, `pl-${playlistId}.${ext}`);
+      const coversDir = getCoversDir();
+      await mkdir(coversDir, { recursive: true });
+      const coverPath = path.join(coversDir, `pl-${playlistId}.${extMap[data.mimetype] ?? 'jpg'}`);
+      await writeFile(coverPath, await data.toBuffer());
 
-      const buffer = await data.toBuffer();
-      await writeFile(coverPath, buffer);
-
-      db.prepare(
-        'UPDATE playlists SET cover_path = ?, updated_at = unixepoch() WHERE id = ?',
-      ).run(coverPath, playlistId);
-
-      reply.send({ ok: true, coverPath });
+      db.prepare('UPDATE playlists SET cover_path = ?, updated_at = unixepoch() WHERE id = ?').run(
+        coverPath, playlistId,
+      );
+      reply.send({ ok: true });
     },
   );
 }

@@ -201,29 +201,41 @@ export async function renamePlaylist(playlistId: string, name: string): Promise<
 
 // ── Custom /api/v1 endpoints (Subsonic auth via query params) ────────────────
 
-async function apiPut(path: string, body: unknown): Promise<void> {
+// JWT stored by auth store — set after login
+let _jwt: string | null = null;
+export function setJwt(token: string | null): void { _jwt = token; }
+
+async function apiCall(
+  method: string,
+  path: string,
+  body?: unknown,
+  form?: FormData,
+): Promise<unknown> {
   const creds = _creds;
   if (!creds) throw new Error('Not authenticated');
   const base = creds.serverUrl.replace(/\/$/, '');
-  const params = authParams(creds);
-  const res = await fetch(`${base}/api/v1/${path}?${params}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  const headers: Record<string, string> = {};
+  if (_jwt) headers['Authorization'] = `Bearer ${_jwt}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  const res = await fetch(`${base}/api/v1/${path}`, {
+    method,
+    headers,
+    body: form ?? (body !== undefined ? JSON.stringify(body) : undefined),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as { error?: string };
+    throw new Error(data.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+async function apiPut(path: string, body: unknown): Promise<void> {
+  await apiCall('PUT', path, body);
 }
 
 async function apiPostForm(path: string, form: FormData): Promise<void> {
-  const creds = _creds;
-  if (!creds) throw new Error('Not authenticated');
-  const base = creds.serverUrl.replace(/\/$/, '');
-  const params = authParams(creds);
-  const res = await fetch(`${base}/api/v1/${path}?${params}`, {
-    method: 'POST',
-    body: form,
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  await apiCall('POST', path, undefined, form);
 }
 
 export async function reorderPlaylistTracks(playlistId: string, trackIds: string[]): Promise<void> {
@@ -251,6 +263,55 @@ export interface StructuredLyrics {
   offset: number;
   line: LyricLine[];
 }
+
+// ── Admin API ────────────────────────────────────────────────────────────────
+
+export interface AdminUser { id: number; username: string; role: string; created_at: number; }
+export interface Library { id: number; name: string; path: string; }
+
+export async function adminGetUsers(): Promise<AdminUser[]> {
+  const r = await apiCall('GET', 'admin/users') as { users: AdminUser[] };
+  return r.users;
+}
+export async function adminCreateUser(u: { username: string; password: string; role: string }): Promise<AdminUser> {
+  return (await apiCall('POST', 'admin/users', u)) as AdminUser;
+}
+export async function adminUpdateUser(id: number, u: { password?: string; role?: string }): Promise<void> {
+  await apiCall('PATCH', `admin/users/${id}`, u);
+}
+export async function adminDeleteUser(id: number): Promise<void> {
+  await apiCall('DELETE', `admin/users/${id}`);
+}
+
+export async function adminGetLibraries(): Promise<Library[]> {
+  const r = await apiCall('GET', 'admin/libraries') as { libraries: Library[] };
+  return r.libraries;
+}
+export async function adminAddLibrary(l: { name: string; path: string }): Promise<Library> {
+  return (await apiCall('POST', 'admin/libraries', l)) as Library;
+}
+export async function adminDeleteLibrary(id: number): Promise<void> {
+  await apiCall('DELETE', `admin/libraries/${id}`);
+}
+export async function adminScanLibrary(id: number): Promise<void> {
+  await apiCall('POST', `admin/libraries/${id}/scan`);
+}
+
+export async function adminGetSettings(): Promise<Record<string, string>> {
+  const r = await apiCall('GET', 'admin/settings') as { settings: Record<string, string> };
+  return r.settings;
+}
+export async function adminPatchSettings(patch: Record<string, string | null>): Promise<void> {
+  await apiCall('PATCH', 'admin/settings', patch);
+}
+
+// ── User preferences ─────────────────────────────────────────────────────────
+
+export async function patchMyPreferences(prefs: Record<string, unknown>): Promise<void> {
+  await apiCall('PATCH', 'users/me/preferences', prefs);
+}
+
+// ── Lyrics ────────────────────────────────────────────────────────────────────
 
 export async function getLyrics(songId: string): Promise<StructuredLyrics | null> {
   try {

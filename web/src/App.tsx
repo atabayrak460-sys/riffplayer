@@ -13,6 +13,11 @@ import { FavoritesPage } from './pages/FavoritesPage';
 import { RecentPage } from './pages/RecentPage';
 import { PlaylistsPage } from './pages/PlaylistsPage';
 import { PlaylistDetailPage } from './pages/PlaylistDetailPage';
+import { AdminPage } from './pages/admin/AdminPage';
+import { UsersPage } from './pages/admin/UsersPage';
+import { LibrariesPage } from './pages/admin/LibrariesPage';
+import { SettingsPage } from './pages/admin/SettingsPage';
+import { UserSettingsPage } from './pages/UserSettingsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,6 +50,17 @@ const router = createBrowserRouter([
           { path: 'recent', element: <RecentPage /> },
           { path: 'playlists', element: <PlaylistsPage /> },
           { path: 'playlists/:id', element: <PlaylistDetailPage /> },
+          { path: 'settings', element: <UserSettingsPage /> },
+          {
+            path: 'admin',
+            element: <AdminPage />,
+            children: [
+              { index: true, element: <Navigate to="/admin/users" replace /> },
+              { path: 'users', element: <UsersPage /> },
+              { path: 'libraries', element: <LibrariesPage /> },
+              { path: 'settings', element: <SettingsPage /> },
+            ],
+          },
         ],
       },
     ],

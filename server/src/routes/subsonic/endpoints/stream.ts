@@ -159,9 +159,14 @@ async function streamHandler(req: FastifyRequest, reply: FastifyReply): Promise<
   // Log the play now that we know the track and file exist
   logPlay(req.subsonicUser!.id, track.id, p(req).c);
 
+  // Apply per-user transcode preferences as defaults when client didn't specify
+  const userPrefs = db
+    .prepare('SELECT transcode_format, transcode_bitrate FROM user_preferences WHERE user_id = ?')
+    .get(req.subsonicUser!.id) as { transcode_format: string | null; transcode_bitrate: number | null } | undefined;
+
   const nativeSuffix = fileSuffix(track.path);
-  const requestedFmt = format?.toLowerCase();
-  const requestedBitRate = Number(maxBitRate);
+  const requestedFmt = format?.toLowerCase() ?? userPrefs?.transcode_format ?? undefined;
+  const requestedBitRate = Number(maxBitRate) || userPrefs?.transcode_bitrate || 0;
 
   const needsTranscode =
     (requestedFmt && requestedFmt !== 'raw' && requestedFmt !== nativeSuffix) ||
