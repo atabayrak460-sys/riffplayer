@@ -1,8 +1,9 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store/player';
 import { CoverArt } from './CoverArt';
 import { StarButton } from './StarButton';
+import { LyricsPanel } from './LyricsPanel';
 
 function formatTime(s: number) {
   if (!isFinite(s) || s < 0) return '0:00';
@@ -16,6 +17,7 @@ export function PlayerBar() {
     usePlayerStore();
 
   const seekRef = useRef<HTMLInputElement>(null);
+  const [showLyrics, setShowLyrics] = useState(false);
 
   if (!currentSong) {
     return (
@@ -26,7 +28,9 @@ export function PlayerBar() {
   }
 
   return (
-    <footer className="h-20 border-t border-zinc-800 bg-zinc-950 flex items-center px-4 gap-4">
+    <>
+      {showLyrics && <LyricsPanel onClose={() => setShowLyrics(false)} />}
+    <footer className="h-20 border-t border-zinc-800 bg-zinc-950 flex items-center px-4 gap-4 relative z-20">
       {/* Left: now playing info */}
       <div className="flex items-center gap-3 w-64 min-w-0 flex-shrink-0">
         <CoverArt
@@ -103,6 +107,15 @@ export function PlayerBar() {
 
       {/* Right: volume + queue link */}
       <div className="flex items-center gap-3 w-48 justify-end flex-shrink-0">
+        <button
+          onClick={() => setShowLyrics((v) => !v)}
+          title="Lyrics"
+          className={`transition-colors ${showLyrics ? 'text-brand' : 'text-zinc-400 hover:text-white'}`}
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+          </svg>
+        </button>
         <Link to="/queue" title="Queue" className="text-zinc-400 hover:text-white transition-colors">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h10M4 18h7" />
@@ -122,5 +135,6 @@ export function PlayerBar() {
         />
       </div>
     </footer>
+    </>
   );
 }

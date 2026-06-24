@@ -42,6 +42,8 @@ export interface Song {
   created: string;
   isVideo: boolean;
   type: string;
+  replayGainTrackGain?: number;
+  replayGainAlbumGain?: number;
 }
 
 export interface Playlist {

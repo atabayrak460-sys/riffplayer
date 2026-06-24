@@ -8,5 +8,9 @@
   "scripts": {
     "server": "npm --workspace server run dev",
     "web": "npm --workspace web run dev"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "esbuild@0.21.5": true
   }
 }

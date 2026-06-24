@@ -44,6 +44,7 @@ LEFT JOIN favorites f ON f.item_type = 'album' AND f.item_id = al.id AND f.user_
 const SONG_COLS = `
   t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
   t.format, t.path, t.added_at, t.album_id, t.artist_id,
+  t.replaygain_track, t.replaygain_album,
   ar.name AS artist_name, al.name AS album_name, al.year,
   f.created_at AS starred
 FROM tracks t

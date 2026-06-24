@@ -110,6 +110,8 @@ export interface SongRow {
   path: string;
   added_at: number;
   starred: number | null;
+  replaygain_track: number | null;
+  replaygain_album: number | null;
 }
 
 // ── Entity serializers ────────────────────────────────────────────────────────
@@ -162,6 +164,9 @@ export function songAttrs(row: SongRow): Record<string, AttrVal> {
     created: isoDate(row.added_at),
     isVideo: false,
     type: 'music',
+    // OpenSubsonic ReplayGain extension (flat fields; clients may ignore)
+    replayGainTrackGain: row.replaygain_track ?? undefined,
+    replayGainAlbumGain: row.replaygain_album ?? undefined,
   };
 }
 

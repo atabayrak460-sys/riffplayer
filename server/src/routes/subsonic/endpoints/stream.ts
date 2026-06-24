@@ -16,6 +16,7 @@ interface TrackRow {
   path: string;
   bitrate: number | null;
   size: number | null;
+  replaygain_track: number | null;
 }
 
 // Maps requested format → ffmpeg -f arg and MIME type
@@ -105,13 +106,19 @@ function serveTranscoded(
   targetFmt: string,
   maxBitRate: number,
   reply: FastifyReply,
+  replayGainDb: number | null = null,
 ): void {
   const fmt = TRANSCODE_FORMATS[targetFmt] ?? TRANSCODE_FORMATS.mp3;
+
+  // Combine replaygain gain + optional target normalisation to -14 LUFS standard
+  const audioFilters: string[] = [];
+  if (replayGainDb != null) audioFilters.push(`volume=${replayGainDb}dB`);
 
   const args = [
     '-i', filePath,
     '-f', fmt.ffmpegFmt,
     ...(maxBitRate > 0 ? ['-b:a', `${maxBitRate}k`] : []),
+    ...(audioFilters.length ? ['-af', audioFilters.join(',')] : []),
     '-vn',        // drop any embedded video/cover stream
     '-v', 'error',
     'pipe:1',
@@ -137,7 +144,7 @@ async function streamHandler(req: FastifyRequest, reply: FastifyReply): Promise<
 
   const db = getDb();
   const track = db
-    .prepare('SELECT id, path, bitrate, size FROM tracks WHERE id = ?')
+    .prepare('SELECT id, path, bitrate, size, replaygain_track FROM tracks WHERE id = ?')
     .get(Number(id)) as TrackRow | undefined;
   if (!track)
     return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'Track not found' });
@@ -161,7 +168,7 @@ async function streamHandler(req: FastifyRequest, reply: FastifyReply): Promise<
     (requestedBitRate > 0 && track.bitrate != null && track.bitrate > requestedBitRate);
 
   if (needsTranscode) {
-    serveTranscoded(track.path, requestedFmt ?? 'mp3', requestedBitRate, reply);
+    serveTranscoded(track.path, requestedFmt ?? 'mp3', requestedBitRate, reply, track.replaygain_track);
   } else {
     await serveFile(
       track.path,

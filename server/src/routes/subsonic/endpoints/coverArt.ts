@@ -53,6 +53,33 @@ async function findCachedAlbumArt(
   return null;
 }
 
+async function fetchFromCoverArtArchive(
+  albumId: number,
+  coversDir: string,
+): Promise<{ filePath: string; mime: string } | null> {
+  const album = getDb()
+    .prepare('SELECT mbid FROM albums WHERE id = ?')
+    .get(albumId) as { mbid: string | null } | undefined;
+  if (!album?.mbid) return null;
+
+  // CAA returns a redirect to the actual image; follow it
+  const url = `https://coverartarchive.org/release/${album.mbid}/front-500`;
+  try {
+    const res = await fetch(url, { redirect: 'follow' });
+    if (!res.ok) return null;
+    const contentType = (res.headers.get('content-type') ?? 'image/jpeg').split(';')[0].trim();
+    const ext = MIME_TO_EXT[contentType] ?? 'jpg';
+    const mime = contentType || 'image/jpeg';
+
+    await mkdir(coversDir, { recursive: true });
+    const cachePath = path.join(coversDir, `al-${albumId}.${ext}`);
+    await writeFile(cachePath, Buffer.from(await res.arrayBuffer()));
+    return { filePath: cachePath, mime };
+  } catch {
+    return null;
+  }
+}
+
 async function extractAndCacheAlbumArt(
   albumId: number,
   coversDir: string,
@@ -60,27 +87,28 @@ async function extractAndCacheAlbumArt(
   const cached = await findCachedAlbumArt(albumId, coversDir);
   if (cached) return cached;
 
+  // 1. Try embedded art in the first track
   const track = getDb()
     .prepare('SELECT path FROM tracks WHERE album_id = ? LIMIT 1')
     .get(albumId) as { path: string } | undefined;
-  if (!track) return null;
-
-  let metadata;
-  try {
-    metadata = await parseFile(track.path, { skipCovers: false });
-  } catch {
-    return null;
+  if (track) {
+    try {
+      const metadata = await parseFile(track.path, { skipCovers: false });
+      const picture = metadata.common.picture?.[0];
+      if (picture && MIME_TO_EXT[picture.format]) {
+        await mkdir(coversDir, { recursive: true });
+        const ext = MIME_TO_EXT[picture.format];
+        const cachePath = path.join(coversDir, `al-${albumId}.${ext}`);
+        await writeFile(cachePath, picture.data);
+        return { filePath: cachePath, mime: picture.format };
+      }
+    } catch {
+      // fall through to Cover Art Archive
+    }
   }
 
-  const picture = metadata.common.picture?.[0];
-  if (!picture || !MIME_TO_EXT[picture.format]) return null;
-
-  await mkdir(coversDir, { recursive: true });
-  const ext = MIME_TO_EXT[picture.format];
-  const cachePath = path.join(coversDir, `al-${albumId}.${ext}`);
-  await writeFile(cachePath, picture.data);
-
-  return { filePath: cachePath, mime: picture.format };
+  // 2. Fetch from Cover Art Archive using album MBID
+  return fetchFromCoverArtArchive(albumId, coversDir);
 }
 
 async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {

@@ -51,6 +51,16 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       audio.src = url;
       audio.load();
     }
+
+    // Apply ReplayGain track gain: convert dB → linear and scale user volume
+    const { volume: userVol } = get();
+    if (song.replayGainTrackGain != null) {
+      const gain = Math.pow(10, song.replayGainTrackGain / 20);
+      audio.volume = Math.min(1, Math.max(0, userVol * gain));
+    } else {
+      audio.volume = userVol;
+    }
+
     audio.play().catch(() => {/* autoplay policy */});
     scrobble(song.id, false).catch(() => {/* best-effort */});
 

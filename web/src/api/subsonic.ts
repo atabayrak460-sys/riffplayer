@@ -183,3 +183,83 @@ export async function getPlaylist(id: string): Promise<Playlist> {
 export async function scrobble(id: string, submission = true): Promise<void> {
   await get('scrobble.view', { id, submission: String(submission) });
 }
+
+// ── Playlist management ──────────────────────────────────────────────────────
+
+export async function deletePlaylist(id: string): Promise<void> {
+  await get('deletePlaylist.view', { id });
+}
+
+export async function createPlaylistWithName(name: string): Promise<Playlist> {
+  const r = await get<{ playlist: Playlist }>('createPlaylist.view', { name });
+  return r.playlist;
+}
+
+export async function renamePlaylist(playlistId: string, name: string): Promise<void> {
+  await get('updatePlaylist.view', { playlistId, name });
+}
+
+// ── Custom /api/v1 endpoints (Subsonic auth via query params) ────────────────
+
+async function apiPut(path: string, body: unknown): Promise<void> {
+  const creds = _creds;
+  if (!creds) throw new Error('Not authenticated');
+  const base = creds.serverUrl.replace(/\/$/, '');
+  const params = authParams(creds);
+  const res = await fetch(`${base}/api/v1/${path}?${params}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+async function apiPostForm(path: string, form: FormData): Promise<void> {
+  const creds = _creds;
+  if (!creds) throw new Error('Not authenticated');
+  const base = creds.serverUrl.replace(/\/$/, '');
+  const params = authParams(creds);
+  const res = await fetch(`${base}/api/v1/${path}?${params}`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function reorderPlaylistTracks(playlistId: string, trackIds: string[]): Promise<void> {
+  await apiPut(`playlists/${playlistId}/tracks`, { trackIds });
+}
+
+export async function uploadPlaylistCover(playlistId: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.append('file', file);
+  await apiPostForm(`playlists/${playlistId}/cover`, form);
+}
+
+// ── Lyrics (OpenSubsonic extension) ─────────────────────────────────────────
+
+export interface LyricLine {
+  start: number;
+  value: string;
+}
+
+export interface StructuredLyrics {
+  displayArtist: string;
+  displayTitle: string;
+  lang: string;
+  synced: boolean;
+  offset: number;
+  line: LyricLine[];
+}
+
+export async function getLyrics(songId: string): Promise<StructuredLyrics | null> {
+  try {
+    const r = await get<{ lyricsList?: { structuredLyrics?: StructuredLyrics[] } }>(
+      'getLyricsBySongId.view',
+      { id: songId },
+    );
+    return r.lyricsList?.structuredLyrics?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}

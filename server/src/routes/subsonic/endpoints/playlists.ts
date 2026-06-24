@@ -10,6 +10,7 @@ const str = (v: string | string[] | undefined): string | undefined => (Array.isA
 const SONG_COLS = `
   t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
   t.format, t.path, t.added_at, t.album_id, t.artist_id,
+  t.replaygain_track, t.replaygain_album,
   ar.name AS artist_name, al.name AS album_name, al.year,
   f.created_at AS starred
 FROM tracks t
@@ -177,9 +178,27 @@ function updatePlaylist(req: FastifyRequest, reply: FastifyReply): void {
   sendOk(reply, f);
 }
 
+function deletePlaylist(req: FastifyRequest, reply: FastifyReply): void {
+  const { f, id } = p(req) as Record<string, string | undefined>;
+  if (!id) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id required' });
+
+  const db = getDb();
+  const userId = req.subsonicUser!.id;
+
+  const exists = db
+    .prepare('SELECT id FROM playlists WHERE id = ? AND owner_id = ?')
+    .get(Number(id), userId);
+  if (!exists)
+    return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'Playlist not found or not owned' });
+
+  db.prepare('DELETE FROM playlists WHERE id = ?').run(Number(id));
+  sendOk(reply, f);
+}
+
 export async function playlistsPlugin(app: FastifyInstance): Promise<void> {
   app.route({ method: ['GET', 'POST'], url: '/getPlaylists.view', handler: getPlaylists });
   app.route({ method: ['GET', 'POST'], url: '/getPlaylist.view', handler: getPlaylist });
   app.route({ method: ['GET', 'POST'], url: '/createPlaylist.view', handler: createPlaylist });
   app.route({ method: ['GET', 'POST'], url: '/updatePlaylist.view', handler: updatePlaylist });
+  app.route({ method: ['GET', 'POST'], url: '/deletePlaylist.view', handler: deletePlaylist });
 }

@@ -78,7 +78,8 @@ async function processFile(
     const title = common.title ?? path.basename(filePath, path.extname(filePath));
 
     const artistId = upsertArtist(db, artistName);
-    const albumId = upsertAlbum(db, albumName, artistId, common.year ?? null);
+    const albumMbid = common.musicbrainz_albumid ?? null;
+    const albumId = upsertAlbum(db, albumName, artistId, common.year ?? null, albumMbid);
 
     const fields = {
       title,
@@ -140,14 +141,19 @@ export function upsertAlbum(
   name: string,
   artistId: number,
   year: number | null,
+  mbid?: string | null,
 ): number {
   const row = db
     .prepare('SELECT id FROM albums WHERE name = ? COLLATE NOCASE AND artist_id = ?')
     .get(name, artistId) as { id: number } | undefined;
-  if (row) return row.id;
+  if (row) {
+    // Update mbid if we now have one and didn't before
+    if (mbid) db.prepare('UPDATE albums SET mbid = ? WHERE id = ? AND mbid IS NULL').run(mbid, row.id);
+    return row.id;
+  }
   return Number(
     db
-      .prepare('INSERT INTO albums (name, artist_id, year) VALUES (?, ?, ?)')
-      .run(name, artistId, year).lastInsertRowid,
+      .prepare('INSERT INTO albums (name, artist_id, year, mbid) VALUES (?, ?, ?, ?)')
+      .run(name, artistId, year, mbid ?? null).lastInsertRowid,
   );
 }

@@ -11,6 +11,8 @@ import { QueuePage } from './pages/QueuePage';
 import { SearchPage } from './pages/SearchPage';
 import { FavoritesPage } from './pages/FavoritesPage';
 import { RecentPage } from './pages/RecentPage';
+import { PlaylistsPage } from './pages/PlaylistsPage';
+import { PlaylistDetailPage } from './pages/PlaylistDetailPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,6 +43,8 @@ const router = createBrowserRouter([
           { path: 'search', element: <SearchPage /> },
           { path: 'favorites', element: <FavoritesPage /> },
           { path: 'recent', element: <RecentPage /> },
+          { path: 'playlists', element: <PlaylistsPage /> },
+          { path: 'playlists/:id', element: <PlaylistDetailPage /> },
         ],
       },
     ],
