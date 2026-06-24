@@ -22,7 +22,7 @@ const sr = (body: string) =>
   (JSON.parse(body) as Record<string, Record<string, unknown>>)['subsonic-response'];
 
 describe('search3', () => {
-  it('finds artists by name', async () => {
+  it('finds artists, albums, and songs in a single query', async () => {
     const res = await app.inject({ url: `/rest/search3.view?${auth}&query=Test` });
     const r = sr(res.body);
     expect(r.status).toBe('ok');
@@ -40,5 +40,31 @@ describe('search3', () => {
     expect(result.artist.length).toBe(0);
     expect(result.album.length).toBe(0);
     expect(result.song.length).toBe(0);
+  });
+
+  it('honours artistCount=0 (returns only albums and songs)', async () => {
+    const res = await app.inject({ url: `/rest/search3.view?${auth}&query=Test&artistCount=0` });
+    const result = (sr(res.body).searchResult3) as Record<string, unknown[]>;
+    expect(result.artist.length).toBe(0);
+    expect(result.album.length).toBe(1);
+    expect(result.song.length).toBe(1);
+  });
+
+  it('honours artistOffset beyond available results', async () => {
+    const res = await app.inject({ url: `/rest/search3.view?${auth}&query=Test&artistOffset=100` });
+    const result = (sr(res.body).searchResult3) as Record<string, unknown[]>;
+    expect(result.artist.length).toBe(0);
+  });
+
+  it('finds an album when query matches only the album name', async () => {
+    const res = await app.inject({ url: `/rest/search3.view?${auth}&query=Album&artistCount=0&songCount=0` });
+    const result = (sr(res.body).searchResult3) as Record<string, unknown[]>;
+    expect(result.album.length).toBe(1);
+  });
+
+  it('finds a song when query matches only the track title', async () => {
+    const res = await app.inject({ url: `/rest/search3.view?${auth}&query=Track&artistCount=0&albumCount=0` });
+    const result = (sr(res.body).searchResult3) as Record<string, unknown[]>;
+    expect(result.song.length).toBe(1);
   });
 });

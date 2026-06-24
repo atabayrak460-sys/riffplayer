@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, utimes } from 'fs/promises';
+import { mkdtemp, rm, utimes, chmod } from 'fs/promises';
 import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -155,5 +155,25 @@ describe('scanLibrary', () => {
     const albums = (db.prepare('SELECT COUNT(*) as n FROM albums').get() as { n: number }).n;
     expect(artists).toBe(1);
     expect(albums).toBe(1);
+  });
+
+  it('handles an empty directory without error', async () => {
+    const result = await scanLibrary(tmpDir);
+    expect(result).toEqual({ added: 0, updated: 0, skipped: 0, errors: 0 });
+  });
+
+  it('increments errors counter for permission-denied audio files', async () => {
+    const filePath = path.join(tmpDir, 'locked.wav');
+    writeWav(filePath);
+    // Remove read permission so parseFile fails with EACCES
+    await chmod(filePath, 0o000);
+
+    const result = await scanLibrary(tmpDir);
+
+    // Restore permission so afterEach cleanup can delete the file
+    await chmod(filePath, 0o644);
+
+    expect(result.errors).toBe(1);
+    expect(result.added).toBe(0);
   });
 });

@@ -90,6 +90,20 @@ describe('getAlbum', () => {
     expect(album.name).toBe('Test Album');
     expect((album.song as unknown[]).length).toBe(1);
   });
+
+  it('returns MISSING_PARAM when id is absent', async () => {
+    const res = await app.inject({ url: `/rest/getAlbum.view?${auth}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('failed');
+    expect((r.error as Record<string, unknown>).code).toBe(10);
+  });
+
+  it('returns DATA_NOT_FOUND for unknown album', async () => {
+    const res = await app.inject({ url: `/rest/getAlbum.view?${auth}&id=99999` });
+    const r = sr(res.body);
+    expect(r.status).toBe('failed');
+    expect((r.error as Record<string, unknown>).code).toBe(70);
+  });
 });
 
 describe('getSong', () => {
@@ -102,6 +116,20 @@ describe('getSong', () => {
     expect(song.type).toBe('music');
     expect(song.isVideo).toBe(false);
     expect(song.suffix).toBe('mp3');
+  });
+
+  it('returns MISSING_PARAM when id is absent', async () => {
+    const res = await app.inject({ url: `/rest/getSong.view?${auth}` });
+    const r = sr(res.body);
+    expect(r.status).toBe('failed');
+    expect((r.error as Record<string, unknown>).code).toBe(10);
+  });
+
+  it('returns DATA_NOT_FOUND for unknown song', async () => {
+    const res = await app.inject({ url: `/rest/getSong.view?${auth}&id=99999` });
+    const r = sr(res.body);
+    expect(r.status).toBe('failed');
+    expect((r.error as Record<string, unknown>).code).toBe(70);
   });
 });
 
@@ -136,5 +164,12 @@ describe('getMusicDirectory', () => {
     expect(r.status).toBe('ok');
     const dir = r.directory as Record<string, unknown>;
     expect((dir.child as unknown[]).length).toBe(1);
+  });
+
+  it('returns DATA_NOT_FOUND for unknown directory id', async () => {
+    const res = await app.inject({ url: `/rest/getMusicDirectory.view?${auth}&id=99999` });
+    const r = sr(res.body);
+    expect(r.status).toBe('failed');
+    expect((r.error as Record<string, unknown>).code).toBe(70);
   });
 });
