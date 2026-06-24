@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../../db/database.js';
 import { sendError, SubsonicErrorCode } from '../response.js';
 import { fileContentType, fileSuffix } from '../serialize.js';
+import { logPlay } from '../playHistory.js';
 
 type Q = Record<string, string | undefined>;
 const p = (req: FastifyRequest) => ({ ...(req.query as Q), ...((req.body as Q) ?? {}) });
@@ -147,6 +148,9 @@ async function streamHandler(req: FastifyRequest, reply: FastifyReply): Promise<
   } catch {
     return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'File not found on disk' });
   }
+
+  // Log the play now that we know the track and file exist
+  logPlay(req.subsonicUser!.id, track.id, p(req).c);
 
   const nativeSuffix = fileSuffix(track.path);
   const requestedFmt = format?.toLowerCase();
