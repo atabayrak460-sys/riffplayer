@@ -18,6 +18,8 @@ import { UsersPage } from './pages/admin/UsersPage';
 import { LibrariesPage } from './pages/admin/LibrariesPage';
 import { SettingsPage } from './pages/admin/SettingsPage';
 import { UserSettingsPage } from './pages/UserSettingsPage';
+import { RecommendationsPage } from './pages/RecommendationsPage';
+import { WrappedPage } from './pages/WrappedPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,6 +53,8 @@ const router = createBrowserRouter([
           { path: 'playlists', element: <PlaylistsPage /> },
           { path: 'playlists/:id', element: <PlaylistDetailPage /> },
           { path: 'settings', element: <UserSettingsPage /> },
+          { path: 'discover', element: <RecommendationsPage /> },
+          { path: 'wrapped', element: <WrappedPage /> },
           {
             path: 'admin',
             element: <AdminPage />,

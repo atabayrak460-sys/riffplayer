@@ -25,6 +25,20 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
+function TextInput({ value, onChange, onBlur, placeholder, type = 'text', width = 'w-64' }: {
+  value: string; onChange: (v: string) => void; onBlur: () => void;
+  placeholder?: string; type?: string; width?: string;
+}) {
+  return (
+    <input
+      type={type} value={value}
+      onChange={e => onChange(e.target.value)} onBlur={onBlur}
+      placeholder={placeholder}
+      className={`bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white ${width} focus:outline-none focus:border-brand`}
+    />
+  );
+}
+
 export function SettingsPage() {
   const { data: settings, isLoading } = useQuery({ queryKey: ['admin-settings'], queryFn: adminGetSettings });
   const patchMut = useMutation({ mutationFn: adminPatchSettings });
@@ -32,6 +46,9 @@ export function SettingsPage() {
   const [lfmKey, setLfmKey] = useState('');
   const [lfmSecret, setLfmSecret] = useState('');
   const [lfmEnabled, setLfmEnabled] = useState(false);
+  const [recoEnabled, setRecoEnabled] = useState(true);
+  const [ollamaUrl, setOllamaUrl] = useState('');
+  const [ollamaModel, setOllamaModel] = useState('llama3.2');
   const [donationEnabled, setDonationEnabled] = useState(true);
 
   useEffect(() => {
@@ -39,6 +56,9 @@ export function SettingsPage() {
     setLfmKey(settings.lastfm_api_key ?? '');
     setLfmSecret(settings.lastfm_api_secret ?? '');
     setLfmEnabled(settings.lastfm_enabled === 'true');
+    setRecoEnabled(settings.recommendations_enabled !== 'false');
+    setOllamaUrl(settings.ollama_url ?? '');
+    setOllamaModel(settings.ollama_model ?? 'llama3.2');
     setDonationEnabled(settings.donation_prompt_enabled !== 'false');
   }, [settings]);
 
@@ -55,12 +75,30 @@ export function SettingsPage() {
         <Field label="Enable Last.fm" description="Scrobble plays to Last.fm for users who have configured a session key.">
           <Toggle checked={lfmEnabled} onChange={(v) => { setLfmEnabled(v); save({ lastfm_enabled: v ? 'true' : 'false' }); }} />
         </Field>
-        <Field label="API Key" description="From last.fm/api/account/create">
-          <input value={lfmKey} onChange={e => setLfmKey(e.target.value)} onBlur={() => save({ lastfm_api_key: lfmKey || null })} placeholder="Paste API key" className="bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white w-64 focus:outline-none focus:border-brand" />
+        <Field label="API Key" description="From last.fm/api/account/create — also used for recommendations">
+          <TextInput value={lfmKey} onChange={setLfmKey} onBlur={() => save({ lastfm_api_key: lfmKey || null })} placeholder="Paste API key" />
         </Field>
         <Field label="Shared Secret" description="From your Last.fm API account page">
-          <input type="password" value={lfmSecret} onChange={e => setLfmSecret(e.target.value)} onBlur={() => save({ lastfm_api_secret: lfmSecret || null })} placeholder="Paste shared secret" className="bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white w-64 focus:outline-none focus:border-brand" />
+          <TextInput type="password" value={lfmSecret} onChange={setLfmSecret} onBlur={() => save({ lastfm_api_secret: lfmSecret || null })} placeholder="Paste shared secret" />
         </Field>
+      </section>
+
+      <section className="mb-8">
+        <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">Recommendations (opt-in)</h3>
+        <Field label="Enable recommendations" description="Similar artists and Discover weekly. Default off.">
+          <Toggle checked={recoEnabled} onChange={(v) => { setRecoEnabled(v); save({ recommendations_enabled: v ? 'true' : 'false' }); }} />
+        </Field>
+        <Field label="Ollama URL" description="Local LLM for fully private recommendations. E.g. http://localhost:11434">
+          <TextInput value={ollamaUrl} onChange={setOllamaUrl} onBlur={() => save({ ollama_url: ollamaUrl || null })} placeholder="http://localhost:11434" width="w-72" />
+        </Field>
+        <Field label="Ollama model" description="Model name as shown in `ollama list`. Fallback: llama3.2">
+          <TextInput value={ollamaModel} onChange={setOllamaModel} onBlur={() => save({ ollama_model: ollamaModel || null })} placeholder="llama3.2" />
+        </Field>
+        <p className="text-xs text-zinc-500 pt-2">
+          If Ollama is not configured, recommendations use Last.fm similar-artist data
+          (requires Last.fm API key above). All suggestions come from your own library —
+          no acquisition links are ever shown.
+        </p>
       </section>
 
       <section>

@@ -7,6 +7,7 @@ import { signToken, verifyToken } from '../../auth/jwt.js';
 import { decryptPassword, hashPassword, encryptPassword, verifyPasswordHash } from '../../auth/crypto.js';
 import { getOrCreateServerSecret } from '../../auth/seed.js';
 import { scanLibrary } from '../../indexer/scan.js';
+import { recommendationsPlugin } from './recommendations.js';
 
 function getCoversDir(): string {
   return process.env.COVERS_DIR ?? path.join(process.cwd(), 'covers');
@@ -326,4 +327,10 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
       reply.send({ ok: true });
     },
   );
+
+  // Recommendations & Wrapped — all require auth, registered under /recommendations/*
+  app.register(async (reco) => {
+    reco.addHook('preHandler', apiAuth);
+    reco.register(recommendationsPlugin);
+  }, { prefix: '/recommendations' });
 }

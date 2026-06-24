@@ -313,6 +313,39 @@ export async function patchMyPreferences(prefs: Record<string, unknown>): Promis
 
 // ── Lyrics ────────────────────────────────────────────────────────────────────
 
+// ── Recommendations & Wrapped ─────────────────────────────────────────────────
+
+export interface WrappedStats {
+  year: number;
+  totalPlays: number;
+  totalMinutes: number;
+  topTracks: {
+    id: string; title: string; artist: string; artistId: string;
+    album: string; albumId: string; coverArt: string; playCount: number;
+  }[];
+  topArtists: { id: string; name: string; coverArt: string | null; playCount: number }[];
+  topAlbums: { id: string; name: string; artist: string; coverArt: string; playCount: number }[];
+  byMonth: { month: number; plays: number }[];
+}
+
+export async function getRecommendations(type: 'similar' | 'discover'): Promise<{ songs: Song[]; source: string }> {
+  const r = await apiCall('GET', `recommendations/${type}`) as { songs: Song[]; source: string };
+  return r;
+}
+
+export async function getWrapped(year?: number): Promise<WrappedStats> {
+  const path = year ? `recommendations/wrapped?year=${year}` : 'recommendations/wrapped';
+  return (await apiCall('GET', path)) as WrappedStats;
+}
+
+export async function generateWrappedSummary(year?: number): Promise<string> {
+  const path = year ? `recommendations/wrapped/summary?year=${year}` : 'recommendations/wrapped/summary';
+  const r = await apiCall('POST', path) as { summary: string };
+  return r.summary;
+}
+
+// ── Lyrics (OpenSubsonic extension) ──────────────────────────────────────────
+
 export async function getLyrics(songId: string): Promise<StructuredLyrics | null> {
   try {
     const r = await get<{ lyricsList?: { structuredLyrics?: StructuredLyrics[] } }>(
