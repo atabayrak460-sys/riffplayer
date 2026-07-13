@@ -61,7 +61,7 @@ async function serveFile(
   rangeHeader: string | undefined,
   forceDownload: boolean,
   reply: FastifyReply,
-): Promise<void> {
+): Promise<FastifyReply> {
   reply.header('Accept-Ranges', 'bytes');
   reply.header('Content-Type', contentType);
 
@@ -87,16 +87,15 @@ async function serveFile(
         await fh.read(buf, 0, length, start);
         reply.code(206);
         reply.header('Content-Range', `bytes ${start}-${end}/${fileSize}`);
-        reply.send(buf);
+        return reply.send(buf);
       } finally {
         await fh.close();
       }
-      return;
     }
   }
 
   // Full file: stream directly — Fastify will use chunked encoding
-  reply.send(createReadStream(filePath));
+  return reply.send(createReadStream(filePath));
 }
 
 // ── ffmpeg transcoded serve ───────────────────────────────────────────────────
@@ -107,7 +106,7 @@ function serveTranscoded(
   maxBitRate: number,
   reply: FastifyReply,
   replayGainDb: number | null = null,
-): void {
+): FastifyReply {
   const fmt = TRANSCODE_FORMATS[targetFmt] ?? TRANSCODE_FORMATS.mp3;
 
   // Combine replaygain gain + optional target normalisation to -14 LUFS standard
@@ -132,12 +131,12 @@ function serveTranscoded(
   });
 
   reply.header('Content-Type', fmt.mime);
-  reply.send(ff.stdout);
+  return reply.send(ff.stdout);
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async function streamHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+async function streamHandler(req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> {
   const { id, maxBitRate = '0', format, f } = p(req);
   if (!id)
     return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id required' });
@@ -173,20 +172,19 @@ async function streamHandler(req: FastifyRequest, reply: FastifyReply): Promise<
     (requestedBitRate > 0 && track.bitrate != null && track.bitrate > requestedBitRate);
 
   if (needsTranscode) {
-    serveTranscoded(track.path, requestedFmt ?? 'mp3', requestedBitRate, reply, track.replaygain_track);
-  } else {
-    await serveFile(
-      track.path,
-      fileSize,
-      fileContentType(track.path),
-      req.headers.range,
-      false,
-      reply,
-    );
+    return serveTranscoded(track.path, requestedFmt ?? 'mp3', requestedBitRate, reply, track.replaygain_track);
   }
+  return serveFile(
+    track.path,
+    fileSize,
+    fileContentType(track.path),
+    req.headers.range,
+    false,
+    reply,
+  );
 }
 
-async function downloadHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+async function downloadHandler(req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> {
   const { id, f } = p(req);
   if (!id)
     return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id required' });
@@ -204,7 +202,7 @@ async function downloadHandler(req: FastifyRequest, reply: FastifyReply): Promis
     return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'File not found on disk' });
   }
 
-  await serveFile(
+  return serveFile(
     track.path,
     fileSize,
     fileContentType(track.path),

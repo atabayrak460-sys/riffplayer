@@ -28,6 +28,24 @@ const MIME_TO_EXT: Record<string, string> = {
   'image/webp': 'webp',
 };
 
+/**
+ * Normalise a raw MIME type string from an ID3/Vorbis tag before looking it up
+ * in MIME_TO_EXT. Real-world files contain many variants:
+ *   • 'image/jpg'  — technically invalid but produced by many taggers
+ *   • 'IMAGE/JPEG' — uppercase from some Windows tools
+ *   • 'image/jpeg; charset=utf-8' — params from some encoders
+ *   • 'jpg'/'png'  — bare extension strings from ID3v2.2-era PIC frames
+ */
+function normalizeMime(raw: string): string {
+  const s = raw.toLowerCase().split(';')[0].trim();
+  if (s === 'image/jpg') return 'image/jpeg';
+  if (s === 'jpg' || s === 'jpeg') return 'image/jpeg';
+  if (s === 'png') return 'image/png';
+  if (s === 'gif') return 'image/gif';
+  if (s === 'webp') return 'image/webp';
+  return s;
+}
+
 function mimeFromPath(filePath: string): string {
   const ext = path.extname(filePath).slice(1).toLowerCase();
   return EXT_TO_MIME[ext] ?? 'application/octet-stream';
@@ -95,12 +113,15 @@ async function extractAndCacheAlbumArt(
     try {
       const metadata = await parseFile(track.path, { skipCovers: false });
       const picture = metadata.common.picture?.[0];
-      if (picture && MIME_TO_EXT[picture.format]) {
-        await mkdir(coversDir, { recursive: true });
-        const ext = MIME_TO_EXT[picture.format];
-        const cachePath = path.join(coversDir, `al-${albumId}.${ext}`);
-        await writeFile(cachePath, picture.data);
-        return { filePath: cachePath, mime: picture.format };
+      if (picture) {
+        const mime = normalizeMime(picture.format);
+        const ext = MIME_TO_EXT[mime];
+        if (ext) {
+          await mkdir(coversDir, { recursive: true });
+          const cachePath = path.join(coversDir, `al-${albumId}.${ext}`);
+          await writeFile(cachePath, picture.data);
+          return { filePath: cachePath, mime };
+        }
       }
     } catch {
       // fall through to Cover Art Archive
@@ -111,7 +132,7 @@ async function extractAndCacheAlbumArt(
   return fetchFromCoverArtArchive(albumId, coversDir);
 }
 
-async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> {
   const { id, f } = p(req);
   if (!id)
     return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id required' });
@@ -144,8 +165,7 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
       return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'No cover art' });
     }
     reply.header('Content-Type', mimeFromPath(artist.image_path));
-    reply.send(createReadStream(artist.image_path));
-    return;
+    return reply.send(createReadStream(artist.image_path));
   }
 
   // Album: check manual cover_path first
@@ -158,8 +178,7 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
 
   if (album.cover_path) {
     reply.header('Content-Type', mimeFromPath(album.cover_path));
-    reply.send(createReadStream(album.cover_path));
-    return;
+    return reply.send(createReadStream(album.cover_path));
   }
 
   // Fall back to embedded art, cached to disk
@@ -169,7 +188,7 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
   }
 
   reply.header('Content-Type', art.mime);
-  reply.send(createReadStream(art.filePath));
+  return reply.send(createReadStream(art.filePath));
 }
 
 export async function coverArtPlugin(app: FastifyInstance): Promise<void> {

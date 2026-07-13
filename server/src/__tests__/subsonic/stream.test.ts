@@ -60,6 +60,7 @@ describe('stream.view', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toMatch(/audio\/wav/);
     expect(res.headers['accept-ranges']).toBe('bytes');
+    expect(res.rawPayload.length).toBe(44);
   });
 
   it('returns 206 Partial Content for a range request', async () => {
@@ -118,6 +119,7 @@ describe('download.view', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-disposition']).toMatch(/attachment/);
     expect(res.headers['content-disposition']).toMatch(/test\.wav/);
+    expect(res.rawPayload.length).toBe(44);
   });
 
   it('supports range requests on download too', async () => {
