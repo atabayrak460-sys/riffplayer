@@ -108,4 +108,29 @@ describe('playlists', () => {
     const pl = sr(res.body).playlist as Record<string, unknown>;
     expect((pl.entry as unknown[]).length).toBe(0);
   });
+
+  it('omits coverArt when no cover has been uploaded', async () => {
+    const create = await app.inject({ url: `/rest/createPlaylist.view?${auth}&name=NoCover` });
+    const plId = (sr(create.body).playlist as Record<string, unknown>).id as string;
+
+    const res = await app.inject({ url: `/rest/getPlaylist.view?${auth}&id=${plId}` });
+    const pl = sr(res.body).playlist as Record<string, unknown>;
+    expect(pl.coverArt).toBeUndefined();
+  });
+
+  it('includes coverArt once cover_path is set', async () => {
+    const create = await app.inject({ url: `/rest/createPlaylist.view?${auth}&name=Covered` });
+    const plId = (sr(create.body).playlist as Record<string, unknown>).id as string;
+
+    getDb().prepare('UPDATE playlists SET cover_path = ? WHERE id = ?').run('/data/covers/pl-1.jpg', plId);
+
+    const res = await app.inject({ url: `/rest/getPlaylist.view?${auth}&id=${plId}` });
+    const pl = sr(res.body).playlist as Record<string, unknown>;
+    expect(pl.coverArt).toBe(`pl-${plId}`);
+
+    const list = await app.inject({ url: `/rest/getPlaylists.view?${auth}` });
+    const playlists = (sr(list.body).playlists as Record<string, unknown[]>).playlist;
+    const covered = playlists.find((p) => (p as Record<string, unknown>).id === plId) as Record<string, unknown>;
+    expect(covered.coverArt).toBe(`pl-${plId}`);
+  });
 });

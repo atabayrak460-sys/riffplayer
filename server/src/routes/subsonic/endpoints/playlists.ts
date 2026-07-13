@@ -28,6 +28,7 @@ interface PlaylistRow {
   updated_at: number;
   songCount: number;
   duration: number;
+  cover_path: string | null;
 }
 
 function playlistAttrs(row: PlaylistRow, userId: number) {
@@ -41,11 +42,12 @@ function playlistAttrs(row: PlaylistRow, userId: number) {
     created: isoDate(row.created_at),
     changed: isoDate(row.updated_at),
     allowedUser: row.owner_id === userId ? undefined : row.owner,
+    coverArt: row.cover_path ? `pl-${row.id}` : undefined,
   };
 }
 
 const PLAYLIST_QUERY = `
-  SELECT p.id, p.name, p.owner_id, p.is_public, p.created_at, p.updated_at,
+  SELECT p.id, p.name, p.owner_id, p.is_public, p.created_at, p.updated_at, p.cover_path,
          u.username AS owner,
          COUNT(pt.track_id) AS songCount,
          COALESCE(SUM(t.duration_s), 0) AS duration

@@ -85,6 +85,11 @@ export function PlaylistDetailPage() {
     mutationFn: (file: File) => uploadPlaylistCover(id!, file),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['playlist', id] }),
   });
+  const coverError = coverMutation.isError
+    ? coverMutation.error instanceof Error
+      ? coverMutation.error.message
+      : 'Upload failed'
+    : null;
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -141,8 +146,12 @@ export function PlaylistDetailPage() {
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) coverMutation.mutate(f);
+              e.target.value = '';
             }}
           />
+          {coverError && (
+            <p className="absolute top-full mt-1 text-xs text-red-400 w-36">{coverError}</p>
+          )}
         </div>
 
         <div className="flex flex-col justify-end gap-2">

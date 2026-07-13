@@ -139,7 +139,7 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
 
   const db = getDb();
 
-  let itemType: 'album' | 'artist';
+  let itemType: 'album' | 'artist' | 'playlist';
   let itemId: number;
 
   if (id.startsWith('al-')) {
@@ -147,6 +147,9 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
     itemId = Number(id.slice(3));
   } else if (id.startsWith('ar-')) {
     itemType = 'artist';
+    itemId = Number(id.slice(3));
+  } else if (id.startsWith('pl-')) {
+    itemType = 'playlist';
     itemId = Number(id.slice(3));
   } else {
     itemType = 'album';
@@ -166,6 +169,17 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
     }
     reply.header('Content-Type', mimeFromPath(artist.image_path));
     return reply.send(createReadStream(artist.image_path));
+  }
+
+  if (itemType === 'playlist') {
+    const playlist = db
+      .prepare('SELECT cover_path FROM playlists WHERE id = ?')
+      .get(itemId) as { cover_path: string | null } | undefined;
+    if (!playlist || !playlist.cover_path) {
+      return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'No cover art' });
+    }
+    reply.header('Content-Type', mimeFromPath(playlist.cover_path));
+    return reply.send(createReadStream(playlist.cover_path));
   }
 
   // Album: check manual cover_path first

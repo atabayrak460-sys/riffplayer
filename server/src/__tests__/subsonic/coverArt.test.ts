@@ -291,3 +291,38 @@ describe('getCoverArt.view — artist image', () => {
     expect((body.error as Record<string, unknown>).code).toBe(70);
   });
 });
+
+describe('getCoverArt.view — playlist cover', () => {
+  it('serves an uploaded playlist cover with correct MIME', async () => {
+    const create = await app.inject({ url: `/rest/createPlaylist.view?${auth}&name=CoverTest` });
+    const plId = (JSON.parse(create.body)['subsonic-response'] as Record<string, Record<string, unknown>>)
+      .playlist.id as string;
+
+    const coverFile = path.join(tmpDir, 'playlist-cover.png');
+    await writeFile(coverFile, TINY_PNG);
+    getDb().prepare('UPDATE playlists SET cover_path = ? WHERE id = ?').run(coverFile, plId);
+
+    const res = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=pl-${plId}` });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/image\/png/);
+    expect(res.rawPayload.length).toBeGreaterThan(0);
+  });
+
+  it('returns DATA_NOT_FOUND when playlist has no cover uploaded', async () => {
+    const create = await app.inject({ url: `/rest/createPlaylist.view?${auth}&name=NoCoverYet` });
+    const plId = (JSON.parse(create.body)['subsonic-response'] as Record<string, Record<string, unknown>>)
+      .playlist.id as string;
+
+    const res = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=pl-${plId}` });
+    const body = JSON.parse(res.body)['subsonic-response'] as Record<string, unknown>;
+    expect(body.status).toBe('failed');
+    expect((body.error as Record<string, unknown>).code).toBe(70);
+  });
+
+  it('returns DATA_NOT_FOUND for unknown playlist id', async () => {
+    const res = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=pl-99999` });
+    const body = JSON.parse(res.body)['subsonic-response'] as Record<string, unknown>;
+    expect(body.status).toBe('failed');
+    expect((body.error as Record<string, unknown>).code).toBe(70);
+  });
+});
