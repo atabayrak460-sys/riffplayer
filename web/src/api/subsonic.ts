@@ -137,6 +137,17 @@ export async function search(query: string): Promise<SearchResult> {
   };
 }
 
+export async function getAllSongs(offset: number, limit: number): Promise<Song[]> {
+  const r = await get<{ searchResult3: { song?: Song[] } }>('search3.view', {
+    query: '',
+    artistCount: '0',
+    albumCount: '0',
+    songCount: String(limit),
+    songOffset: String(offset),
+  });
+  return r.searchResult3.song ?? [];
+}
+
 // ── Favorites ───────────────────────────────────────────────────────────────
 
 export async function getStarred(): Promise<{ artist: Artist[]; album: Album[]; song: Song[] }> {
@@ -190,13 +201,23 @@ export async function deletePlaylist(id: string): Promise<void> {
   await get('deletePlaylist.view', { id });
 }
 
-export async function createPlaylistWithName(name: string): Promise<Playlist> {
-  const r = await get<{ playlist: Playlist }>('createPlaylist.view', { name });
+export async function createPlaylistWithName(name: string, comment?: string): Promise<Playlist> {
+  const extra: Record<string, string> = { name };
+  if (comment) extra.comment = comment;
+  const r = await get<{ playlist: Playlist }>('createPlaylist.view', extra);
   return r.playlist;
 }
 
 export async function renamePlaylist(playlistId: string, name: string): Promise<void> {
   await get('updatePlaylist.view', { playlistId, name });
+}
+
+export async function setPlaylistDescription(playlistId: string, comment: string): Promise<void> {
+  await get('updatePlaylist.view', { playlistId, comment });
+}
+
+export async function addSongToPlaylist(playlistId: string, songId: string): Promise<void> {
+  await get('updatePlaylist.view', { playlistId, songIdToAdd: songId });
 }
 
 // ── Custom /api/v1 endpoints (Subsonic auth via query params) ────────────────

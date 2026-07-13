@@ -133,4 +133,44 @@ describe('playlists', () => {
     const covered = playlists.find((p) => (p as Record<string, unknown>).id === plId) as Record<string, unknown>;
     expect(covered.coverArt).toBe(`pl-${plId}`);
   });
+
+  it('omits comment when no description was set', async () => {
+    const create = await app.inject({ url: `/rest/createPlaylist.view?${auth}&name=NoDesc` });
+    expect((sr(create.body).playlist as Record<string, unknown>).comment).toBeUndefined();
+  });
+
+  it('createPlaylist accepts an initial comment (description)', async () => {
+    const create = await app.inject({
+      url: `/rest/createPlaylist.view?${auth}&name=WithDesc&comment=${encodeURIComponent('My road trip mix')}`,
+    });
+    const pl = sr(create.body).playlist as Record<string, unknown>;
+    expect(pl.comment).toBe('My road trip mix');
+
+    const res = await app.inject({ url: `/rest/getPlaylist.view?${auth}&id=${pl.id}` });
+    expect((sr(res.body).playlist as Record<string, unknown>).comment).toBe('My road trip mix');
+  });
+
+  it('updatePlaylist sets the comment (description) on an existing playlist', async () => {
+    const create = await app.inject({ url: `/rest/createPlaylist.view?${auth}&name=DescLater` });
+    const plId = (sr(create.body).playlist as Record<string, unknown>).id as string;
+
+    await app.inject({
+      url: `/rest/updatePlaylist.view?${auth}&playlistId=${plId}&comment=${encodeURIComponent('Updated description')}`,
+    });
+
+    const res = await app.inject({ url: `/rest/getPlaylist.view?${auth}&id=${plId}` });
+    expect((sr(res.body).playlist as Record<string, unknown>).comment).toBe('Updated description');
+  });
+
+  it('updatePlaylist can clear the comment with an empty string', async () => {
+    const create = await app.inject({
+      url: `/rest/createPlaylist.view?${auth}&name=ClearDesc&comment=Initial`,
+    });
+    const plId = (sr(create.body).playlist as Record<string, unknown>).id as string;
+
+    await app.inject({ url: `/rest/updatePlaylist.view?${auth}&playlistId=${plId}&comment=` });
+
+    const res = await app.inject({ url: `/rest/getPlaylist.view?${auth}&id=${plId}` });
+    expect((sr(res.body).playlist as Record<string, unknown>).comment).toBeUndefined();
+  });
 });

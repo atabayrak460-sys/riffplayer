@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getPlaylists, createPlaylistWithName, deletePlaylist } from '../api/subsonic';
+import { getPlaylists, createPlaylistWithName, uploadPlaylistCover, deletePlaylist } from '../api/subsonic';
 
 export function PlaylistsPage() {
   const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
   const [newName, setNewName] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [newCoverFile, setNewCoverFile] = useState<File | null>(null);
   const [creating, setCreating] = useState(false);
 
   const { data: playlists = [], isLoading } = useQuery({
@@ -14,10 +17,21 @@ export function PlaylistsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (name: string) => createPlaylistWithName(name),
+    mutationFn: async ({ name, comment, cover }: { name: string; comment: string; cover: File | null }) => {
+      const playlist = await createPlaylistWithName(name, comment || undefined);
+      if (cover) {
+        // Best-effort: the playlist itself is already created either way, and its
+        // cover can always be set later from the playlist detail page.
+        await uploadPlaylistCover(playlist.id, cover).catch(() => {});
+      }
+      return playlist;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['playlists'] });
       setNewName('');
+      setNewDescription('');
+      setNewCoverFile(null);
+      if (fileRef.current) fileRef.current.value = '';
       setCreating(false);
     },
   });
@@ -29,7 +43,9 @@ export function PlaylistsPage() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (newName.trim()) createMutation.mutate(newName.trim());
+    if (newName.trim()) {
+      createMutation.mutate({ name: newName.trim(), comment: newDescription.trim(), cover: newCoverFile });
+    }
   };
 
   return (
@@ -45,29 +61,57 @@ export function PlaylistsPage() {
       </div>
 
       {creating && (
-        <form onSubmit={submit} className="flex gap-2 mb-6">
+        <form onSubmit={submit} className="flex flex-col gap-3 mb-6 bg-zinc-800/50 border border-zinc-700 rounded-lg p-4">
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Playlist name"
             autoFocus
-            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-brand"
+            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-brand"
           />
-          <button
-            type="submit"
-            disabled={createMutation.isPending}
-            className="bg-brand hover:bg-brand-dim text-white text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-60"
-          >
-            Create
-          </button>
-          <button
-            type="button"
-            onClick={() => setCreating(false)}
-            className="text-zinc-400 hover:text-white text-sm px-3 py-2"
-          >
-            Cancel
-          </button>
+          <textarea
+            value={newDescription}
+            onChange={(e) => setNewDescription(e.target.value)}
+            placeholder="Description (optional)"
+            rows={2}
+            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-500 resize-none focus:outline-none focus:border-brand"
+          />
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="text-sm text-zinc-300 hover:text-white bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              {newCoverFile ? 'Change cover…' : 'Choose cover…'}
+            </button>
+            {newCoverFile && (
+              <span className="text-xs text-zinc-400 truncate max-w-[12rem]">{newCoverFile.name}</span>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => setNewCoverFile(e.target.files?.[0] ?? null)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={createMutation.isPending || !newName.trim()}
+              className="bg-brand hover:bg-brand-dim text-white text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-60"
+            >
+              {createMutation.isPending ? 'Creating…' : 'Create'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreating(false)}
+              className="text-zinc-400 hover:text-white text-sm px-3 py-2"
+            >
+              Cancel
+            </button>
+          </div>
         </form>
       )}
 

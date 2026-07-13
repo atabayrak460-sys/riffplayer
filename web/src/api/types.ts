@@ -56,6 +56,8 @@ export interface Playlist {
   created: string;
   changed: string;
   coverArt?: string;
+  /** Playlist description — "comment" is the Subsonic API's field name for it. */
+  comment?: string;
   entry?: Song[];
 }
 

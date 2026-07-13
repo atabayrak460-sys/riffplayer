@@ -29,6 +29,7 @@ interface PlaylistRow {
   songCount: number;
   duration: number;
   cover_path: string | null;
+  description: string | null;
 }
 
 function playlistAttrs(row: PlaylistRow, userId: number) {
@@ -43,11 +44,13 @@ function playlistAttrs(row: PlaylistRow, userId: number) {
     changed: isoDate(row.updated_at),
     allowedUser: row.owner_id === userId ? undefined : row.owner,
     coverArt: row.cover_path ? `pl-${row.id}` : undefined,
+    // "comment" is the Subsonic API's field name for a playlist's description.
+    comment: row.description || undefined,
   };
 }
 
 const PLAYLIST_QUERY = `
-  SELECT p.id, p.name, p.owner_id, p.is_public, p.created_at, p.updated_at, p.cover_path,
+  SELECT p.id, p.name, p.owner_id, p.is_public, p.created_at, p.updated_at, p.cover_path, p.description,
          u.username AS owner,
          COUNT(pt.track_id) AS songCount,
          COALESCE(SUM(t.duration_s), 0) AS duration
@@ -98,7 +101,7 @@ function getPlaylist(req: FastifyRequest, reply: FastifyReply): void {
 
 function createPlaylist(req: FastifyRequest, reply: FastifyReply): void {
   const params = p(req);
-  const { f, name } = params as Record<string, string | undefined>;
+  const { f, name, comment } = params as Record<string, string | undefined>;
   const songIds = ([] as string[]).concat((params.songId as string | string[] | undefined) ?? []);
 
   if (!name) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'name required' });
@@ -107,7 +110,8 @@ function createPlaylist(req: FastifyRequest, reply: FastifyReply): void {
   const userId = req.subsonicUser!.id;
 
   const playlistId = Number(
-    db.prepare('INSERT INTO playlists (owner_id, name) VALUES (?, ?)').run(userId, name).lastInsertRowid,
+    db.prepare('INSERT INTO playlists (owner_id, name, description) VALUES (?, ?, ?)')
+      .run(userId, name, comment ?? null).lastInsertRowid,
   );
 
   if (songIds.length) {
@@ -152,6 +156,7 @@ function updatePlaylist(req: FastifyRequest, reply: FastifyReply): void {
 
   db.transaction(() => {
     if (name)     db.prepare('UPDATE playlists SET name = ?, updated_at = unixepoch() WHERE id = ?').run(name, numId);
+    if (comment != null) db.prepare('UPDATE playlists SET description = ?, updated_at = unixepoch() WHERE id = ?').run(comment, numId);
     if (pub != null) db.prepare('UPDATE playlists SET is_public = ?, updated_at = unixepoch() WHERE id = ?').run(pub === 'true' ? 1 : 0, numId);
 
     // Add songs at the end

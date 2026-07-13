@@ -7,6 +7,7 @@ import { AlbumsPage } from './pages/AlbumsPage';
 import { AlbumDetailPage } from './pages/AlbumDetailPage';
 import { ArtistsPage } from './pages/ArtistsPage';
 import { ArtistDetailPage } from './pages/ArtistDetailPage';
+import { AllSongsPage } from './pages/AllSongsPage';
 import { QueuePage } from './pages/QueuePage';
 import { SearchPage } from './pages/SearchPage';
 import { FavoritesPage } from './pages/FavoritesPage';
@@ -46,6 +47,7 @@ const router = createBrowserRouter([
           { path: 'albums/:id', element: <AlbumDetailPage /> },
           { path: 'artists', element: <ArtistsPage /> },
           { path: 'artists/:id', element: <ArtistDetailPage /> },
+          { path: 'songs', element: <AllSongsPage /> },
           { path: 'queue', element: <QueuePage /> },
           { path: 'search', element: <SearchPage /> },
           { path: 'favorites', element: <FavoritesPage /> },

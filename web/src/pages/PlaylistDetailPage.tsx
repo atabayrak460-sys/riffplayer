@@ -10,7 +10,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
-  getPlaylist, renamePlaylist, deletePlaylist,
+  getPlaylist, renamePlaylist, setPlaylistDescription, deletePlaylist,
   reorderPlaylistTracks, uploadPlaylistCover,
 } from '../api/subsonic';
 import { usePlayerStore } from '../store/player';
@@ -52,6 +52,8 @@ export function PlaylistDetailPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [descriptionValue, setDescriptionValue] = useState('');
 
   const { data: playlist, isLoading } = useQuery({
     queryKey: ['playlist', id],
@@ -65,6 +67,15 @@ export function PlaylistDetailPage() {
       qc.invalidateQueries({ queryKey: ['playlist', id] });
       qc.invalidateQueries({ queryKey: ['playlists'] });
       setEditingName(false);
+    },
+  });
+
+  const descriptionMutation = useMutation({
+    mutationFn: (comment: string) => setPlaylistDescription(id!, comment),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['playlist', id] });
+      qc.invalidateQueries({ queryKey: ['playlists'] });
+      setEditingDescription(false);
     },
   });
 
@@ -180,6 +191,35 @@ export function PlaylistDetailPage() {
             </h1>
           )}
           <p className="text-sm text-zinc-400">{songs.length} tracks</p>
+
+          {editingDescription ? (
+            <form
+              onSubmit={(e) => { e.preventDefault(); descriptionMutation.mutate(descriptionValue); }}
+              className="flex flex-col gap-1.5 max-w-md"
+            >
+              <textarea
+                autoFocus
+                rows={2}
+                value={descriptionValue}
+                onChange={(e) => setDescriptionValue(e.target.value)}
+                placeholder="Add a description…"
+                className="bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-white text-sm resize-none focus:outline-none focus:border-brand"
+              />
+              <div className="flex gap-2">
+                <button type="submit" className="text-brand text-sm">Save</button>
+                <button type="button" onClick={() => setEditingDescription(false)} className="text-zinc-400 text-sm">Cancel</button>
+              </div>
+            </form>
+          ) : (
+            <p
+              className="text-sm text-zinc-400 hover:text-zinc-300 transition-colors cursor-pointer max-w-md"
+              onClick={() => { setDescriptionValue(playlist.comment ?? ''); setEditingDescription(true); }}
+              title="Click to edit description"
+            >
+              {playlist.comment || <span className="italic text-zinc-600">Add a description…</span>}
+            </p>
+          )}
+
           <div className="flex items-center gap-3 mt-1">
             <button
               onClick={() => playQueue(songs)}

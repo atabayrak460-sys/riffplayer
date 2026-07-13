@@ -1,5 +1,6 @@
 import { usePlayerStore } from '../store/player';
 import { StarButton } from './StarButton';
+import { AddToPlaylistMenu } from './AddToPlaylistMenu';
 import type { Song } from '../api/types';
 
 interface Props {
@@ -55,8 +56,9 @@ export function SongRow({ song, queue, index, showAlbum = false }: Props) {
         {!showAlbum && <p className="text-xs text-zinc-400 truncate">{song.artist}</p>}
       </div>
 
-      {/* Duration + star */}
+      {/* Duration + star + add-to-playlist */}
       <div className="flex items-center gap-3 flex-shrink-0">
+        <AddToPlaylistMenu songId={song.id} className="opacity-0 group-hover:opacity-100 transition-opacity" />
         <StarButton starred={!!song.starred} opts={{ id: song.id }} />
         <span className="text-sm text-zinc-400 w-10 text-right">
           {formatDuration(song.duration)}
