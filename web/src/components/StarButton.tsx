@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { star, unstar } from '../api/subsonic';
+import { useFavoritesStore, selectStarred, type FavoriteType } from '../store/favorites';
 
 interface Props {
   starred: boolean;
@@ -8,26 +9,37 @@ interface Props {
   className?: string;
 }
 
+function target(opts: Props['opts']): { type: FavoriteType; id: string } {
+  if (opts.id) return { type: 'track', id: opts.id };
+  if (opts.albumId) return { type: 'album', id: opts.albumId };
+  return { type: 'artist', id: opts.artistId! };
+}
+
 export function StarButton({ starred: initialStarred, onToggle, opts, className = '' }: Props) {
-  const [starred, setStarred] = useState(initialStarred);
+  const { type, id } = target(opts);
+  const hydrate = useFavoritesStore((s) => s.hydrate);
+  const setGlobalStarred = useFavoritesStore((s) => s.setStarred);
+  const storedStarred = useFavoritesStore(selectStarred(type, id));
+  const starred = storedStarred ?? initialStarred;
   const [loading, setLoading] = useState(false);
+
+  // Seed the shared store from this component's known value the first time
+  // this item is seen — later toggles anywhere in the app take precedence.
+  useEffect(() => {
+    hydrate(type, id, initialStarred);
+  }, [type, id, initialStarred, hydrate]);
 
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (loading) return;
     setLoading(true);
+    const next = !starred;
+    setGlobalStarred(type, id, next); // optimistic — updates every instance immediately
     try {
-      if (starred) {
-        await unstar(opts);
-        setStarred(false);
-        onToggle?.(false);
-      } else {
-        await star(opts);
-        setStarred(true);
-        onToggle?.(true);
-      }
+      if (next) await star(opts); else await unstar(opts);
+      onToggle?.(next);
     } catch {
-      // ignore — UI stays as-is
+      setGlobalStarred(type, id, !next); // revert on failure
     } finally {
       setLoading(false);
     }
