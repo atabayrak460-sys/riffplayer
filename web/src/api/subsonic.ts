@@ -269,6 +269,18 @@ export async function uploadPlaylistCover(playlistId: string, file: File): Promi
   await apiPostForm(`playlists/${playlistId}/cover`, form);
 }
 
+// ── Play history ─────────────────────────────────────────────────────────────
+
+export async function getRecentlyPlayed(): Promise<Song[]> {
+  const r = await apiCall('GET', 'history/recent') as { songs: Song[] };
+  return r.songs;
+}
+
+export async function getMostPlayed(): Promise<Song[]> {
+  const r = await apiCall('GET', 'history/most-played') as { songs: Song[] };
+  return r.songs;
+}
+
 // ── Lyrics (OpenSubsonic extension) ─────────────────────────────────────────
 
 export interface LyricLine {

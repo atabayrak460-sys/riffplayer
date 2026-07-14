@@ -41,16 +41,22 @@ JOIN artists ar ON ar.id = al.artist_id
 LEFT JOIN tracks t ON t.album_id = al.id
 LEFT JOIN favorites f ON f.item_type = 'album' AND f.item_id = al.id AND f.user_id = ?`;
 
-const SONG_COLS = `
+// Column list only, for queries that need to append additional SELECT expressions
+// (e.g. an aggregate like COUNT(...)) before the FROM/JOIN clause.
+export const SONG_SELECT_LIST = `
   t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
   t.format, t.path, t.added_at, t.album_id, t.artist_id,
   t.replaygain_track, t.replaygain_album,
   ar.name AS artist_name, al.name AS album_name, al.year,
-  f.created_at AS starred
+  f.created_at AS starred`;
+
+export const SONG_FROM = `
 FROM tracks t
 JOIN artists ar ON ar.id = t.artist_id
 JOIN albums al ON al.id = t.album_id
 LEFT JOIN favorites f ON f.item_type = 'track' AND f.item_id = t.id AND f.user_id = ?`;
+
+export const SONG_COLS = `${SONG_SELECT_LIST}${SONG_FROM}`;
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 

@@ -11,7 +11,8 @@ import { AllSongsPage } from './pages/AllSongsPage';
 import { QueuePage } from './pages/QueuePage';
 import { SearchPage } from './pages/SearchPage';
 import { FavoritesPage } from './pages/FavoritesPage';
-import { RecentPage } from './pages/RecentPage';
+import { RecentlyPlayedPage } from './pages/RecentlyPlayedPage';
+import { MostPlayedPage } from './pages/MostPlayedPage';
 import { PlaylistsPage } from './pages/PlaylistsPage';
 import { PlaylistDetailPage } from './pages/PlaylistDetailPage';
 import { AdminPage } from './pages/admin/AdminPage';
@@ -51,7 +52,8 @@ const router = createBrowserRouter([
           { path: 'queue', element: <QueuePage /> },
           { path: 'search', element: <SearchPage /> },
           { path: 'favorites', element: <FavoritesPage /> },
-          { path: 'recent', element: <RecentPage /> },
+          { path: 'recent', element: <RecentlyPlayedPage /> },
+          { path: 'most-played', element: <MostPlayedPage /> },
           { path: 'playlists', element: <PlaylistsPage /> },
           { path: 'playlists/:id', element: <PlaylistDetailPage /> },
           { path: 'settings', element: <UserSettingsPage /> },

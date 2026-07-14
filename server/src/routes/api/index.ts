@@ -8,6 +8,7 @@ import { decryptPassword, hashPassword, encryptPassword, verifyPasswordHash } fr
 import { getOrCreateServerSecret } from '../../auth/seed.js';
 import { scanLibrary } from '../../indexer/scan.js';
 import { recommendationsPlugin } from './recommendations.js';
+import { historyPlugin } from './history.js';
 
 function getCoversDir(): string {
   return process.env.COVERS_DIR ?? path.join(process.cwd(), 'covers');
@@ -333,4 +334,10 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
     reco.addHook('preHandler', apiAuth);
     reco.register(recommendationsPlugin);
   }, { prefix: '/recommendations' });
+
+  // Track-level play history — all require auth, registered under /history/*
+  app.register(async (hist) => {
+    hist.addHook('preHandler', apiAuth);
+    hist.register(historyPlugin);
+  }, { prefix: '/history' });
 }
