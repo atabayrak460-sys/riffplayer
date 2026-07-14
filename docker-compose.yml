@@ -13,7 +13,7 @@ services:
     volumes:
       - cadence_data:/data
       # Mount your music library here (read-only is fine):
-      # - /path/to/music:/music:ro
+      - ./test-music:/music:ro
     restart: unless-stopped
     healthcheck:
       test:

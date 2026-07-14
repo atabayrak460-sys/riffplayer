@@ -7,3 +7,4 @@ build/
 *.db-wal
 covers/
 .DS_Store
+test-music/
