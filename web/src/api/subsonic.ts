@@ -259,6 +259,10 @@ async function apiPostForm(path: string, form: FormData): Promise<void> {
   await apiCall('POST', path, undefined, form);
 }
 
+async function apiDelete(path: string): Promise<void> {
+  await apiCall('DELETE', path);
+}
+
 export async function reorderPlaylistTracks(playlistId: string, trackIds: string[]): Promise<void> {
   await apiPut(`playlists/${playlistId}/tracks`, { trackIds });
 }
@@ -267,6 +271,16 @@ export async function uploadPlaylistCover(playlistId: string, file: File): Promi
   const form = new FormData();
   form.append('file', file);
   await apiPostForm(`playlists/${playlistId}/cover`, form);
+}
+
+export async function uploadArtistCover(artistId: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.append('file', file);
+  await apiPostForm(`artists/${artistId}/cover`, form);
+}
+
+export async function removeArtistCover(artistId: string): Promise<void> {
+  await apiDelete(`artists/${artistId}/cover`);
 }
 
 // ── Play history ─────────────────────────────────────────────────────────────
