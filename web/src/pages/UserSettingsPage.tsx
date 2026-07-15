@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { patchMyPreferences } from '../api/subsonic';
 import { useAuthStore } from '../store/auth';
+import { useDownloadsStore, type DownloadTarget } from '../store/downloads';
 
 // Fetch current user preferences via /api/v1/users/me
 async function fetchMe() {
@@ -32,6 +33,9 @@ export function UserSettingsPage() {
     mutationFn: patchMyPreferences,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['user-me'] }),
   });
+
+  const defaultTarget = useDownloadsStore((s) => s.defaultTarget);
+  const setDefaultTarget = useDownloadsStore((s) => s.setDefaultTarget);
 
   const prefs = data?.preferences;
   const [fmt, setFmt] = useState('');
@@ -83,6 +87,23 @@ export function UserSettingsPage() {
         >
           Save transcoding
         </button>
+      </section>
+
+      <section>
+        <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">Downloads</h2>
+        <p className="text-xs text-zinc-400 mb-3">
+          Where "Download" sends tracks and playlists by default. This only applies on this device
+          — it isn't synced to your account.
+        </p>
+        <select
+          value={defaultTarget}
+          onChange={(e) => setDefaultTarget(e.target.value as DownloadTarget)}
+          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+        >
+          <option value="ask">Always ask</option>
+          <option value="app">In Cadence (offline playback)</option>
+          <option value="device">This device's Downloads folder</option>
+        </select>
       </section>
 
       <section>

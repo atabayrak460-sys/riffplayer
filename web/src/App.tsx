@@ -15,6 +15,8 @@ import { RecentlyPlayedPage } from './pages/RecentlyPlayedPage';
 import { MostPlayedPage } from './pages/MostPlayedPage';
 import { PlaylistsPage } from './pages/PlaylistsPage';
 import { PlaylistDetailPage } from './pages/PlaylistDetailPage';
+import { DownloadedPage } from './pages/DownloadedPage';
+import { OfflinePlaylistPage } from './pages/OfflinePlaylistPage';
 import { AdminPage } from './pages/admin/AdminPage';
 import { UsersPage } from './pages/admin/UsersPage';
 import { LibrariesPage } from './pages/admin/LibrariesPage';
@@ -56,6 +58,8 @@ const router = createBrowserRouter([
           { path: 'most-played', element: <MostPlayedPage /> },
           { path: 'playlists', element: <PlaylistsPage /> },
           { path: 'playlists/:id', element: <PlaylistDetailPage /> },
+          { path: 'downloaded', element: <DownloadedPage /> },
+          { path: 'downloaded/playlists/:id', element: <OfflinePlaylistPage /> },
           { path: 'settings', element: <UserSettingsPage /> },
           { path: 'discover', element: <RecommendationsPage /> },
           { path: 'wrapped', element: <WrappedPage /> },

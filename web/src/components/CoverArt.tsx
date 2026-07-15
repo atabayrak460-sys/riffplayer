@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { coverArtUrl } from '../api/subsonic';
+import { getCoverBlob } from '../lib/offlineDb';
 
 interface Props {
   id?: string;
@@ -9,9 +10,43 @@ interface Props {
 }
 
 export function CoverArt({ id, size = 200, className = '', alt = '' }: Props) {
-  const [failed, setFailed] = useState(false);
+  // 'network' tries the live server first (unchanged default behavior); on
+  // failure (offline, 404, etc.) we fall back to a locally downloaded cover
+  // before giving up on 'placeholder' — this is what keeps downloaded tracks'
+  // artwork visible with no internet.
+  const [state, setState] = useState<'network' | 'offline' | 'placeholder'>('network');
+  const [offlineUrl, setOfflineUrl] = useState<string | null>(null);
 
-  if (!id || failed) {
+  useEffect(() => {
+    setState('network');
+    setOfflineUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, [id]);
+
+  useEffect(() => {
+    return () => {
+      if (offlineUrl) URL.revokeObjectURL(offlineUrl);
+    };
+  }, [offlineUrl]);
+
+  const handleError = () => {
+    if (state === 'offline' || !id) {
+      setState('placeholder');
+      return;
+    }
+    getCoverBlob(id).then((blob) => {
+      if (blob) {
+        setOfflineUrl(URL.createObjectURL(blob));
+        setState('offline');
+      } else {
+        setState('placeholder');
+      }
+    });
+  };
+
+  if (!id || state === 'placeholder') {
     return (
       <div className={`bg-zinc-800 flex items-center justify-center ${className}`}>
         <svg className="w-1/3 h-1/3 text-zinc-600" fill="currentColor" viewBox="0 0 24 24">
@@ -23,10 +58,10 @@ export function CoverArt({ id, size = 200, className = '', alt = '' }: Props) {
 
   return (
     <img
-      src={coverArtUrl(id, size)}
+      src={state === 'offline' && offlineUrl ? offlineUrl : coverArtUrl(id, size)}
       alt={alt}
       className={className}
-      onError={() => setFailed(true)}
+      onError={handleError}
       loading="lazy"
     />
   );

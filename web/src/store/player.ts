@@ -1,10 +1,25 @@
 import { create } from 'zustand';
 import { scrobble, streamUrl } from '../api/subsonic';
+import { useDownloadsStore } from './downloads';
+import { getTrackAudioBlob } from '../lib/offlineDb';
 import type { Song } from '../api/types';
 
 // Singleton Audio element — lives outside React's render cycle
 const audio = new Audio();
 audio.preload = 'metadata';
+
+// Tracks the blob: URL currently assigned to `audio.src` (if any) so it can be
+// revoked when playback moves to a different track — object URLs otherwise leak.
+let currentObjectUrl: string | null = null;
+
+/** Prefer a locally downloaded copy so offline-played tracks need no network. */
+async function resolvePlaybackUrl(song: Song): Promise<string> {
+  if (useDownloadsStore.getState().trackState(song.id) === 'downloaded') {
+    const local = await getTrackAudioBlob(song.id);
+    if (local) return URL.createObjectURL(local.blob);
+  }
+  return streamUrl(song.id);
+}
 
 interface PlayerState {
   queue: Song[];
@@ -45,10 +60,15 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
   audio.addEventListener('play', () => set({ playing: true }));
   audio.addEventListener('pause', () => set({ playing: false }));
 
-  function loadAndPlay(song: Song): void {
-    const url = streamUrl(song.id);
+  async function loadAndPlay(song: Song): Promise<void> {
+    const url = await resolvePlaybackUrl(song);
     if (audio.src !== url) {
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+        currentObjectUrl = null;
+      }
       audio.src = url;
+      if (url.startsWith('blob:')) currentObjectUrl = url;
       audio.load();
     }
 
