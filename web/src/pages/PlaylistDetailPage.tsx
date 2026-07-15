@@ -11,11 +11,14 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
   getPlaylist, renamePlaylist, setPlaylistDescription, deletePlaylist,
-  reorderPlaylistTracks, uploadPlaylistCover,
+  reorderPlaylistTracks, uploadPlaylistCover, getPlaylistTrackDates,
 } from '../api/subsonic';
 import { usePlayerStore } from '../store/player';
+import { useDownloadsStore } from '../store/downloads';
 import { CoverArt } from '../components/CoverArt';
 import { SongRow } from '../components/SongRow';
+import { DownloadButton } from '../components/DownloadButton';
+import { sortPlaylistTracks, type PlaylistSortMode } from '../lib/playlistSort';
 import type { Song } from '../api/types';
 
 function DraggableSongRow({ song, index, songs }: { song: Song; index: number; songs: Song[] }) {
@@ -49,16 +52,28 @@ export function PlaylistDetailPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { playQueue } = usePlayerStore();
+  const downloadState = useDownloadsStore((s) => (id ? s.playlistState(id) : undefined));
+  const requestDownload = useDownloadsStore((s) => s.requestDownload);
+  const removePlaylistDownload = useDownloadsStore((s) => s.removePlaylistDownload);
   const fileRef = useRef<HTMLInputElement>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [editingDescription, setEditingDescription] = useState(false);
   const [descriptionValue, setDescriptionValue] = useState('');
+  const [sortMode, setSortMode] = useState<PlaylistSortMode>('custom');
 
   const { data: playlist, isLoading } = useQuery({
     queryKey: ['playlist', id],
     queryFn: () => getPlaylist(id!),
     enabled: !!id,
+  });
+
+  // Only fetched when actually needed — switching sort views is purely a
+  // client-side display transform and never touches the saved custom order.
+  const { data: trackDates } = useQuery({
+    queryKey: ['playlist-track-dates', id],
+    queryFn: () => getPlaylistTrackDates(id!),
+    enabled: !!id && sortMode !== 'custom',
   });
 
   const renameMutation = useMutation({
@@ -116,6 +131,8 @@ export function PlaylistDetailPage() {
 
   const songs = playlist.entry ?? [];
   const songIds = songs.map((s, i) => s.id + '-' + i);
+
+  const displayedSongs = sortPlaylistTracks(songs, trackDates, sortMode);
 
   const onDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -222,12 +239,17 @@ export function PlaylistDetailPage() {
 
           <div className="flex items-center gap-3 mt-1">
             <button
-              onClick={() => playQueue(songs)}
+              onClick={() => playQueue(displayedSongs)}
               disabled={!songs.length}
               className="bg-brand hover:bg-brand-dim text-white text-sm font-medium px-5 py-2 rounded-full transition-colors disabled:opacity-50"
             >
               Play
             </button>
+            <DownloadButton
+              state={downloadState}
+              onDownload={() => requestDownload({ kind: 'playlist', playlist, songs })}
+              onRemove={() => removePlaylistDownload(playlist.id)}
+            />
             <button
               onClick={() => { if (confirm(`Delete "${playlist.name}"?`)) deleteMutation.mutate(); }}
               className="text-zinc-400 hover:text-red-400 transition-colors text-sm"
@@ -238,10 +260,31 @@ export function PlaylistDetailPage() {
         </div>
       </div>
 
-      {/* Draggable track list */}
+      {/* Sort control — a display transform only; never mutates the saved custom order */}
+      {songs.length > 0 && (
+        <div className="flex items-center gap-1 mb-3">
+          {([
+            ['custom', 'Custom order'],
+            ['addedAsc', 'Date added: oldest first'],
+            ['addedDesc', 'Date added: newest first'],
+          ] as [PlaylistSortMode, string][]).map(([mode, label]) => (
+            <button
+              key={mode}
+              onClick={() => setSortMode(mode)}
+              className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                sortMode === mode ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Track list — draggable only in custom-order mode */}
       {songs.length === 0 ? (
         <p className="text-zinc-400 text-sm">No tracks yet.</p>
-      ) : (
+      ) : sortMode === 'custom' ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={songIds} strategy={verticalListSortingStrategy}>
             <div className="space-y-0.5">
@@ -251,6 +294,12 @@ export function PlaylistDetailPage() {
             </div>
           </SortableContext>
         </DndContext>
+      ) : (
+        <div className="space-y-0.5">
+          {displayedSongs.map((song, i) => (
+            <SongRow key={song.id} song={song} queue={displayedSongs} index={i + 1} showAlbum />
+          ))}
+        </div>
       )}
     </div>
   );

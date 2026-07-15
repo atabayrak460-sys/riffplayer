@@ -267,6 +267,12 @@ export async function reorderPlaylistTracks(playlistId: string, trackIds: string
   await apiPut(`playlists/${playlistId}/tracks`, { trackIds });
 }
 
+/** When each track was added to this playlist, keyed by track id (ISO date strings). */
+export async function getPlaylistTrackDates(playlistId: string): Promise<Record<string, string>> {
+  const r = await apiCall('GET', `playlists/${playlistId}/track-dates`) as { dates: Record<string, string> };
+  return r.dates;
+}
+
 export async function uploadPlaylistCover(playlistId: string, file: File): Promise<void> {
   const form = new FormData();
   form.append('file', file);

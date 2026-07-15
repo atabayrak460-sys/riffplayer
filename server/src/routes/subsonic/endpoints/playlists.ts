@@ -115,7 +115,9 @@ function createPlaylist(req: FastifyRequest, reply: FastifyReply): void {
   );
 
   if (songIds.length) {
-    const insert = db.prepare('INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)');
+    const insert = db.prepare(
+      'INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, unixepoch())',
+    );
     db.transaction(() => {
       songIds.forEach((sid, i) => insert.run(playlistId, Number(sid), i));
     })();
@@ -162,7 +164,9 @@ function updatePlaylist(req: FastifyRequest, reply: FastifyReply): void {
     // Add songs at the end
     if (songIdsToAdd.length) {
       const maxPos = (db.prepare('SELECT COALESCE(MAX(position), -1) AS m FROM playlist_tracks WHERE playlist_id = ?').get(numId) as { m: number }).m;
-      const ins = db.prepare('INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)');
+      const ins = db.prepare(
+        'INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, unixepoch())',
+      );
       songIdsToAdd.forEach((sid, i) => ins.run(numId, Number(sid), maxPos + 1 + i));
     }
 
@@ -174,11 +178,11 @@ function updatePlaylist(req: FastifyRequest, reply: FastifyReply): void {
       for (const idx of positions) {
         if (rows[idx]) del.run(numId, rows[idx].track_id, idx);
       }
-      // Re-number positions
-      const remaining = db.prepare('SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position').all(numId) as { track_id: number }[];
+      // Re-number positions, preserving each remaining track's added_at
+      const remaining = db.prepare('SELECT track_id, added_at FROM playlist_tracks WHERE playlist_id = ? ORDER BY position').all(numId) as { track_id: number; added_at: number | null }[];
       db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ?').run(numId);
-      const ins = db.prepare('INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)');
-      remaining.forEach((r, i) => ins.run(numId, r.track_id, i));
+      const ins = db.prepare('INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)');
+      remaining.forEach((r, i) => ins.run(numId, r.track_id, i, r.added_at));
     }
   })();
 

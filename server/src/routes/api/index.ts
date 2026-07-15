@@ -283,15 +283,52 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
       if (!playlist) return jsonError(reply, 404, 'Playlist not found or not owned');
 
       db.transaction(() => {
+        // Preserve each track's original added_at across the reorder — this
+        // endpoint only ever reorders existing rows, so a plain delete +
+        // reinsert would otherwise reset every "date added" to now.
+        const existing = db
+          .prepare('SELECT track_id, added_at FROM playlist_tracks WHERE playlist_id = ?')
+          .all(playlistId) as { track_id: number; added_at: number | null }[];
+        const addedAtByTrack = new Map(existing.map((r) => [r.track_id, r.added_at]));
+
         db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ?').run(playlistId);
         const ins = db.prepare(
-          'INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)',
+          'INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, COALESCE(?, unixepoch()))',
         );
-        trackIds.forEach((tid, i) => ins.run(playlistId, Number(tid), i));
+        trackIds.forEach((tid, i) => {
+          const trackId = Number(tid);
+          ins.run(playlistId, trackId, i, addedAtByTrack.get(trackId) ?? null);
+        });
         db.prepare('UPDATE playlists SET updated_at = unixepoch() WHERE id = ?').run(playlistId);
       })();
 
       reply.send({ ok: true });
+    },
+  );
+
+  // GET /api/v1/playlists/:id/track-dates — when each track was added to this playlist
+  app.get(
+    '/playlists/:id/track-dates',
+    { preHandler: apiAuth },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const playlistId = Number((req.params as { id: string }).id);
+      const userId = req.subsonicUser!.id;
+      const db = getDb();
+
+      const playlist = db
+        .prepare('SELECT id FROM playlists WHERE id = ? AND (owner_id = ? OR is_public = 1)')
+        .get(playlistId, userId);
+      if (!playlist) return jsonError(reply, 404, 'Playlist not found');
+
+      const rows = db
+        .prepare('SELECT track_id, added_at FROM playlist_tracks WHERE playlist_id = ?')
+        .all(playlistId) as { track_id: number; added_at: number | null }[];
+
+      const dates: Record<string, string> = {};
+      for (const r of rows) {
+        if (r.added_at != null) dates[String(r.track_id)] = new Date(r.added_at * 1000).toISOString();
+      }
+      reply.send({ dates });
     },
   );
 
