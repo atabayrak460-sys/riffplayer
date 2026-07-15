@@ -132,9 +132,38 @@ describe('stream.view play logging', () => {
     expect(playHistory()).toHaveLength(0);
   });
 
-  it('logs one play per stream request', async () => {
+  it('does not log a duplicate for a second stream request on the same track shortly after (e.g. seek/range re-requests)', async () => {
     await app.inject({ url: `/rest/stream.view?${auth}&id=${trackId}` });
     await app.inject({ url: `/rest/stream.view?${auth}&id=${trackId}` });
+    expect(playHistory()).toHaveLength(1);
+  });
+});
+
+// ── cross-endpoint dedup (the "double-logging" bug) ────────────────────────────
+
+describe('play logging dedup across stream + scrobble', () => {
+  it('does not double-log when a client streams then scrobbles the same play', async () => {
+    // Mirrors the web client: stream.view fires when playback starts, then
+    // scrobble.view submission=true fires once the listening threshold is hit.
+    await app.inject({ url: `/rest/stream.view?${auth}&id=${trackId}` });
+    await app.inject({ url: `/rest/scrobble.view?${auth}&id=${trackId}` });
+    expect(playHistory()).toHaveLength(1);
+  });
+
+  it('does not double-log when scrobble submission precedes a later stream re-request', async () => {
+    await app.inject({ url: `/rest/scrobble.view?${auth}&id=${trackId}` });
+    await app.inject({ url: `/rest/stream.view?${auth}&id=${trackId}` });
+    expect(playHistory()).toHaveLength(1);
+  });
+
+  it('logs a genuine replay as a second row once the track duration has elapsed', async () => {
+    const db = getDb();
+    db.prepare('UPDATE tracks SET duration_s = 200 WHERE id = ?').run(trackId);
+
+    const longAgoMs = (Math.floor(Date.now() / 1000) - 1000) * 1000; // ~16.7 min ago, past the 200s window
+    await app.inject({ url: `/rest/scrobble.view?${auth}&id=${trackId}&time=${longAgoMs}` });
+    await app.inject({ url: `/rest/stream.view?${auth}&id=${trackId}` }); // "now" — a real replay
+
     expect(playHistory()).toHaveLength(2);
   });
 });

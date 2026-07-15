@@ -89,7 +89,7 @@ describe('GET /api/v1/history/most-played', () => {
 });
 
 describe('GET /api/v1/history/recent', () => {
-  it('returns the most recently played tracks first, capped at 30', async () => {
+  it('deduplicates by track — a track played many times appears once', async () => {
     const db = getDb();
     const { trackId } = seedLibrary(db);
     const userId = Number(
@@ -105,7 +105,69 @@ describe('GET /api/v1/history/recent', () => {
     const res = await app.inject({ url: `/api/v1/history/recent?${auth}` });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as { songs: { id: string }[] };
+    expect(body.songs).toHaveLength(1);
+    expect(body.songs[0].id).toBe(String(trackId));
+  });
+
+  it('replaying an older track moves it to the top instead of adding a row', async () => {
+    const db = getDb();
+    const { albumId, artistId, trackId: trackA } = seedLibrary(db);
+    const trackB = Number(
+      db.prepare(`
+        INSERT INTO tracks (title, album_id, artist_id, track_no, duration_s, path, size, format, bitrate)
+        VALUES ('Track B', ?, ?, 2, 180, '/music/b.mp3', 900000, 'MPEG', 320)
+      `).run(albumId, artistId).lastInsertRowid,
+    );
+    const userId = Number(
+      (db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id: number }).id,
+    );
+
+    const now = Math.floor(Date.now() / 1000);
+    const insertPlay = db.prepare(
+      'INSERT INTO play_history (user_id, track_id, played_at) VALUES (?, ?, ?)',
+    );
+    insertPlay.run(userId, trackA, now - 100); // A played first (older)
+    insertPlay.run(userId, trackB, now - 50);  // then B (more recent than A's only play)
+
+    let res = await app.inject({ url: `/api/v1/history/recent?${auth}` });
+    let body = JSON.parse(res.body) as { songs: { id: string }[] };
+    expect(body.songs.map((s) => s.id)).toEqual([String(trackB), String(trackA)]);
+
+    // Replay A — it should jump back to the top, still as a single row
+    insertPlay.run(userId, trackA, now);
+
+    res = await app.inject({ url: `/api/v1/history/recent?${auth}` });
+    body = JSON.parse(res.body) as { songs: { id: string }[] };
+    expect(body.songs.map((s) => s.id)).toEqual([String(trackA), String(trackB)]);
+  });
+
+  it('caps at the 30 most recently played distinct tracks', async () => {
+    const db = getDb();
+    const { albumId, artistId } = seedLibrary(db);
+    const userId = Number(
+      (db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id: number }).id,
+    );
+    const insertTrack = db.prepare(`
+      INSERT INTO tracks (title, album_id, artist_id, track_no, duration_s, path, size, format, bitrate)
+      VALUES (?, ?, ?, ?, 180, ?, 900000, 'MPEG', 320)
+    `);
+    const insertPlay = db.prepare(
+      'INSERT INTO play_history (user_id, track_id, played_at) VALUES (?, ?, ?)',
+    );
+    const now = Math.floor(Date.now() / 1000);
+
+    const trackIds: number[] = [];
+    for (let i = 0; i < 35; i++) {
+      const id = Number(
+        insertTrack.run(`Track ${i}`, albumId, artistId, i, `/music/t${i}.mp3`).lastInsertRowid,
+      );
+      trackIds.push(id);
+      insertPlay.run(userId, id, now - i); // track 0 is most recent, track 34 is oldest
+    }
+
+    const res = await app.inject({ url: `/api/v1/history/recent?${auth}` });
+    const body = JSON.parse(res.body) as { songs: { id: string }[] };
     expect(body.songs).toHaveLength(30);
-    expect(body.songs.every((s) => s.id === String(trackId))).toBe(true);
+    expect(body.songs.map((s) => s.id)).toEqual(trackIds.slice(0, 30).map(String));
   });
 });

@@ -1,21 +1,23 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../db/database.js';
 import { songAttrs, toJson, type SongRow } from '../subsonic/serialize.js';
-import { SONG_COLS, SONG_SELECT_LIST, SONG_FROM } from '../subsonic/endpoints/browse.js';
+import { SONG_SELECT_LIST, SONG_FROM } from '../subsonic/endpoints/browse.js';
 
 const THIRTY_DAYS_S = 30 * 24 * 60 * 60;
 
 export async function historyPlugin(app: FastifyInstance): Promise<void> {
-  // GET /api/v1/history/recent — last 30 plays, most recent first
+  // GET /api/v1/history/recent — last 30 distinct tracks, most recently played first
   app.get('/recent', async (req: FastifyRequest, reply: FastifyReply) => {
     const db = getDb();
     const userId = req.subsonicUser!.id;
 
     const rows = db
       .prepare(`
-        SELECT ${SONG_COLS}
+        SELECT ${SONG_SELECT_LIST}
+        ${SONG_FROM}
         JOIN play_history ph ON ph.track_id = t.id AND ph.user_id = ?
-        ORDER BY ph.played_at DESC
+        GROUP BY t.id
+        ORDER BY MAX(ph.played_at) DESC
         LIMIT 30
       `)
       .all(userId, userId) as SongRow[];
