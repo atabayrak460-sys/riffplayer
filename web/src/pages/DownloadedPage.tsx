@@ -86,8 +86,7 @@ export function DownloadedPage() {
             </h2>
             {songs.length === 0 ? (
               <p className="text-zinc-400 text-sm">
-                Nothing downloaded yet. Right-click (or long-press) a track or playlist and choose
-                Download.
+                No downloads yet — use the ⋯ menu on any song to download it for offline listening.
               </p>
             ) : (
               <div className="space-y-0.5">
