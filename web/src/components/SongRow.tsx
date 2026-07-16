@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
 import { StarButton } from './StarButton';
-import { DownloadButton } from './DownloadButton';
 import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { CoverArt } from './CoverArt';
 import { AddToPlaylistDialog } from './AddToPlaylistDialog';
@@ -103,13 +102,8 @@ export function SongRow({ song, queue, index, showAlbum = false }: Props) {
         {!showAlbum && <p className="text-xs text-zinc-400 truncate">{song.artist}</p>}
       </div>
 
-      {/* Duration + star + download state + more options */}
+      {/* Duration + star + more options */}
       <div className="flex items-center gap-3 flex-shrink-0">
-        <DownloadButton
-          state={downloadState}
-          onDownload={() => requestDownload({ kind: 'track', song })}
-          onRemove={() => removeTrackDownload(song.id)}
-        />
         <StarButton starred={!!song.starred} opts={{ id: song.id }} />
         <span className="text-sm text-zinc-400 w-10 text-right">
           {formatDuration(song.duration)}
