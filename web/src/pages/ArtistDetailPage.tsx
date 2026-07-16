@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getArtist, getAlbum, uploadArtistCover, removeArtistCover } from '../api/subsonic';
@@ -7,6 +7,9 @@ import { useAuthStore } from '../store/auth';
 import { CoverArt } from '../components/CoverArt';
 import { AlbumCard } from '../components/AlbumCard';
 import { StarButton } from '../components/StarButton';
+import { SongRow } from '../components/SongRow';
+
+type Tab = 'albums' | 'songs';
 
 export function ArtistDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -14,11 +17,28 @@ export function ArtistDetailPage() {
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [tab, setTab] = useState<Tab>('albums');
 
   const { data: artist, isLoading, isError } = useQuery({
     queryKey: ['artist', id],
     queryFn: () => getArtist(id!),
     enabled: !!id,
+  });
+
+  const albums = artist?.album ?? [];
+
+  // Built from the same album-fetch endpoint "Play all" already uses, just
+  // aggregated client-side — cached by react-query so switching tabs after
+  // the first load doesn't refetch every album again.
+  const { data: allSongs = [], isLoading: loadingSongs } = useQuery({
+    queryKey: ['artist-songs', id],
+    queryFn: async () => {
+      const songs = (
+        await Promise.all(albums.map((a) => getAlbum(a.id).then((r) => r.song ?? [])))
+      ).flat();
+      return songs.sort((a, b) => a.title.localeCompare(b.title));
+    },
+    enabled: tab === 'songs' && !!id,
   });
 
   const coverMutation = useMutation({
@@ -58,13 +78,11 @@ export function ArtistDetailPage() {
     return <div className="p-6 text-red-400 text-sm">Artist not found.</div>;
   }
 
-  const albums = artist.album ?? [];
-
   const playAll = async () => {
-    const allSongs = (
+    const songs = (
       await Promise.all(albums.map((a) => getAlbum(a.id).then((r) => r.song ?? [])))
     ).flat();
-    if (allSongs.length) playQueue(allSongs);
+    if (songs.length) playQueue(songs);
   };
 
   return (
@@ -134,12 +152,46 @@ export function ArtistDetailPage() {
         </div>
       </div>
 
-      <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-widest mb-4">Albums</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {albums.map((album) => (
-          <AlbumCard key={album.id} album={album} />
-        ))}
+      <div className="flex items-center gap-1 mb-4">
+        <button
+          onClick={() => setTab('albums')}
+          className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
+            tab === 'albums' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+          }`}
+        >
+          Albums
+        </button>
+        <button
+          onClick={() => setTab('songs')}
+          className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
+            tab === 'songs' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+          }`}
+        >
+          Songs
+        </button>
       </div>
+
+      {tab === 'albums' ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {albums.map((album) => (
+            <AlbumCard key={album.id} album={album} />
+          ))}
+        </div>
+      ) : loadingSongs ? (
+        <div className="space-y-1">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-14 bg-zinc-800 rounded-md animate-pulse" />
+          ))}
+        </div>
+      ) : allSongs.length === 0 ? (
+        <p className="text-zinc-400 text-sm">No songs found.</p>
+      ) : (
+        <div className="space-y-0.5">
+          {allSongs.map((song, i) => (
+            <SongRow key={song.id} song={song} queue={allSongs} index={i + 1} showAlbum />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
