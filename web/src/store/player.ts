@@ -40,6 +40,7 @@ interface PlayerState {
   prev: () => void;
   seek: (seconds: number) => void;
   setVolume: (v: number) => void;
+  playNext: (song: Song) => void;
   addToQueue: (song: Song) => void;
   removeFromQueue: (index: number) => void;
   reorderQueue: (from: number, to: number) => void;
@@ -170,6 +171,14 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     setVolume: (v) => {
       audio.volume = v;
       set({ volume: v });
+    },
+
+    playNext: (song) => {
+      set((s) => {
+        const insertAt = s.queueIndex + 1;
+        const queue = [...s.queue.slice(0, insertAt), song, ...s.queue.slice(insertAt)];
+        return { queue };
+      });
     },
 
     addToQueue: (song) => {
