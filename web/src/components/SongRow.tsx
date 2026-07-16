@@ -4,6 +4,7 @@ import { StarButton } from './StarButton';
 import { AddToPlaylistMenu } from './AddToPlaylistMenu';
 import { DownloadButton } from './DownloadButton';
 import { ContextMenu, useContextMenu } from './ContextMenu';
+import { CoverArt } from './CoverArt';
 import type { Song } from '../api/types';
 
 interface Props {
@@ -54,6 +55,14 @@ export function SongRow({ song, queue, index, showAlbum = false }: Props) {
           ▶
         </button>
       </div>
+
+      {/* Album cover thumbnail */}
+      <CoverArt
+        id={song.coverArt}
+        size={80}
+        className="w-10 h-10 rounded object-cover flex-shrink-0"
+        alt=""
+      />
 
       {/* Title + artist */}
       <div className="flex-1 min-w-0">
