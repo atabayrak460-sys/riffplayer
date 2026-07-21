@@ -22,10 +22,10 @@ export function SearchPage() {
   };
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <h1 className="text-2xl font-bold text-white mb-6">Search</h1>
 
-      <form onSubmit={onSubmit} className="flex gap-2 mb-8">
+      <form onSubmit={onSubmit} className="flex gap-2 mb-8 max-w-xl">
         <input
           type="search"
           value={query}
@@ -67,7 +67,7 @@ export function SearchPage() {
           {data.album.length > 0 && (
             <section>
               <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">Albums</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                 {data.album.map((album) => (
                   <AlbumCard key={album.id} album={album} />
                 ))}

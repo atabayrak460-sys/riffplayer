@@ -23,7 +23,7 @@ export function AllSongsPage() {
   const songs = data?.pages.flat() ?? [];
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="p-6">
       <h1 className="text-2xl font-bold text-white mb-6">All Songs</h1>
 
       {isLoading && (

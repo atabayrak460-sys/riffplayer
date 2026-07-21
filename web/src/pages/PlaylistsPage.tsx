@@ -49,7 +49,7 @@ export function PlaylistsPage() {
   };
 
   return (
-    <div className="p-6 max-w-6xl">
+    <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white">Playlists</h1>
         <button
@@ -116,7 +116,7 @@ export function PlaylistsPage() {
       )}
 
       {isLoading ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
           {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="aspect-square bg-zinc-800 rounded-md animate-pulse" />
           ))}
@@ -124,7 +124,7 @@ export function PlaylistsPage() {
       ) : playlists.length === 0 ? (
         <p className="text-zinc-400 text-sm">No playlists yet.</p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
           {playlists.map((pl) => (
             <PlaylistCard key={pl.id} pl={pl} onDelete={() => deleteMutation.mutate(pl.id)} />
           ))}

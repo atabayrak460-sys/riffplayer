@@ -36,7 +36,7 @@ export function OfflinePlaylistPage() {
   const songs = tracks.map((t) => t.song);
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="p-6">
       <div className="flex gap-5 mb-8">
         <CoverArt
           id={playlist.coverArtId}

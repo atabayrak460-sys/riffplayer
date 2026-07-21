@@ -19,7 +19,7 @@ export function FavoritesPage() {
   const empty = !data.artist.length && !data.album.length && !data.song.length;
 
   return (
-    <div className="p-6 max-w-4xl space-y-8">
+    <div className="p-6 space-y-8">
       <div className="flex items-center gap-4">
         <FavouritesCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
         <h1 className="text-2xl font-bold text-white">Favourites</h1>
@@ -52,7 +52,7 @@ export function FavoritesPage() {
       {data.album.length > 0 && (
         <section>
           <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">Albums</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {data.album.map((album) => (
               <AlbumCard key={album.id} album={album} />
             ))}

@@ -20,7 +20,7 @@ export function RecommendationsPage() {
   const source = data?.source;
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="p-6">
       <div className="flex items-center gap-4 mb-6">
         <DiscoverCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
         <div>

@@ -35,7 +35,7 @@ export function WrappedPage() {
   const maxMonth = Math.max(...(stats?.byMonth.map((m) => m.plays) ?? [1]));
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="p-6 max-w-3xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">

@@ -151,7 +151,7 @@ export function PlaylistDetailPage() {
   };
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="p-6">
       {/* Header */}
       <div className="flex gap-5 mb-8">
         <div className="relative flex-shrink-0 group/cover">
