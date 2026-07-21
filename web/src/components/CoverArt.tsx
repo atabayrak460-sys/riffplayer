@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { coverArtUrl } from '../api/subsonic';
 import { getCoverBlob } from '../lib/offlineDb';
 
@@ -7,9 +7,11 @@ interface Props {
   size?: number;
   className?: string;
   alt?: string;
+  /** Rendered instead of the generic placeholder icon when there's no real cover. */
+  fallback?: ReactNode;
 }
 
-export function CoverArt({ id, size = 200, className = '', alt = '' }: Props) {
+export function CoverArt({ id, size = 200, className = '', alt = '', fallback }: Props) {
   // 'network' tries the live server first (unchanged default behavior); on
   // failure (offline, 404, etc.) we fall back to a locally downloaded cover
   // before giving up on 'placeholder' — this is what keeps downloaded tracks'
@@ -47,6 +49,7 @@ export function CoverArt({ id, size = 200, className = '', alt = '' }: Props) {
   };
 
   if (!id || state === 'placeholder') {
+    if (fallback) return <div className={`overflow-hidden ${className}`}>{fallback}</div>;
     return (
       <div className={`bg-zinc-800 flex items-center justify-center ${className}`}>
         <svg className="w-1/3 h-1/3 text-zinc-600" fill="currentColor" viewBox="0 0 24 24">

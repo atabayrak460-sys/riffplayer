@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getWrapped, generateWrappedSummary } from '../api/subsonic';
 import { CoverArt } from '../components/CoverArt';
+import { WrappedCover } from '../components/StockCovers';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -37,9 +38,12 @@ export function WrappedPage() {
     <div className="p-6 max-w-2xl">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
-        <div>
-          <p className="text-xs uppercase tracking-widest text-zinc-500">Your year in music</p>
-          <h1 className="text-4xl font-bold text-brand">{year}</h1>
+        <div className="flex items-center gap-4">
+          <WrappedCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
+          <div>
+            <p className="text-xs uppercase tracking-widest text-zinc-500">Your year in music</p>
+            <h1 className="text-4xl font-bold text-brand">{year}</h1>
+          </div>
         </div>
         <select
           value={year}

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import * as offlineDb from '../lib/offlineDb';
 import { useDownloadsStore } from '../store/downloads';
 import { CoverArt } from '../components/CoverArt';
+import { PlaylistCover, DownloadedCover } from '../components/StockCovers';
 import { DownloadButton } from '../components/DownloadButton';
 import { SongRow } from '../components/SongRow';
 import { isIOS } from '../lib/platform';
@@ -25,7 +26,10 @@ export function DownloadedPage() {
 
   return (
     <div className="p-6 max-w-3xl">
-      <h1 className="text-2xl font-bold text-white mb-2">Downloaded</h1>
+      <div className="flex items-center gap-4 mb-2">
+        <DownloadedCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
+        <h1 className="text-2xl font-bold text-white">Downloaded</h1>
+      </div>
 
       {isIOS() && (
         <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2 mb-6">
@@ -59,6 +63,7 @@ export function DownloadedPage() {
                         size={48}
                         className="w-10 h-10 rounded-md object-cover flex-shrink-0"
                         alt={pl.name}
+                        fallback={<PlaylistCover className="w-full h-full" />}
                       />
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-white group-hover:text-brand transition-colors truncate">

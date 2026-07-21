@@ -4,6 +4,7 @@ import * as offlineDb from '../lib/offlineDb';
 import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
 import { CoverArt } from '../components/CoverArt';
+import { PlaylistCover } from '../components/StockCovers';
 import { SongRow } from '../components/SongRow';
 import { DownloadButton } from '../components/DownloadButton';
 
@@ -42,6 +43,7 @@ export function OfflinePlaylistPage() {
           size={160}
           className="w-36 h-36 rounded-lg object-cover shadow-xl flex-shrink-0"
           alt={playlist.name}
+          fallback={<PlaylistCover className="w-full h-full" />}
         />
         <div className="flex flex-col justify-end gap-2">
           <p className="text-xs uppercase tracking-widest text-zinc-400">Downloaded Playlist</p>

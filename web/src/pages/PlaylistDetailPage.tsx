@@ -16,6 +16,7 @@ import {
 import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
 import { CoverArt } from '../components/CoverArt';
+import { PlaylistCover } from '../components/StockCovers';
 import { SongRow } from '../components/SongRow';
 import { DownloadButton } from '../components/DownloadButton';
 import { sortPlaylistTracks, type PlaylistSortMode } from '../lib/playlistSort';
@@ -156,6 +157,7 @@ export function PlaylistDetailPage() {
             size={160}
             className="w-36 h-36 rounded-lg object-cover shadow-xl"
             alt={playlist.name}
+            fallback={<PlaylistCover className="w-full h-full" />}
           />
           <button
             onClick={() => fileRef.current?.click()}

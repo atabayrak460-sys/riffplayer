@@ -3,6 +3,7 @@ import { getStarred } from '../api/subsonic';
 import { AlbumCard } from '../components/AlbumCard';
 import { SongRow } from '../components/SongRow';
 import { CoverArt } from '../components/CoverArt';
+import { FavouritesCover } from '../components/StockCovers';
 import { Link } from 'react-router-dom';
 
 export function FavoritesPage() {
@@ -19,7 +20,10 @@ export function FavoritesPage() {
 
   return (
     <div className="p-6 max-w-4xl space-y-8">
-      <h1 className="text-2xl font-bold text-white">Favourites</h1>
+      <div className="flex items-center gap-4">
+        <FavouritesCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
+        <h1 className="text-2xl font-bold text-white">Favourites</h1>
+      </div>
 
       {empty && (
         <p className="text-zinc-400 text-sm">

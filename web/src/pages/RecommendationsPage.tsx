@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getRecommendations } from '../api/subsonic';
 import { SongRow } from '../components/SongRow';
+import { DiscoverCover } from '../components/StockCovers';
 import type { Song } from '../api/types';
 
 type Tab = 'similar' | 'discover';
@@ -20,13 +21,16 @@ export function RecommendationsPage() {
 
   return (
     <div className="p-6 max-w-3xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Discover</h1>
-        <p className="text-sm text-zinc-400 mt-1">
-          Tracks from your library you might enjoy — suggested by{' '}
-          {source === 'ollama' ? 'local AI (Ollama)' : 'Last.fm'}.
-          No external links. Everything playable right now.
-        </p>
+      <div className="flex items-center gap-4 mb-6">
+        <DiscoverCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
+        <div>
+          <h1 className="text-2xl font-bold text-white">Discover</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Tracks from your library you might enjoy — suggested by{' '}
+            {source === 'ollama' ? 'local AI (Ollama)' : 'Last.fm'}.
+            No external links. Everything playable right now.
+          </p>
+        </div>
       </div>
 
       {/* Tab selector */}
