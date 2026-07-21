@@ -273,6 +273,34 @@ export async function getPlaylistTrackDates(playlistId: string): Promise<Record<
   return r.dates;
 }
 
+// ── Sidebar Library pin/recency state (Phase 4) ─────────────────────────────
+
+export type LibraryItemType = 'system' | 'playlist';
+
+export interface LibrarySidebarItem {
+  itemType: LibraryItemType;
+  itemKey: string;
+  pinnedAt: string | null;
+  lastInteractedAt: string;
+}
+
+export async function getLibrarySidebarState(): Promise<LibrarySidebarItem[]> {
+  const r = (await apiCall('GET', 'library-sidebar')) as { items: LibrarySidebarItem[] };
+  return r.items;
+}
+
+export async function recordLibraryInteraction(itemType: LibraryItemType, itemKey: string): Promise<void> {
+  await apiCall('POST', 'library-sidebar/interact', { itemType, itemKey });
+}
+
+export async function pinLibraryItem(itemType: LibraryItemType, itemKey: string): Promise<void> {
+  await apiCall('POST', 'library-sidebar/pin', { itemType, itemKey });
+}
+
+export async function unpinLibraryItem(itemType: LibraryItemType, itemKey: string): Promise<void> {
+  await apiCall('POST', 'library-sidebar/unpin', { itemType, itemKey });
+}
+
 export async function uploadPlaylistCover(playlistId: string, file: File): Promise<void> {
   const form = new FormData();
   form.append('file', file);

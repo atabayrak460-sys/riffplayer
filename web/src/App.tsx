@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './store/auth';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
+import { HomePage } from './pages/HomePage';
 import { AlbumsPage } from './pages/AlbumsPage';
 import { AlbumDetailPage } from './pages/AlbumDetailPage';
 import { ArtistsPage } from './pages/ArtistsPage';
@@ -46,6 +47,7 @@ const router = createBrowserRouter([
         element: <Layout />,
         children: [
           { index: true, element: <Navigate to="/albums" replace /> },
+          { path: 'home', element: <HomePage /> },
           { path: 'albums', element: <AlbumsPage /> },
           { path: 'albums/:id', element: <AlbumDetailPage /> },
           { path: 'artists', element: <ArtistsPage /> },

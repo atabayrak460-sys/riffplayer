@@ -202,7 +202,13 @@ function deletePlaylist(req: FastifyRequest, reply: FastifyReply): void {
   if (!exists)
     return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'Playlist not found or not owned' });
 
-  db.prepare('DELETE FROM playlists WHERE id = ?').run(Number(id));
+  db.transaction(() => {
+    db.prepare('DELETE FROM playlists WHERE id = ?').run(Number(id));
+    // Not an FK cascade — library_sidebar_state.item_key is a plain string shared
+    // with system view slugs, so orphans have to be swept explicitly. Any user
+    // (not just the owner) could have pinned/opened this if it was public.
+    db.prepare("DELETE FROM library_sidebar_state WHERE item_type = 'playlist' AND item_key = ?").run(String(Number(id)));
+  })();
   sendOk(reply, f);
 }
 

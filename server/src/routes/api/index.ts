@@ -9,6 +9,7 @@ import { getOrCreateServerSecret } from '../../auth/seed.js';
 import { scanLibrary } from '../../indexer/scan.js';
 import { recommendationsPlugin } from './recommendations.js';
 import { historyPlugin } from './history.js';
+import { librarySidebarPlugin } from './librarySidebar.js';
 
 function getCoversDir(): string {
   return process.env.COVERS_DIR ?? path.join(process.cwd(), 'covers');
@@ -435,4 +436,10 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
     hist.addHook('preHandler', apiAuth);
     hist.register(historyPlugin);
   }, { prefix: '/history' });
+
+  // Sidebar pin state + recency — all require auth, registered under /library-sidebar/*
+  app.register(async (lib) => {
+    lib.addHook('preHandler', apiAuth);
+    lib.register(librarySidebarPlugin);
+  }, { prefix: '/library-sidebar' });
 }
