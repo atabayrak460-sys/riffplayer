@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { orderLibraryRows, type LibraryRow, type LibrarySidebarStateEntry } from './librarySidebarOrder';
 
 function row(itemKey: string, itemType: LibraryRow['itemType'] = 'system'): LibraryRow {
-  return { itemType, itemKey, to: `/${itemKey}`, label: itemKey, icon: 'M0 0' };
+  return { itemType, itemKey, to: `/${itemKey}`, label: itemKey };
 }
 
 function state(

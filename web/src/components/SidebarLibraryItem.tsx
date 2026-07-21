@@ -1,24 +1,28 @@
+import type { ComponentType } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   pinLibraryItem, unpinLibraryItem, recordLibraryInteraction, type LibraryItemType,
 } from '../api/subsonic';
 import { ContextMenu, useContextMenu } from './ContextMenu';
+import { CoverArt } from './CoverArt';
+import { PlaylistCover } from './StockCovers';
 
 interface Props {
   to: string;
   label: string;
-  icon: string;
-  /** Playlist rows use a solid icon; the fixed system rows use the sidebar's stroke style. */
-  iconFill?: boolean;
   itemType: LibraryItemType;
   itemKey: string;
   pinned: boolean;
+  /** Playlist rows: real cover id, if any (falls back to the stock Playlist SVG). */
+  coverArt?: string;
+  /** System-view rows: which stock SVG represents this view. */
+  StockCover?: ComponentType<{ className?: string }>;
 }
 
 const PIN_ICON = 'M12 2a5 5 0 0 0-5 5c0 3.5 5 10 5 10s5-6.5 5-10a5 5 0 0 0-5-5z';
 
-export function SidebarLibraryItem({ to, label, icon, iconFill, itemType, itemKey, pinned }: Props) {
+export function SidebarLibraryItem({ to, label, itemType, itemKey, pinned, coverArt, StockCover }: Props) {
   const qc = useQueryClient();
   const { menu, handlers, close } = useContextMenu();
 
@@ -46,15 +50,19 @@ export function SidebarLibraryItem({ to, label, icon, iconFill, itemType, itemKe
           }`
         }
       >
-        {iconFill ? (
-          <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-            <path d={icon} />
-          </svg>
-        ) : (
-          <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
-          </svg>
-        )}
+        <div className="w-7 h-7 rounded-sm overflow-hidden flex-shrink-0">
+          {itemType === 'playlist' ? (
+            <CoverArt
+              id={coverArt}
+              size={56}
+              className="w-full h-full object-cover"
+              alt={label}
+              fallback={<PlaylistCover className="w-full h-full" />}
+            />
+          ) : (
+            StockCover && <StockCover className="w-full h-full" />
+          )}
+        </div>
         <span className="truncate flex-1">{label}</span>
         {pinned && (
           <svg className="w-3 h-3 text-zinc-600 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">

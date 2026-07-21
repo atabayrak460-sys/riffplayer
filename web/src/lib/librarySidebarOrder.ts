@@ -1,10 +1,14 @@
+import type { ComponentType } from 'react';
+
 export interface LibraryRow {
   itemType: 'system' | 'playlist';
   itemKey: string;
   to: string;
   label: string;
-  icon: string;
-  iconFill?: boolean;
+  /** Playlist rows: the playlist's real cover id, if it has one (falls back to the stock Playlist SVG). */
+  coverArt?: string;
+  /** System-view rows: which stock SVG represents this view. */
+  StockCover?: ComponentType<{ className?: string }>;
 }
 
 export interface LibrarySidebarStateEntry {
