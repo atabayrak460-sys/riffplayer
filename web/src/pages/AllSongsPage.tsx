@@ -44,7 +44,7 @@ export function AllSongsPage() {
         <>
           <div className="space-y-0.5">
             {songs.map((song, i) => (
-              <SongRow key={song.id} song={song} queue={songs} index={i + 1} showAlbum />
+              <SongRow key={song.id} song={song} queue={songs} index={i + 1} showAlbum addedAt={song.created} />
             ))}
           </div>
 

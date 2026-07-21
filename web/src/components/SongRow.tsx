@@ -14,6 +14,12 @@ interface Props {
   queue?: Song[];
   index?: number;
   showAlbum?: boolean;
+  /**
+   * ISO date shown as a right-aligned "date added" column when set — pass the
+   * playlist_tracks.added_at date inside playlist views, or the track's own
+   * `created` (library index date) inside library-wide views like All Songs.
+   */
+  addedAt?: string;
 }
 
 function formatDuration(s?: number) {
@@ -21,6 +27,12 @@ function formatDuration(s?: number) {
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+function formatAddedDate(iso: string) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 const ICONS = {
@@ -35,7 +47,7 @@ const ICONS = {
   more: 'M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm0 6a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm0 6a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z',
 };
 
-export function SongRow({ song, queue, index, showAlbum = false }: Props) {
+export function SongRow({ song, queue, index, showAlbum = false, addedAt }: Props) {
   const navigate = useNavigate();
   const { playSong, currentSong, playing, playNext, addToQueue } = usePlayerStore();
   const isCurrent = currentSong?.id === song.id;
@@ -102,8 +114,13 @@ export function SongRow({ song, queue, index, showAlbum = false }: Props) {
         {!showAlbum && <p className="text-xs text-zinc-400 truncate">{song.artist}</p>}
       </div>
 
-      {/* Duration + star + more options */}
+      {/* Date added (playlist views only) + duration + star + more options */}
       <div className="flex items-center gap-3 flex-shrink-0">
+        {addedAt && (
+          <span className="text-xs text-zinc-500 w-20 text-right hidden sm:inline">
+            {formatAddedDate(addedAt)}
+          </span>
+        )}
         <StarButton starred={!!song.starred} opts={{ id: song.id }} />
         <span className="text-sm text-zinc-400 w-10 text-right">
           {formatDuration(song.duration)}

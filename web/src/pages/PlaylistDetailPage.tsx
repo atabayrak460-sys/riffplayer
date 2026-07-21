@@ -22,7 +22,9 @@ import { DownloadButton } from '../components/DownloadButton';
 import { sortPlaylistTracks, type PlaylistSortMode } from '../lib/playlistSort';
 import type { Song } from '../api/types';
 
-function DraggableSongRow({ song, index, songs }: { song: Song; index: number; songs: Song[] }) {
+function DraggableSongRow({
+  song, index, songs, addedAt,
+}: { song: Song; index: number; songs: Song[]; addedAt?: string }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: song.id + '-' + index,
   });
@@ -42,7 +44,7 @@ function DraggableSongRow({ song, index, songs }: { song: Song; index: number; s
         </svg>
       </button>
       <div className="flex-1 min-w-0">
-        <SongRow song={song} queue={songs} index={index + 1} showAlbum />
+        <SongRow song={song} queue={songs} index={index + 1} showAlbum addedAt={addedAt} />
       </div>
     </div>
   );
@@ -69,12 +71,13 @@ export function PlaylistDetailPage() {
     enabled: !!id,
   });
 
-  // Only fetched when actually needed — switching sort views is purely a
-  // client-side display transform and never touches the saved custom order.
+  // Also drives the "date added" column on every row, not just the sort toggle —
+  // switching sort views itself is purely a client-side transform and never
+  // touches the saved custom order.
   const { data: trackDates } = useQuery({
     queryKey: ['playlist-track-dates', id],
     queryFn: () => getPlaylistTrackDates(id!),
-    enabled: !!id && sortMode !== 'custom',
+    enabled: !!id,
   });
 
   const renameMutation = useMutation({
@@ -291,7 +294,13 @@ export function PlaylistDetailPage() {
           <SortableContext items={songIds} strategy={verticalListSortingStrategy}>
             <div className="space-y-0.5">
               {songs.map((song, i) => (
-                <DraggableSongRow key={song.id + '-' + i} song={song} index={i} songs={songs} />
+                <DraggableSongRow
+                  key={song.id + '-' + i}
+                  song={song}
+                  index={i}
+                  songs={songs}
+                  addedAt={trackDates?.[song.id]}
+                />
               ))}
             </div>
           </SortableContext>
@@ -299,7 +308,14 @@ export function PlaylistDetailPage() {
       ) : (
         <div className="space-y-0.5">
           {displayedSongs.map((song, i) => (
-            <SongRow key={song.id} song={song} queue={displayedSongs} index={i + 1} showAlbum />
+            <SongRow
+              key={song.id}
+              song={song}
+              queue={displayedSongs}
+              index={i + 1}
+              showAlbum
+              addedAt={trackDates?.[song.id]}
+            />
           ))}
         </div>
       )}
