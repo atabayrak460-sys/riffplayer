@@ -20,6 +20,10 @@ interface Props {
    * `created` (library index date) inside library-wide views like All Songs.
    */
   addedAt?: string;
+  /** Compact layout for narrow contexts (e.g. the Now Playing panel) — no cover thumbnail, no star, smaller text. */
+  condensed?: boolean;
+  /** Shown as the condensed row's subtitle when set (e.g. an album name) — condensed mode only. */
+  condensedSubtitle?: string;
 }
 
 function formatDuration(s?: number) {
@@ -47,7 +51,9 @@ const ICONS = {
   more: 'M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm0 6a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm0 6a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z',
 };
 
-export function SongRow({ song, queue, index, showAlbum = false, addedAt }: Props) {
+export function SongRow({
+  song, queue, index, showAlbum = false, addedAt, condensed = false, condensedSubtitle,
+}: Props) {
   const navigate = useNavigate();
   const { playSong, currentSong, playing, playNext, addToQueue } = usePlayerStore();
   const isCurrent = currentSong?.id === song.id;
@@ -71,6 +77,57 @@ export function SongRow({ song, queue, index, showAlbum = false, addedAt }: Prop
     { label: 'Go to artist', icon: ICONS.artist, onClick: () => navigate(`/artists/${song.artistId}`) },
     { label: 'Song info', icon: ICONS.info, onClick: () => setShowInfo(true) },
   ];
+
+  if (condensed) {
+    return (
+      <div
+        onDoubleClick={play}
+        {...handlers(menuItems)}
+        className={`group flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-zinc-800/70 cursor-pointer transition-colors ${isCurrent ? 'bg-zinc-800' : ''}`}
+      >
+        <div className="w-5 text-center flex-shrink-0">
+          {isCurrent ? (
+            <span className="text-brand text-xs">{playing ? '▶' : '❚❚'}</span>
+          ) : (
+            <span className="text-zinc-500 text-xs group-hover:hidden">{index ?? ''}</span>
+          )}
+          <button
+            onClick={play}
+            className={`text-zinc-200 text-xs ${isCurrent ? 'hidden' : 'hidden group-hover:block'}`}
+          >
+            ▶
+          </button>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className={`text-xs font-medium truncate ${isCurrent ? 'text-brand' : 'text-white'}`}>
+            {song.title}
+          </p>
+          {condensedSubtitle && <p className="text-[11px] text-zinc-500 truncate">{condensedSubtitle}</p>}
+        </div>
+
+        <span className="text-xs text-zinc-500 flex-shrink-0">{formatDuration(song.duration)}</span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            openAt(e, menuItems);
+          }}
+          title="More options"
+          className="text-zinc-500 hover:text-white transition-colors flex-shrink-0"
+        >
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <path d={ICONS.more} />
+          </svg>
+        </button>
+
+        <ContextMenu menu={menu} onClose={close} />
+        {showAddToPlaylist && (
+          <AddToPlaylistDialog songId={song.id} onClose={() => setShowAddToPlaylist(false)} />
+        )}
+        {showInfo && <SongInfoDialog song={song} onClose={() => setShowInfo(false)} />}
+      </div>
+    );
+  }
 
   return (
     <div

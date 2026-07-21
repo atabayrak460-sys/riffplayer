@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
+import { NowPlayingPanel } from './NowPlayingPanel';
 import { PlayerBar } from './PlayerBar';
 import { DownloadTargetModal } from './DownloadTargetModal';
 import { usePlayerStore } from '../store/player';
@@ -33,6 +34,7 @@ export function Layout() {
         <main className="flex-1 overflow-y-auto">
           <Outlet />
         </main>
+        <NowPlayingPanel />
       </div>
       <PlayerBar />
       <DownloadTargetModal />

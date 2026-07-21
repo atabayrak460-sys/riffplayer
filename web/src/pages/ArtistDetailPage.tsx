@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getArtist, getAlbum, uploadArtistCover, removeArtistCover } from '../api/subsonic';
 import { usePlayerStore } from '../store/player';
 import { useAuthStore } from '../store/auth';
+import { useArtistSongs } from '../lib/useArtistSongs';
 import { CoverArt } from '../components/CoverArt';
 import { AlbumCard } from '../components/AlbumCard';
 import { StarButton } from '../components/StarButton';
@@ -17,7 +18,8 @@ export function ArtistDetailPage() {
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState<Tab>('albums');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(searchParams.get('tab') === 'songs' ? 'songs' : 'albums');
 
   const { data: artist, isLoading, isError } = useQuery({
     queryKey: ['artist', id],
@@ -27,19 +29,9 @@ export function ArtistDetailPage() {
 
   const albums = artist?.album ?? [];
 
-  // Built from the same album-fetch endpoint "Play all" already uses, just
-  // aggregated client-side — cached by react-query so switching tabs after
-  // the first load doesn't refetch every album again.
-  const { data: allSongs = [], isLoading: loadingSongs } = useQuery({
-    queryKey: ['artist-songs', id],
-    queryFn: async () => {
-      const songs = (
-        await Promise.all(albums.map((a) => getAlbum(a.id).then((r) => r.song ?? [])))
-      ).flat();
-      return songs.sort((a, b) => a.title.localeCompare(b.title));
-    },
-    enabled: tab === 'songs' && !!id,
-  });
+  // Same aggregation the Now Playing panel's "More from this artist" section
+  // uses — shared query keys mean whichever loads first caches it for the other.
+  const { songs: allSongs, isLoading: loadingSongs } = useArtistSongs(id, tab === 'songs');
 
   const coverMutation = useMutation({
     mutationFn: (file: File) => uploadArtistCover(id!, file),
