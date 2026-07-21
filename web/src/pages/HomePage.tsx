@@ -1,11 +1,15 @@
-// Placeholder — the real Home page (Continue Listening, Most Played, Rediscover,
-// Wrapped preview) is built in a later phase. This just gives the new "Home"
-// sidebar entry (Phase 4) somewhere to point to.
+import { ContinueListeningSection } from '../components/home/ContinueListeningSection';
+import { MostPlayedSection } from '../components/home/MostPlayedSection';
+import { RediscoverSection } from '../components/home/RediscoverSection';
+import { WrappedPreviewSection } from '../components/home/WrappedPreviewSection';
+
 export function HomePage() {
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold text-white">Home</h1>
-      <p className="text-sm text-zinc-400 mt-2">Coming soon.</p>
+    <div className="p-6 max-w-6xl space-y-10">
+      <ContinueListeningSection />
+      <MostPlayedSection />
+      <RediscoverSection />
+      <WrappedPreviewSection />
     </div>
   );
 }

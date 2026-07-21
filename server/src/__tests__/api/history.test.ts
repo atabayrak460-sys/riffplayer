@@ -18,6 +18,38 @@ afterEach(async () => {
 
 const auth = authParams();
 
+describe('GET /api/v1/history/last-played', () => {
+  it('returns null when the user has no play history', async () => {
+    seedLibrary(getDb());
+    const res = await app.inject({ url: `/api/v1/history/last-played?${auth}` });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { song: unknown };
+    expect(body.song).toBeNull();
+  });
+
+  it('returns the most recently played track', async () => {
+    const db = getDb();
+    const { albumId, artistId, trackId: trackA } = seedLibrary(db);
+    const trackB = Number(
+      db.prepare(`
+        INSERT INTO tracks (title, album_id, artist_id, track_no, duration_s, path, size, format, bitrate)
+        VALUES ('Track B', ?, ?, 2, 180, '/music/b.mp3', 900000, 'MPEG', 320)
+      `).run(albumId, artistId).lastInsertRowid,
+    );
+    const userId = Number(
+      (db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id: number }).id,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const insertPlay = db.prepare('INSERT INTO play_history (user_id, track_id, played_at) VALUES (?, ?, ?)');
+    insertPlay.run(userId, trackA, now - 100);
+    insertPlay.run(userId, trackB, now - 10);
+
+    const res = await app.inject({ url: `/api/v1/history/last-played?${auth}` });
+    const body = JSON.parse(res.body) as { song: { id: string } | null };
+    expect(body.song?.id).toBe(String(trackB));
+  });
+});
+
 describe('GET /api/v1/history/most-played', () => {
   it('only counts plays from the last 30 days', async () => {
     const db = getDb();

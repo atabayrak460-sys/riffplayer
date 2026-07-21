@@ -329,6 +329,18 @@ export async function getMostPlayed(): Promise<Song[]> {
   return r.songs;
 }
 
+/** The single most recently played track, or null if the user has no play history yet. */
+export async function getLastPlayed(): Promise<Song | null> {
+  const r = await apiCall('GET', 'history/last-played') as { song: Song | null };
+  return r.song;
+}
+
+/** Tracks never played (or played longest ago) among ones old enough in the library to count. */
+export async function getRediscover(): Promise<Song[]> {
+  const r = await apiCall('GET', 'history/rediscover') as { songs: Song[] };
+  return r.songs;
+}
+
 // ── Lyrics (OpenSubsonic extension) ─────────────────────────────────────────
 
 export interface LyricLine {
