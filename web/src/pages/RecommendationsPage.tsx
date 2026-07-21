@@ -71,7 +71,7 @@ export function RecommendationsPage() {
             {String(error).replace('Error: ', '')}
           </p>
           <p className="text-xs text-zinc-500">
-            To enable recommendations, go to Admin → Settings and configure a Last.fm
+            To enable recommendations, go to Settings → Admin and configure a Last.fm
             API key or an Ollama URL.
           </p>
         </div>

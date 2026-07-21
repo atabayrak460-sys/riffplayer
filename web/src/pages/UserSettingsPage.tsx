@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { patchMyPreferences } from '../api/subsonic';
 import { useAuthStore } from '../store/auth';
@@ -26,6 +27,42 @@ async function fetchMe() {
 }
 
 export function UserSettingsPage() {
+  const user = useAuthStore((s) => s.user);
+
+  return (
+    <div className="p-6">
+      <h1 className="text-2xl font-bold text-white mb-6">Settings</h1>
+      <div className="flex gap-1 mb-8 border-b border-zinc-800">
+        <NavLink
+          to="/settings"
+          end
+          className={({ isActive }) =>
+            `px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              isActive ? 'border-brand text-brand' : 'border-transparent text-zinc-400 hover:text-white'
+            }`
+          }
+        >
+          Account
+        </NavLink>
+        {user?.role === 'admin' && (
+          <NavLink
+            to="/settings/admin"
+            className={({ isActive }) =>
+              `px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                isActive ? 'border-brand text-brand' : 'border-transparent text-zinc-400 hover:text-white'
+              }`
+            }
+          >
+            Admin
+          </NavLink>
+        )}
+      </div>
+      <Outlet />
+    </div>
+  );
+}
+
+export function AccountSettingsPanel() {
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const { data, isLoading } = useQuery({ queryKey: ['user-me'], queryFn: fetchMe });
@@ -53,11 +90,11 @@ export function UserSettingsPage() {
     setInit(true);
   }
 
-  if (isLoading) return <div className="p-6 text-zinc-400 text-sm">Loading…</div>;
+  if (isLoading) return <div className="text-zinc-400 text-sm">Loading…</div>;
 
   return (
-    <div className="p-6 max-w-lg space-y-8">
-      <h1 className="text-2xl font-bold text-white">Settings — {user?.username}</h1>
+    <div className="max-w-lg space-y-8">
+      <p className="text-sm text-zinc-400 -mt-2">Signed in as {user?.username}</p>
 
       <section>
         <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">Transcoding</h2>

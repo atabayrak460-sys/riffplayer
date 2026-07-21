@@ -21,7 +21,7 @@ import { AdminPage } from './pages/admin/AdminPage';
 import { UsersPage } from './pages/admin/UsersPage';
 import { LibrariesPage } from './pages/admin/LibrariesPage';
 import { SettingsPage } from './pages/admin/SettingsPage';
-import { UserSettingsPage } from './pages/UserSettingsPage';
+import { UserSettingsPage, AccountSettingsPanel } from './pages/UserSettingsPage';
 import { RecommendationsPage } from './pages/RecommendationsPage';
 import { WrappedPage } from './pages/WrappedPage';
 
@@ -60,17 +60,23 @@ const router = createBrowserRouter([
           { path: 'playlists/:id', element: <PlaylistDetailPage /> },
           { path: 'downloaded', element: <DownloadedPage /> },
           { path: 'downloaded/playlists/:id', element: <OfflinePlaylistPage /> },
-          { path: 'settings', element: <UserSettingsPage /> },
           { path: 'discover', element: <RecommendationsPage /> },
           { path: 'wrapped', element: <WrappedPage /> },
           {
-            path: 'admin',
-            element: <AdminPage />,
+            path: 'settings',
+            element: <UserSettingsPage />,
             children: [
-              { index: true, element: <Navigate to="/admin/users" replace /> },
-              { path: 'users', element: <UsersPage /> },
-              { path: 'libraries', element: <LibrariesPage /> },
-              { path: 'settings', element: <SettingsPage /> },
+              { index: true, element: <AccountSettingsPanel /> },
+              {
+                path: 'admin',
+                element: <AdminPage />,
+                children: [
+                  { index: true, element: <Navigate to="/settings/admin/users" replace /> },
+                  { path: 'users', element: <UsersPage /> },
+                  { path: 'libraries', element: <LibrariesPage /> },
+                  { path: 'settings', element: <SettingsPage /> },
+                ],
+              },
             ],
           },
         ],

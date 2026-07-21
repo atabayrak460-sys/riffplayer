@@ -171,7 +171,7 @@ export function WrappedPage() {
                 >
                   {summaryMut.isPending ? 'Generating…' : 'Generate with Ollama'}
                 </button>
-                <p className="text-xs text-zinc-500">Requires Ollama configured in Admin → Settings</p>
+                <p className="text-xs text-zinc-500">Requires Ollama configured in Settings → Admin</p>
               </div>
             )}
             {summaryMut.isError && (

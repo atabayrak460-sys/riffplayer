@@ -2,9 +2,9 @@ import { NavLink, Outlet, Navigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/auth';
 
 const TABS = [
-  { to: '/admin/users', label: 'Users' },
-  { to: '/admin/libraries', label: 'Libraries' },
-  { to: '/admin/settings', label: 'Settings' },
+  { to: '/settings/admin/users', label: 'Users' },
+  { to: '/settings/admin/libraries', label: 'Libraries' },
+  { to: '/settings/admin/settings', label: 'Settings' },
 ];
 
 export function AdminPage() {
@@ -12,9 +12,8 @@ export function AdminPage() {
   if (user?.role !== 'admin') return <Navigate to="/albums" replace />;
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold text-white mb-6">Admin</h1>
-      <div className="flex gap-1 mb-8 border-b border-zinc-800">
+    <div>
+      <div className="flex gap-1 mb-6 border-b border-zinc-800">
         {TABS.map(({ to, label }) => (
           <NavLink
             key={to}
