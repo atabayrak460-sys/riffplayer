@@ -125,13 +125,14 @@ describe('next', () => {
     expect(currentSong?.id).toBe('a');
   });
 
-  it('advances normally mid-queue regardless of repeat mode', () => {
+  it('advances normally mid-queue and drops repeat-one to off (manual skip)', () => {
     usePlayerStore.setState({ queue: [song('a'), song('b'), song('c')], queueIndex: 0, repeatMode: 'one' });
     usePlayerStore.getState().next();
 
-    const { queueIndex, currentSong } = usePlayerStore.getState();
+    const { queueIndex, currentSong, repeatMode } = usePlayerStore.getState();
     expect(queueIndex).toBe(1);
     expect(currentSong?.id).toBe('b');
+    expect(repeatMode).toBe('off');
   });
 
   it('reshuffles when looping back around with shuffle + repeat-all', () => {
@@ -184,5 +185,55 @@ describe('toggleShuffle', () => {
     expect(queue[0].id).toBe('y');
     expect(currentSong?.id).toBe('y');
     expect(queue.map((s) => s.id).sort()).toEqual(['w', 'x', 'y', 'z']);
+  });
+});
+
+describe('repeat-one manual override (Spotify parity)', () => {
+  it('prev() drops repeat-one to off', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b')], queueIndex: 1, currentTime: 0, repeatMode: 'one' });
+    usePlayerStore.getState().prev();
+
+    expect(usePlayerStore.getState().repeatMode).toBe('off');
+  });
+
+  it('prev() drops repeat-one to off even when just restarting the current track (currentTime > 3s)', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b')], queueIndex: 1, currentTime: 10, repeatMode: 'one' });
+    usePlayerStore.getState().prev();
+
+    expect(usePlayerStore.getState().repeatMode).toBe('off');
+  });
+
+  it('playSong() with a new queue drops repeat-one to off', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b')], queueIndex: 0, repeatMode: 'one' });
+    usePlayerStore.getState().playSong(song('c'), [song('a'), song('b'), song('c')]);
+
+    expect(usePlayerStore.getState().repeatMode).toBe('off');
+  });
+
+  it('playQueue() drops repeat-one to off', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b')], queueIndex: 0, repeatMode: 'one' });
+    usePlayerStore.getState().playQueue([song('x'), song('y')], 0);
+
+    expect(usePlayerStore.getState().repeatMode).toBe('off');
+  });
+
+  it('leaves repeat "off" and "all" untouched on manual skip', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b')], queueIndex: 0, repeatMode: 'off' });
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().repeatMode).toBe('off');
+
+    usePlayerStore.setState({ queue: [song('a'), song('b')], queueIndex: 0, repeatMode: 'all' });
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().repeatMode).toBe('all');
+  });
+
+  it('the natural end-of-track loop (ended event) does not go through here and repeat-one is untouched by design', () => {
+    // toggleRepeat only ever cycles a single enum (off -> all -> one -> off), so
+    // "all" and "one" can never be layered together in this store.
+    usePlayerStore.getState().toggleRepeat();
+    usePlayerStore.getState().toggleRepeat();
+    expect(usePlayerStore.getState().repeatMode).toBe('one');
+    usePlayerStore.getState().toggleRepeat();
+    expect(usePlayerStore.getState().repeatMode).toBe('off');
   });
 });

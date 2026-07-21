@@ -153,11 +153,13 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     playSong: (song, queue) => {
       const q = queue ?? [song];
       const idx = queue ? queue.findIndex((s) => s.id === song.id) : 0;
+      // Manually picking a track always drops repeat-one — it only survives the track's own natural loop.
+      const repeatMode = get().repeatMode === 'one' ? 'off' : get().repeatMode;
       if (get().shuffle) {
         const shuffled = buildShuffledQueue(q, idx);
-        set({ queue: shuffled, queueIndex: 0, currentSong: song, originalQueue: q });
+        set({ queue: shuffled, queueIndex: 0, currentSong: song, originalQueue: q, repeatMode });
       } else {
-        set({ queue: q, queueIndex: idx, currentSong: song, originalQueue: null });
+        set({ queue: q, queueIndex: idx, currentSong: song, originalQueue: null, repeatMode });
       }
       loadAndPlay(song);
     },
@@ -165,11 +167,12 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     playQueue: (songs, index = 0) => {
       if (!songs.length) return;
       const song = songs[index];
+      const repeatMode = get().repeatMode === 'one' ? 'off' : get().repeatMode;
       if (get().shuffle) {
         const shuffled = buildShuffledQueue(songs, index);
-        set({ queue: shuffled, queueIndex: 0, currentSong: song, originalQueue: songs });
+        set({ queue: shuffled, queueIndex: 0, currentSong: song, originalQueue: songs, repeatMode });
       } else {
-        set({ queue: songs, queueIndex: index, currentSong: song, originalQueue: null });
+        set({ queue: songs, queueIndex: index, currentSong: song, originalQueue: null, repeatMode });
       }
       loadAndPlay(song);
     },
@@ -183,8 +186,12 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     },
 
     next: () => {
-      const { queue, queueIndex, repeatMode, shuffle } = get();
+      const { queue, queueIndex, shuffle } = get();
       if (!queue.length) return;
+      // A manual skip always drops repeat-one — it only survives the track's own natural loop
+      // (which never reaches here — see the `ended` listener above).
+      if (get().repeatMode === 'one') set({ repeatMode: 'off' });
+      const repeatMode = get().repeatMode;
       let next = queueIndex + 1;
       if (next >= queue.length) {
         if (repeatMode !== 'all') {
@@ -209,6 +216,8 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
 
     prev: () => {
       const { queue, queueIndex, currentTime } = get();
+      // A manual skip always drops repeat-one — it only survives the track's own natural loop.
+      if (get().repeatMode === 'one') set({ repeatMode: 'off' });
       if (currentTime > 3) {
         audio.currentTime = 0;
         return;
