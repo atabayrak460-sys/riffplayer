@@ -220,6 +220,40 @@ export function WrappedCover({ className }: CoverProps) {
   );
 }
 
+export function AllSongsCover({ className }: CoverProps) {
+  const id = useUid();
+  return (
+    <svg className={className} viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="400" y2="400">
+          <stop offset="0" stopColor="#1c1a22" />
+          <stop offset="1" stopColor="#08070a" />
+        </linearGradient>
+        <linearGradient id={`${id}-grad`} x1="0" y1="0" x2="400" y2="400">
+          <stop offset="0" stopColor="#94a3b8" />
+          <stop offset="1" stopColor="#475569" />
+        </linearGradient>
+        <pattern id={`${id}-hatch`} width="40" height="40" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+          <line x1="0" y1="0" x2="0" y2="40" stroke="#ffffff" strokeOpacity="0.05" strokeWidth="1" />
+        </pattern>
+        <filter id={`${id}-blur`} x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="36" />
+        </filter>
+      </defs>
+      <rect width="400" height="400" fill={`url(#${id}-bg)`} />
+      <circle cx="290" cy="120" r="100" fill="#94a3b8" opacity="0.16" filter={`url(#${id}-blur)`} />
+      {/* Stacked rows of varying width — an abstracted tracklist/index, standing in for "everything". */}
+      <rect x="80" y="98" width="240" height="24" rx="6" fill={`url(#${id}-grad)`} opacity="1" />
+      <rect x="80" y="138" width="180" height="24" rx="6" fill={`url(#${id}-grad)`} opacity="0.9" />
+      <rect x="80" y="178" width="220" height="24" rx="6" fill={`url(#${id}-grad)`} opacity="0.82" />
+      <rect x="80" y="218" width="140" height="24" rx="6" fill={`url(#${id}-grad)`} opacity="0.74" />
+      <rect x="80" y="258" width="200" height="24" rx="6" fill={`url(#${id}-grad)`} opacity="0.66" />
+      <rect x="80" y="298" width="160" height="24" rx="6" fill={`url(#${id}-grad)`} opacity="0.58" />
+      <rect width="400" height="400" fill={`url(#${id}-hatch)`} />
+    </svg>
+  );
+}
+
 export function PlaylistCover({ className }: CoverProps) {
   const id = useUid();
   return (

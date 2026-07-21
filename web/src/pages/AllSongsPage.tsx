@@ -1,6 +1,7 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { getAllSongs } from '../api/subsonic';
 import { SongRow } from '../components/SongRow';
+import { AllSongsCover } from '../components/StockCovers';
 
 const PAGE_SIZE = 200;
 
@@ -24,7 +25,10 @@ export function AllSongsPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold text-white mb-6">All Songs</h1>
+      <div className="flex items-center gap-4 mb-6">
+        <AllSongsCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
+        <h1 className="text-2xl font-bold text-white">All Songs</h1>
+      </div>
 
       {isLoading && (
         <div className="space-y-1">
