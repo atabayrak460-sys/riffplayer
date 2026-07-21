@@ -13,8 +13,22 @@ function formatTime(s: number) {
 }
 
 export function PlayerBar() {
-  const { currentSong, playing, currentTime, duration, volume, togglePlay, next, prev, seek, setVolume } =
-    usePlayerStore();
+  const {
+    currentSong,
+    playing,
+    currentTime,
+    duration,
+    volume,
+    repeatMode,
+    shuffle,
+    togglePlay,
+    next,
+    prev,
+    seek,
+    setVolume,
+    toggleRepeat,
+    toggleShuffle,
+  } = usePlayerStore();
 
   const seekRef = useRef<HTMLInputElement>(null);
   const [showLyrics, setShowLyrics] = useState(false);
@@ -59,6 +73,16 @@ export function PlayerBar() {
       {/* Center: controls + seek */}
       <div className="flex-1 flex flex-col items-center gap-1 max-w-xl mx-auto">
         <div className="flex items-center gap-6">
+          <button
+            onClick={toggleShuffle}
+            title="Shuffle"
+            className={`transition-colors ${shuffle ? 'text-brand' : 'text-zinc-400 hover:text-white'}`}
+          >
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" />
+            </svg>
+          </button>
+
           <button onClick={prev} title="Previous" className="text-zinc-400 hover:text-white transition-colors">
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
@@ -85,6 +109,23 @@ export function PlayerBar() {
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M6 18l8.5-6L6 6v12zm2.5-6 5.5 4V8z M16 6h2v12h-2z" />
             </svg>
+          </button>
+
+          <button
+            onClick={toggleRepeat}
+            title={`Repeat: ${repeatMode}`}
+            className={`relative transition-colors ${
+              repeatMode !== 'off' ? 'text-brand' : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v3z" />
+            </svg>
+            {repeatMode === 'one' && (
+              <span className="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-brand text-black text-[8px] font-bold leading-none flex items-center justify-center">
+                1
+              </span>
+            )}
           </button>
         </div>
 

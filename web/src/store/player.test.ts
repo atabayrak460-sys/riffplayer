@@ -39,7 +39,15 @@ function song(id: string): Song {
 }
 
 beforeEach(() => {
-  usePlayerStore.setState({ queue: [], queueIndex: -1, currentSong: null, playing: false });
+  usePlayerStore.setState({
+    queue: [],
+    queueIndex: -1,
+    currentSong: null,
+    playing: false,
+    repeatMode: 'off',
+    shuffle: false,
+    originalQueue: null,
+  });
 });
 
 describe('playNext', () => {
@@ -83,5 +91,98 @@ describe('addToQueue', () => {
     const { queue, queueIndex } = usePlayerStore.getState();
     expect(queue.map((s) => s.id)).toEqual(['a', 'b', 'z']);
     expect(queueIndex).toBe(0);
+  });
+});
+
+describe('toggleRepeat', () => {
+  it('cycles off -> all -> one -> off', () => {
+    expect(usePlayerStore.getState().repeatMode).toBe('off');
+    usePlayerStore.getState().toggleRepeat();
+    expect(usePlayerStore.getState().repeatMode).toBe('all');
+    usePlayerStore.getState().toggleRepeat();
+    expect(usePlayerStore.getState().repeatMode).toBe('one');
+    usePlayerStore.getState().toggleRepeat();
+    expect(usePlayerStore.getState().repeatMode).toBe('off');
+  });
+});
+
+describe('next', () => {
+  it('stops at the end of the queue when repeat is off', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b')], queueIndex: 1, repeatMode: 'off' });
+    usePlayerStore.getState().next();
+
+    const { queueIndex, playing } = usePlayerStore.getState();
+    expect(queueIndex).toBe(1);
+    expect(playing).toBe(false);
+  });
+
+  it('wraps back to the first track when repeat is "all"', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b')], queueIndex: 1, repeatMode: 'all' });
+    usePlayerStore.getState().next();
+
+    const { queueIndex, currentSong } = usePlayerStore.getState();
+    expect(queueIndex).toBe(0);
+    expect(currentSong?.id).toBe('a');
+  });
+
+  it('advances normally mid-queue regardless of repeat mode', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b'), song('c')], queueIndex: 0, repeatMode: 'one' });
+    usePlayerStore.getState().next();
+
+    const { queueIndex, currentSong } = usePlayerStore.getState();
+    expect(queueIndex).toBe(1);
+    expect(currentSong?.id).toBe('b');
+  });
+
+  it('reshuffles when looping back around with shuffle + repeat-all', () => {
+    const queue = [song('a'), song('b'), song('c'), song('d'), song('e')];
+    usePlayerStore.setState({ queue, queueIndex: queue.length - 1, repeatMode: 'all', shuffle: true });
+    usePlayerStore.getState().next();
+
+    const { queueIndex, queue: newQueue, currentSong } = usePlayerStore.getState();
+    expect(queueIndex).toBe(0);
+    expect(currentSong?.id).toBe(newQueue[0].id);
+    // still the same five songs, just possibly reordered
+    expect(newQueue.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+});
+
+describe('toggleShuffle', () => {
+  it('keeps the currently playing song in place and randomizes the rest', () => {
+    const queue = [song('a'), song('b'), song('c'), song('d'), song('e')];
+    usePlayerStore.setState({ queue, queueIndex: 2, currentSong: song('c') });
+    usePlayerStore.getState().toggleShuffle();
+
+    const { queue: shuffled, queueIndex, shuffle, currentSong } = usePlayerStore.getState();
+    expect(shuffle).toBe(true);
+    expect(queueIndex).toBe(0);
+    expect(shuffled[0].id).toBe('c');
+    expect(currentSong?.id).toBe('c');
+    expect(shuffled.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('restores original order and correct position when turned back off', () => {
+    const queue = [song('a'), song('b'), song('c'), song('d'), song('e')];
+    usePlayerStore.setState({ queue, queueIndex: 2, currentSong: song('c') });
+    usePlayerStore.getState().toggleShuffle();
+    usePlayerStore.getState().toggleShuffle();
+
+    const { queue: restored, queueIndex, shuffle, originalQueue } = usePlayerStore.getState();
+    expect(shuffle).toBe(false);
+    expect(originalQueue).toBeNull();
+    expect(restored.map((s) => s.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(queueIndex).toBe(2);
+  });
+
+  it('a new queue started while shuffle is already on is shuffled immediately (works from any view)', () => {
+    usePlayerStore.setState({ shuffle: true });
+    const songs = [song('x'), song('y'), song('z'), song('w')];
+    usePlayerStore.getState().playQueue(songs, 1);
+
+    const { queue, queueIndex, currentSong } = usePlayerStore.getState();
+    expect(queueIndex).toBe(0);
+    expect(queue[0].id).toBe('y');
+    expect(currentSong?.id).toBe('y');
+    expect(queue.map((s) => s.id).sort()).toEqual(['w', 'x', 'y', 'z']);
   });
 });
