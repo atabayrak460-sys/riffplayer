@@ -5,7 +5,7 @@ import { WrappedPreviewSection } from '../components/home/WrappedPreviewSection'
 
 export function HomePage() {
   return (
-    <div className="p-6 max-w-6xl space-y-10">
+    <div className="p-6 space-y-10">
       <ContinueListeningSection />
       <MostPlayedSection />
       <RediscoverSection />
