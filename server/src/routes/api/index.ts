@@ -133,6 +133,12 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
     reply.send({ ok: true });
   });
 
+  // ── GET /api/v1/library/stats — for auto-generated page descriptions ───────
+  app.get('/library/stats', { preHandler: apiAuth }, async (_req, reply) => {
+    const { count } = getDb().prepare('SELECT COUNT(*) AS count FROM tracks').get() as { count: number };
+    reply.send({ trackCount: count });
+  });
+
   // ── Admin routes ──────────────────────────────────────────────────────────
 
   // GET /api/v1/admin/users

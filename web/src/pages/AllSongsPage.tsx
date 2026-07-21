@@ -1,5 +1,5 @@
-import { useInfiniteQuery } from '@tanstack/react-query';
-import { getAllSongs } from '../api/subsonic';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { getAllSongs, getLibraryStats } from '../api/subsonic';
 import { SongRow } from '../components/SongRow';
 import { AllSongsCover } from '../components/StockCovers';
 
@@ -20,6 +20,7 @@ export function AllSongsPage() {
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === PAGE_SIZE ? allPages.length * PAGE_SIZE : undefined,
   });
+  const { data: stats } = useQuery({ queryKey: ['library-stats'], queryFn: getLibraryStats });
 
   const songs = data?.pages.flat() ?? [];
 
@@ -27,7 +28,14 @@ export function AllSongsPage() {
     <div className="p-6">
       <div className="flex items-center gap-4 mb-6">
         <AllSongsCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
-        <h1 className="text-2xl font-bold text-white">All Songs</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white">All Songs</h1>
+          {stats && (
+            <p className="text-sm text-zinc-400 mt-1">
+              Every track in your library · {stats.trackCount.toLocaleString()} songs
+            </p>
+          )}
+        </div>
       </div>
 
       {isLoading && (

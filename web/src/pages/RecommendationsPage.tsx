@@ -26,9 +26,7 @@ export function RecommendationsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Discover</h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Tracks from your library you might enjoy — suggested by{' '}
-            {source === 'ollama' ? 'local AI (Ollama)' : 'Last.fm'}.
-            No external links. Everything playable right now.
+            Suggested by {source === 'ollama' ? 'local AI (Ollama)' : 'Last.fm'} · from your library only
           </p>
         </div>
       </div>

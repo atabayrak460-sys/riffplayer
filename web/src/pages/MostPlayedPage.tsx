@@ -15,7 +15,11 @@ export function MostPlayedPage() {
         <MostPlayedCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
         <div>
           <h1 className="text-2xl font-bold text-white">Most Played</h1>
-          <p className="text-xs text-zinc-500">Last 30 days</p>
+          <p className="text-sm text-zinc-400 mt-1">
+            {songs.length > 0
+              ? `Your top ${songs.length} track${songs.length === 1 ? '' : 's'} from the last 30 days`
+              : 'Your top tracks based on play history'}
+          </p>
         </div>
       </div>
 

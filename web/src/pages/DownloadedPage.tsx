@@ -28,7 +28,15 @@ export function DownloadedPage() {
     <div className="p-6">
       <div className="flex items-center gap-4 mb-2">
         <DownloadedCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
-        <h1 className="text-2xl font-bold text-white">Downloaded</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white">Downloaded</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            {[
+              playlists.length > 0 && `${playlists.length} playlist${playlists.length === 1 ? '' : 's'}`,
+              songs.length > 0 && `${songs.length} track${songs.length === 1 ? '' : 's'}`,
+            ].filter(Boolean).join(', ') || 'Available offline'}
+          </p>
+        </div>
       </div>
 
       {isIOS() && (

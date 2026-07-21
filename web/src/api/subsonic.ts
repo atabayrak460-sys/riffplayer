@@ -317,6 +317,11 @@ export async function removeArtistCover(artistId: string): Promise<void> {
   await apiDelete(`artists/${artistId}/cover`);
 }
 
+/** Library-wide totals, used for auto-generated page descriptions (e.g. All Songs). */
+export async function getLibraryStats(): Promise<{ trackCount: number }> {
+  return (await apiCall('GET', 'library/stats')) as { trackCount: number };
+}
+
 // ── Play history ─────────────────────────────────────────────────────────────
 
 export async function getRecentlyPlayed(): Promise<Song[]> {

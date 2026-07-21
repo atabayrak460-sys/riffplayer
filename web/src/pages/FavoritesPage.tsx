@@ -18,11 +18,22 @@ export function FavoritesPage() {
 
   const empty = !data.artist.length && !data.album.length && !data.song.length;
 
+  const parts = [
+    data.artist.length > 0 && `${data.artist.length} artist${data.artist.length === 1 ? '' : 's'}`,
+    data.album.length > 0 && `${data.album.length} album${data.album.length === 1 ? '' : 's'}`,
+    data.song.length > 0 && `${data.song.length} song${data.song.length === 1 ? '' : 's'}`,
+  ].filter(Boolean);
+
   return (
     <div className="p-6 space-y-8">
       <div className="flex items-center gap-4">
         <FavouritesCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
-        <h1 className="text-2xl font-bold text-white">Favourites</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white">Favourites</h1>
+          {parts.length > 0 && (
+            <p className="text-sm text-zinc-400 mt-1">{parts.join(', ')} starred</p>
+          )}
+        </div>
       </div>
 
       {empty && (

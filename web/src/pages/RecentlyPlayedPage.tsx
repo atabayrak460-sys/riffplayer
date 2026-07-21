@@ -13,7 +13,14 @@ export function RecentlyPlayedPage() {
     <div className="p-6">
       <div className="flex items-center gap-4 mb-6">
         <RecentlyPlayedCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
-        <h1 className="text-2xl font-bold text-white">Recently Played</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white">Recently Played</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            {songs.length > 0
+              ? `Your last ${songs.length} played track${songs.length === 1 ? '' : 's'}`
+              : "What you've listened to recently"}
+          </p>
+        </div>
       </div>
 
       {isLoading ? (
