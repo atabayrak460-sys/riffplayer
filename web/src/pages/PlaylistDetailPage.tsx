@@ -22,6 +22,12 @@ import { DownloadButton } from '../components/DownloadButton';
 import { sortPlaylistTracks, type PlaylistSortMode } from '../lib/playlistSort';
 import type { Song } from '../api/types';
 
+function formatDuration(s: number) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h} hr ${m} min` : `${m} min`;
+}
+
 function DraggableSongRow({
   song, index, songs, addedAt,
 }: { song: Song; index: number; songs: Song[]; addedAt?: string }) {
@@ -153,12 +159,12 @@ export function PlaylistDetailPage() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="flex gap-5 mb-8">
+      <div className="flex gap-6 mb-6">
         <div className="relative flex-shrink-0 group/cover">
           <CoverArt
             id={playlist.coverArt}
-            size={160}
-            className="w-36 h-36 rounded-lg object-cover shadow-xl"
+            size={440}
+            className="w-56 h-56 rounded-lg object-cover shadow-xl"
             alt={playlist.name}
             fallback={<PlaylistCover className="w-full h-full" />}
           />
@@ -183,49 +189,51 @@ export function PlaylistDetailPage() {
             }}
           />
           {coverError && (
-            <p className="absolute top-full mt-1 text-xs text-red-400 w-36">{coverError}</p>
+            <p className="absolute top-full mt-1 text-xs text-red-400 w-56">{coverError}</p>
           )}
         </div>
 
-        <div className="flex flex-col justify-end gap-2">
+        <div className="flex flex-col flex-1 min-w-0 h-56">
           <p className="text-xs uppercase tracking-widest text-zinc-400">Playlist</p>
           {editingName ? (
             <form
               onSubmit={(e) => { e.preventDefault(); renameMutation.mutate(nameValue); }}
-              className="flex gap-2"
+              className="flex gap-2 mt-1"
             >
               <input
                 autoFocus
                 value={nameValue}
                 onChange={(e) => setNameValue(e.target.value)}
-                className="bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-white text-xl font-bold focus:outline-none focus:border-brand"
+                className="bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-white text-3xl font-bold focus:outline-none focus:border-brand"
               />
-              <button type="submit" className="text-brand text-sm">Save</button>
-              <button type="button" onClick={() => setEditingName(false)} className="text-zinc-400 text-sm">Cancel</button>
+              <button type="submit" className="text-brand text-sm self-center">Save</button>
+              <button type="button" onClick={() => setEditingName(false)} className="text-zinc-400 text-sm self-center">Cancel</button>
             </form>
           ) : (
             <h1
-              className="text-3xl font-bold text-white cursor-pointer hover:text-brand transition-colors"
+              className="text-3xl font-bold text-white cursor-pointer hover:text-brand transition-colors mt-1 truncate"
               onClick={() => { setNameValue(playlist.name); setEditingName(true); }}
               title="Click to rename"
             >
               {playlist.name}
             </h1>
           )}
-          <p className="text-sm text-zinc-400">{songs.length} tracks</p>
+          <p className="text-sm text-zinc-400 mt-1.5">
+            {playlist.owner} · {songs.length} tracks
+            {songs.length > 0 && ` · ${formatDuration(playlist.duration)}`}
+          </p>
 
           {editingDescription ? (
             <form
               onSubmit={(e) => { e.preventDefault(); descriptionMutation.mutate(descriptionValue); }}
-              className="flex flex-col gap-1.5 max-w-md"
+              className="flex flex-col gap-1.5 mt-3 flex-1 min-h-0"
             >
               <textarea
                 autoFocus
-                rows={2}
                 value={descriptionValue}
                 onChange={(e) => setDescriptionValue(e.target.value)}
                 placeholder="Add a description…"
-                className="bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-white text-sm resize-none focus:outline-none focus:border-brand"
+                className="bg-zinc-900/50 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm resize-none focus:outline-none focus:border-brand flex-1 min-h-0"
               />
               <div className="flex gap-2">
                 <button type="submit" className="text-brand text-sm">Save</button>
@@ -233,36 +241,38 @@ export function PlaylistDetailPage() {
               </div>
             </form>
           ) : (
-            <p
-              className="text-sm text-zinc-400 hover:text-zinc-300 transition-colors cursor-pointer max-w-md"
+            <div
+              className="mt-3 flex-1 min-h-0 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 overflow-y-auto cursor-pointer hover:border-zinc-700 transition-colors"
               onClick={() => { setDescriptionValue(playlist.comment ?? ''); setEditingDescription(true); }}
               title="Click to edit description"
             >
-              {playlist.comment || <span className="italic text-zinc-600">Add a description…</span>}
-            </p>
+              <p className="text-sm text-zinc-400 whitespace-pre-wrap">
+                {playlist.comment || <span className="italic text-zinc-600">No description</span>}
+              </p>
+            </div>
           )}
-
-          <div className="flex items-center gap-3 mt-1">
-            <button
-              onClick={() => playQueue(displayedSongs)}
-              disabled={!songs.length}
-              className="bg-brand hover:bg-brand-dim text-white text-sm font-medium px-5 py-2 rounded-full transition-colors disabled:opacity-50"
-            >
-              Play
-            </button>
-            <DownloadButton
-              state={downloadState}
-              onDownload={() => requestDownload({ kind: 'playlist', playlist, songs })}
-              onRemove={() => removePlaylistDownload(playlist.id)}
-            />
-            <button
-              onClick={() => { if (confirm(`Delete "${playlist.name}"?`)) deleteMutation.mutate(); }}
-              className="text-zinc-400 hover:text-red-400 transition-colors text-sm"
-            >
-              Delete
-            </button>
-          </div>
         </div>
+      </div>
+
+      <div className="flex items-center gap-3 mb-8">
+        <button
+          onClick={() => playQueue(displayedSongs)}
+          disabled={!songs.length}
+          className="bg-brand hover:bg-brand-dim text-white text-sm font-medium px-5 py-2 rounded-full transition-colors disabled:opacity-50"
+        >
+          Play
+        </button>
+        <DownloadButton
+          state={downloadState}
+          onDownload={() => requestDownload({ kind: 'playlist', playlist, songs })}
+          onRemove={() => removePlaylistDownload(playlist.id)}
+        />
+        <button
+          onClick={() => { if (confirm(`Delete "${playlist.name}"?`)) deleteMutation.mutate(); }}
+          className="text-zinc-400 hover:text-red-400 transition-colors text-sm"
+        >
+          Delete
+        </button>
       </div>
 
       {/* Sort control — a display transform only; never mutates the saved custom order */}
