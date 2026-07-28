@@ -10,6 +10,7 @@ import { scanLibrary } from '../../indexer/scan.js';
 import { recommendationsPlugin } from './recommendations.js';
 import { historyPlugin } from './history.js';
 import { librarySidebarPlugin } from './librarySidebar.js';
+import { systemViewsPlugin } from './systemViews.js';
 
 function getCoversDir(): string {
   return process.env.COVERS_DIR ?? path.join(process.cwd(), 'covers');
@@ -448,4 +449,11 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
     lib.addHook('preHandler', apiAuth);
     lib.register(librarySidebarPlugin);
   }, { prefix: '/library-sidebar' });
+
+  // Per-user system-view cover + description overrides — all require auth,
+  // registered under /system-views/*
+  app.register(async (sv) => {
+    sv.addHook('preHandler', apiAuth);
+    sv.register(systemViewsPlugin);
+  }, { prefix: '/system-views' });
 }

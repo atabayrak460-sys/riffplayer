@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getRecentlyPlayed } from '../api/subsonic';
 import { SongRow } from '../components/SongRow';
 import { RecentlyPlayedCover } from '../components/StockCovers';
+import { SystemViewHeader } from '../components/SystemViewHeader';
 
 export function RecentlyPlayedPage() {
   const { data: songs = [], isLoading } = useQuery({
@@ -11,17 +12,13 @@ export function RecentlyPlayedPage() {
 
   return (
     <div className="p-6">
-      <div className="flex items-center gap-4 mb-6">
-        <RecentlyPlayedCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
-        <div>
-          <h1 className="text-2xl font-bold text-white">Recently Played</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            {songs.length > 0
-              ? `Your last ${songs.length} played track${songs.length === 1 ? '' : 's'}`
-              : "What you've listened to recently"}
-          </p>
-        </div>
-      </div>
+      <SystemViewHeader
+        viewKey="recent"
+        title="Recently Played"
+        defaultDescription="What you've listened to recently"
+        StockCover={RecentlyPlayedCover}
+        meta={songs.length > 0 && `${songs.length} track${songs.length === 1 ? '' : 's'}`}
+      />
 
       {isLoading ? (
         <div className="space-y-1">

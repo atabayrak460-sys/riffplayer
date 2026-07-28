@@ -6,6 +6,7 @@ import { CoverArt } from '../components/CoverArt';
 import { PlaylistCover, DownloadedCover } from '../components/StockCovers';
 import { DownloadButton } from '../components/DownloadButton';
 import { SongRow } from '../components/SongRow';
+import { SystemViewHeader } from '../components/SystemViewHeader';
 import { isIOS } from '../lib/platform';
 
 export function DownloadedPage() {
@@ -24,20 +25,20 @@ export function DownloadedPage() {
   const songs = [...tracks].sort((a, b) => b.downloadedAt - a.downloadedAt).map((t) => t.song);
   const isLoading = loadingPlaylists || loadingTracks;
 
+  const counts = [
+    playlists.length > 0 && `${playlists.length} playlist${playlists.length === 1 ? '' : 's'}`,
+    songs.length > 0 && `${songs.length} track${songs.length === 1 ? '' : 's'}`,
+  ].filter(Boolean).join(', ');
+
   return (
     <div className="p-6">
-      <div className="flex items-center gap-4 mb-2">
-        <DownloadedCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
-        <div>
-          <h1 className="text-2xl font-bold text-white">Downloaded</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            {[
-              playlists.length > 0 && `${playlists.length} playlist${playlists.length === 1 ? '' : 's'}`,
-              songs.length > 0 && `${songs.length} track${songs.length === 1 ? '' : 's'}`,
-            ].filter(Boolean).join(', ') || 'Available offline'}
-          </p>
-        </div>
-      </div>
+      <SystemViewHeader
+        viewKey="downloaded"
+        title="Downloaded"
+        defaultDescription="Available offline"
+        StockCover={DownloadedCover}
+        meta={counts || undefined}
+      />
 
       {isIOS() && (
         <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2 mb-6">

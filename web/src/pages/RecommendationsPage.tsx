@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getRecommendations } from '../api/subsonic';
 import { SongRow } from '../components/SongRow';
 import { DiscoverCover } from '../components/StockCovers';
+import { SystemViewHeader } from '../components/SystemViewHeader';
 import type { Song } from '../api/types';
 
 type Tab = 'similar' | 'discover';
@@ -19,17 +20,19 @@ export function RecommendationsPage() {
   const songs = (data?.songs ?? []) as Song[];
   const source = data?.source;
 
+  const defaultDescription = source
+    ? `Suggested by ${source === 'ollama' ? 'local AI (Ollama)' : 'Last.fm'} · from your library only`
+    : 'Personalized suggestions from your own library';
+
   return (
     <div className="p-6">
-      <div className="flex items-center gap-4 mb-6">
-        <DiscoverCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
-        <div>
-          <h1 className="text-2xl font-bold text-white">Discover</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Suggested by {source === 'ollama' ? 'local AI (Ollama)' : 'Last.fm'} · from your library only
-          </p>
-        </div>
-      </div>
+      <SystemViewHeader
+        viewKey="discover"
+        title="Discover"
+        defaultDescription={defaultDescription}
+        StockCover={DiscoverCover}
+        meta={songs.length > 0 && `${songs.length} suggestion${songs.length === 1 ? '' : 's'}`}
+      />
 
       {/* Tab selector */}
       <div className="flex gap-1 mb-6 border-b border-zinc-800">

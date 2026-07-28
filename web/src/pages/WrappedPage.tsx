@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { getWrapped, generateWrappedSummary } from '../api/subsonic';
 import { CoverArt } from '../components/CoverArt';
 import { WrappedCover } from '../components/StockCovers';
+import { SystemViewHeader } from '../components/SystemViewHeader';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -34,25 +35,27 @@ export function WrappedPage() {
 
   const maxMonth = Math.max(...(stats?.byMonth.map((m) => m.plays) ?? [1]));
 
+  const defaultDescription = stats && stats.totalPlays > 0
+    ? `${stats.totalPlays.toLocaleString()} plays across ${year}`
+    : 'Your year in music';
+
   return (
     <div className="p-6 max-w-3xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-4">
-          <WrappedCover className="w-16 h-16 rounded-lg shadow-lg flex-shrink-0" />
-          <div>
-            <p className="text-xs uppercase tracking-widest text-zinc-500">Your year in music</p>
-            <h1 className="text-4xl font-bold text-brand">{year}</h1>
-          </div>
-        </div>
-        <select
-          value={year}
-          onChange={(e) => setYear(Number(e.target.value))}
-          className="bg-zinc-800 border border-zinc-700 text-sm text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-brand"
-        >
-          {years.map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
-      </div>
+      <SystemViewHeader
+        viewKey="wrapped"
+        title="Wrapped"
+        defaultDescription={defaultDescription}
+        StockCover={WrappedCover}
+        meta={
+          <select
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className="bg-zinc-800 border border-zinc-700 text-sm text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-brand"
+          >
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+        }
+      />
 
       {isLoading && (
         <div className="space-y-4">

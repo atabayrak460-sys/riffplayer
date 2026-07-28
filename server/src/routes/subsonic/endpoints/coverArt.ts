@@ -139,6 +139,23 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
 
   const db = getDb();
 
+  // System-view covers ('sv-<key>') are keyed by the authenticated user, not
+  // a numeric row id — every user has their own optional override per view.
+  if (id.startsWith('sv-')) {
+    const viewKey = id.slice(3);
+    const userId = req.subsonicUser?.id;
+    const row = userId
+      ? (db
+          .prepare('SELECT cover_path FROM system_view_settings WHERE user_id = ? AND view_key = ?')
+          .get(userId, viewKey) as { cover_path: string | null } | undefined)
+      : undefined;
+    if (!row || !row.cover_path) {
+      return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'No cover art' });
+    }
+    reply.header('Content-Type', mimeFromPath(row.cover_path));
+    return reply.send(createReadStream(row.cover_path));
+  }
+
   let itemType: 'album' | 'artist' | 'playlist';
   let itemId: number;
 

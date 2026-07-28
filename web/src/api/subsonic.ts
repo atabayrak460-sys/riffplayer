@@ -322,6 +322,34 @@ export async function getLibraryStats(): Promise<{ trackCount: number }> {
   return (await apiCall('GET', 'library/stats')) as { trackCount: number };
 }
 
+// ── System-view cover + description overrides (Most Played, Recently Played, ─
+// Favourites, Downloaded, Discover, Wrapped) ─────────────────────────────────
+
+export type SystemViewKey = 'favorites' | 'recent' | 'most-played' | 'downloaded' | 'discover' | 'wrapped';
+
+export interface SystemViewSettings {
+  hasCover: boolean;
+  description: string | null;
+}
+
+export async function getSystemViewSettings(key: SystemViewKey): Promise<SystemViewSettings> {
+  return (await apiCall('GET', `system-views/${key}`)) as SystemViewSettings;
+}
+
+export async function setSystemViewDescription(key: SystemViewKey, description: string): Promise<void> {
+  await apiPut(`system-views/${key}/description`, { description });
+}
+
+export async function uploadSystemViewCover(key: SystemViewKey, file: File): Promise<void> {
+  const form = new FormData();
+  form.append('file', file);
+  await apiPostForm(`system-views/${key}/cover`, form);
+}
+
+export async function removeSystemViewCover(key: SystemViewKey): Promise<void> {
+  await apiDelete(`system-views/${key}/cover`);
+}
+
 // ── Play history ─────────────────────────────────────────────────────────────
 
 export async function getRecentlyPlayed(): Promise<Song[]> {

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { coverArtUrl } from '../api/subsonic';
 import { getCoverBlob } from '../lib/offlineDb';
 
@@ -48,6 +48,11 @@ export function CoverArt({ id, size = 200, className = '', alt = '', fallback }:
     });
   };
 
+  // Memoized so unrelated re-renders (e.g. a sibling query settling) don't
+  // regenerate the Subsonic auth salt and swap <img src>, which aborts the
+  // in-flight request and can spuriously trip onError into the placeholder.
+  const networkUrl = useMemo(() => (id ? coverArtUrl(id, size) : null), [id, size]);
+
   if (!id || state === 'placeholder') {
     if (fallback) return <div className={`overflow-hidden ${className}`}>{fallback}</div>;
     return (
@@ -61,7 +66,7 @@ export function CoverArt({ id, size = 200, className = '', alt = '', fallback }:
 
   return (
     <img
-      src={state === 'offline' && offlineUrl ? offlineUrl : coverArtUrl(id, size)}
+      src={state === 'offline' && offlineUrl ? offlineUrl : networkUrl!}
       alt={alt}
       className={className}
       onError={handleError}
