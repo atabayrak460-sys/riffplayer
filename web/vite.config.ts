@@ -39,8 +39,8 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/rest': 'http://localhost:3000',
-      '/api': 'http://localhost:3000',
+      '/rest': 'http://localhost:4533',
+      '/api': 'http://localhost:4533',
     },
   },
 });
