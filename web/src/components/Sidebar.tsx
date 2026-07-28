@@ -108,7 +108,7 @@ export function Sidebar() {
           </button>
         </div>
         {pinned.length > 0 && (
-          <nav className="space-y-0.5 pb-2 mb-2 border-b border-zinc-800/60">
+          <nav className="space-y-1 pb-2 mb-2 border-b border-zinc-800/60">
             {pinned.map((row) => (
               <SidebarLibraryItem
                 key={`${row.itemType}:${row.itemKey}`}
@@ -123,7 +123,7 @@ export function Sidebar() {
             ))}
           </nav>
         )}
-        <nav className="space-y-0.5">
+        <nav className="space-y-1">
           {dynamic.map((row) => (
             <SidebarLibraryItem
               key={`${row.itemType}:${row.itemKey}`}

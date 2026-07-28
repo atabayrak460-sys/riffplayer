@@ -45,16 +45,16 @@ export function SidebarLibraryItem({ to, label, itemType, itemKey, pinned, cover
         onClick={interact}
         {...handlers(contextItems)}
         className={({ isActive }) =>
-          `flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+          `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
             isActive ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
           }`
         }
       >
-        <div className="w-7 h-7 rounded-sm overflow-hidden flex-shrink-0">
+        <div className="w-10 h-10 rounded-sm overflow-hidden flex-shrink-0">
           {itemType === 'playlist' ? (
             <CoverArt
               id={coverArt}
-              size={56}
+              size={80}
               className="w-full h-full object-cover"
               alt={label}
               fallback={<PlaylistCover className="w-full h-full" />}
