@@ -67,7 +67,7 @@ Build **phase by phase**. Do not start a phase until the previous phase's *Done 
 - [x] Multi-user accounts + admin panel (manage users, libraries, transcoding, settings).
 - [x] Last.fm / ListenBrainz scrobbling (opt-in).
 - [x] On-the-fly transcode settings per user (mobile-data friendly).
-- [ ] README, screenshots, live demo, license (AGPL recommended). _README exists; still missing screenshots, a live demo link, and a LICENSE file._
+- [ ] README, screenshots, live demo, license (AGPL recommended). _README, screenshots, and LICENSE are done; still missing a live demo link (requires hosting a public instance — a deployment decision, not made here)._
 - [x] Gentle in-app donation pattern (see FEATURES.md) — admin can disable server-wide.
 
 **Done when:** published on GitHub; a stranger can self-host it from the README alone.
