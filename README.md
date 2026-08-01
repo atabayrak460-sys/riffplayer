@@ -2,6 +2,20 @@
 
 A self-hosted music server with a polished first-party web client, native mobile apps, and full Subsonic API compatibility. Stream your own music library from anywhere — use Cadence's built-in web app, the Flutter iOS/Android app, or any Subsonic-compatible client (Amperfy, Symfonium, DSub, Feishin, …).
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Home](screenshots/home.png) | ![Albums](screenshots/albums.png) |
+| ![Album detail](screenshots/album-detail.png) | ![Player with queue](screenshots/player.png) |
+
+<details>
+<summary>Login</summary>
+
+![Login](screenshots/login.png)
+
+</details>
+
 ## Features
 
 ### Server
