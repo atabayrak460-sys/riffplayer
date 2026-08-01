@@ -212,7 +212,7 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
 
   // GET /api/v1/admin/libraries
   app.get('/admin/libraries', { preHandler: [apiAuth, requireAdmin] }, async (_req, reply) => {
-    const libs = getDb().prepare('SELECT id, name, fs_path FROM libraries').all();
+    const libs = getDb().prepare('SELECT id, name, fs_path AS path FROM libraries').all();
     reply.send({ libraries: libs });
   });
 
