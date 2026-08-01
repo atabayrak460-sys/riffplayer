@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:just_audio/just_audio.dart';
 import '../providers/providers.dart';
 import '../widgets/cover_art.dart';
 
@@ -131,6 +132,17 @@ class PlayerScreen extends ConsumerWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         IconButton(
+                          iconSize: 22,
+                          icon: Icon(
+                            Icons.shuffle,
+                            color: state.shuffle
+                                ? Theme.of(context).colorScheme.primary
+                                : const Color(0xFF71717A),
+                          ),
+                          onPressed: () =>
+                              ref.read(playerProvider.notifier).toggleShuffle(),
+                        ),
+                        IconButton(
                           iconSize: 36,
                           icon: const Icon(Icons.skip_previous,
                               color: Colors.white),
@@ -164,6 +176,19 @@ class PlayerScreen extends ConsumerWidget {
                           icon: const Icon(Icons.skip_next, color: Colors.white),
                           onPressed: () =>
                               ref.read(playerProvider.notifier).next(),
+                        ),
+                        IconButton(
+                          iconSize: 22,
+                          icon: Icon(
+                            state.repeatMode == LoopMode.one
+                                ? Icons.repeat_one
+                                : Icons.repeat,
+                            color: state.repeatMode != LoopMode.off
+                                ? Theme.of(context).colorScheme.primary
+                                : const Color(0xFF71717A),
+                          ),
+                          onPressed: () =>
+                              ref.read(playerProvider.notifier).toggleRepeat(),
                         ),
                       ],
                     ),

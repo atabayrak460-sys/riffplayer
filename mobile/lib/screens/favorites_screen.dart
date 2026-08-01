@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/providers.dart';
 import '../widgets/song_tile.dart';
+import '../widgets/stock_covers.dart' as stock;
 
 class FavoritesScreen extends ConsumerWidget {
   const FavoritesScreen({super.key});
@@ -28,8 +29,25 @@ class FavoritesScreen extends ConsumerWidget {
               ),
             );
           }
+          final total = data.songs.length + data.albums.length + data.artists.length;
           return ListView(
             children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Row(
+                  children: [
+                    const stock.FavouritesCover(
+                      size: 56,
+                      borderRadius: BorderRadius.all(Radius.circular(10)),
+                    ),
+                    const SizedBox(width: 14),
+                    Text(
+                      '$total starred item${total == 1 ? '' : 's'}',
+                      style: const TextStyle(color: Color(0xFF71717A), fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
               if (data.songs.isNotEmpty) ...[
                 const _SectionHeader('Songs'),
                 ...data.songs.map((s) => SongTile(

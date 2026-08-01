@@ -83,6 +83,32 @@ class CadenceAudioHandler extends BaseAudioHandler
     await _queue!.add(source);
   }
 
+  /// Insert a track immediately after the one currently playing.
+  Future<void> insertNext(AudioSource source) async {
+    if (_queue == null) {
+      await playQueue([source], 0);
+      return;
+    }
+    final insertAt = (_player.currentIndex ?? -1) + 1;
+    await _queue!.insert(insertAt, source);
+  }
+
+  // ── Shuffle / repeat ─────────────────────────────────────────────────────────
+  // Delegated to just_audio's own shuffle/loop support rather than
+  // reimplementing queue reordering — it already pins the currently playing
+  // item and randomizes the rest, matching the web client's behavior.
+
+  Future<void> setShuffleModeEnabled(bool enabled) =>
+      _player.setShuffleModeEnabled(enabled);
+
+  Future<void> setLoopMode(LoopMode mode) => _player.setLoopMode(mode);
+
+  Stream<bool> get shuffleModeEnabledStream => _player.shuffleModeEnabledStream;
+  Stream<LoopMode> get loopModeStream => _player.loopModeStream;
+  bool get shuffleModeEnabled => _player.shuffleModeEnabled;
+  LoopMode get loopMode => _player.loopMode;
+
+  @override
   Future<void> removeQueueItemAt(int index) async {
     await _queue?.removeAt(index);
   }
@@ -117,6 +143,18 @@ class CadenceAudioHandler extends BaseAudioHandler
   @override
   Future<void> skipToQueueItem(int index) =>
       _player.seek(Duration.zero, index: index);
+
+  @override
+  Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) =>
+      setShuffleModeEnabled(shuffleMode != AudioServiceShuffleMode.none);
+
+  @override
+  Future<void> setRepeatMode(AudioServiceRepeatMode repeatMode) => setLoopMode(const {
+        AudioServiceRepeatMode.none: LoopMode.off,
+        AudioServiceRepeatMode.one: LoopMode.one,
+        AudioServiceRepeatMode.all: LoopMode.all,
+        AudioServiceRepeatMode.group: LoopMode.all,
+      }[repeatMode]!);
 
   @override
   Future<void> stop() async {
@@ -155,6 +193,14 @@ class CadenceAudioHandler extends BaseAudioHandler
         bufferedPosition: _player.bufferedPosition,
         speed: _player.speed,
         queueIndex: event.currentIndex,
+        shuffleMode: _player.shuffleModeEnabled
+            ? AudioServiceShuffleMode.all
+            : AudioServiceShuffleMode.none,
+        repeatMode: const {
+          LoopMode.off: AudioServiceRepeatMode.none,
+          LoopMode.one: AudioServiceRepeatMode.one,
+          LoopMode.all: AudioServiceRepeatMode.all,
+        }[_player.loopMode]!,
       );
 
   // ── Expose player streams ───────────────────────────────────────────────────

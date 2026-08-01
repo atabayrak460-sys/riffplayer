@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:just_audio/just_audio.dart';
 import '../api/types.dart';
 import '../api/subsonic.dart';
 import '../services/auth_service.dart';
@@ -73,6 +74,8 @@ class PlayerState {
   final bool playing;
   final Duration position;
   final Duration duration;
+  final bool shuffle;
+  final LoopMode repeatMode;
 
   const PlayerState({
     this.queue = const [],
@@ -80,6 +83,8 @@ class PlayerState {
     this.playing = false,
     this.position = Duration.zero,
     this.duration = Duration.zero,
+    this.shuffle = false,
+    this.repeatMode = LoopMode.off,
   });
 
   Song? get currentSong =>
@@ -91,6 +96,8 @@ class PlayerState {
     bool? playing,
     Duration? position,
     Duration? duration,
+    bool? shuffle,
+    LoopMode? repeatMode,
   }) =>
       PlayerState(
         queue: queue ?? this.queue,
@@ -98,6 +105,8 @@ class PlayerState {
         playing: playing ?? this.playing,
         position: position ?? this.position,
         duration: duration ?? this.duration,
+        shuffle: shuffle ?? this.shuffle,
+        repeatMode: repeatMode ?? this.repeatMode,
       );
 }
 
@@ -105,9 +114,18 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   final CadenceAudioHandler _handler;
   List<Song> _songs = [];
 
+  // "Now playing" scrobbles fire immediately in playSong(); this tracks the
+  // one-time "submission" scrobble (counts as a real play) sent once a track
+  // crosses 50% played or 30s, whichever comes first — same rule as the web
+  // client, so play counts / Wrapped / Most Played agree across platforms.
+  SubsonicClient? _scrobbleClient;
+  String? _scrobbledSongId;
+  String? _nowPlayingSongId;
+
   PlayerNotifier(this._handler) : super(const PlayerState()) {
     _handler.positionStream.listen((pos) {
       state = state.copyWith(position: pos);
+      _maybeScrobble(pos);
     });
     _handler.durationStream.listen((dur) {
       state = state.copyWith(duration: dur ?? Duration.zero);
@@ -117,6 +135,20 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     });
     _handler.currentIndexStream.listen((idx) {
       state = state.copyWith(currentIndex: idx ?? -1);
+      // Skipping (next/previous/tap-in-queue) changes the track without going
+      // through playSong() — send its "now playing" scrobble here instead.
+      final song = state.currentSong;
+      final client = _scrobbleClient;
+      if (song != null && client != null && _nowPlayingSongId != song.id) {
+        _nowPlayingSongId = song.id;
+        client.scrobble(song.id, submission: false).ignore();
+      }
+    });
+    _handler.shuffleModeEnabledStream.listen((enabled) {
+      state = state.copyWith(shuffle: enabled);
+    });
+    _handler.loopModeStream.listen((mode) {
+      state = state.copyWith(repeatMode: mode);
     });
     _handler.queue.listen((items) {
       // Rebuild queue list from handler queue
@@ -142,7 +174,21 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     state = state.copyWith(queue: songs, currentIndex: idx < 0 ? 0 : idx);
 
     // Send "now playing" scrobble
+    _scrobbleClient = client;
+    _nowPlayingSongId = song.id;
     client.scrobble(song.id, submission: false).ignore();
+  }
+
+  void _maybeScrobble(Duration pos) {
+    final song = state.currentSong;
+    final client = _scrobbleClient;
+    if (song == null || client == null || _scrobbledSongId == song.id) return;
+    final durationMs = state.duration.inMilliseconds;
+    final thresholdMs = durationMs > 0 ? (durationMs * 0.5).clamp(0, 30000).round() : 30000;
+    if (pos.inMilliseconds >= thresholdMs) {
+      _scrobbledSongId = song.id;
+      client.scrobble(song.id, submission: true).ignore();
+    }
   }
 
   Future<void> addToQueue(
@@ -154,6 +200,28 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     await _handler.appendToQueue(source);
     state = state.copyWith(queue: [..._songs, song]);
     _songs = [..._songs, song];
+  }
+
+  Future<void> playNext(
+    Song song,
+    SubsonicClient client,
+    DownloadService downloads,
+  ) async {
+    final source = await buildAudioSource(song, client, downloads);
+    await _handler.insertNext(source);
+    if (state.currentIndex < 0) {
+      // Nothing was playing — insertNext() starts this track from scratch.
+      _songs = [song];
+      state = state.copyWith(queue: _songs, currentIndex: 0);
+      _scrobbleClient = client;
+      _nowPlayingSongId = song.id;
+      client.scrobble(song.id, submission: false).ignore();
+      return;
+    }
+    final insertAt = state.currentIndex + 1;
+    final newSongs = [..._songs.sublist(0, insertAt), song, ..._songs.sublist(insertAt)];
+    _songs = newSongs;
+    state = state.copyWith(queue: newSongs);
   }
 
   Future<void> removeFromQueue(int index) async {
@@ -180,6 +248,15 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   void next() => _handler.skipToNext();
   void previous() => _handler.skipToPrevious();
   void skipTo(int index) => _handler.skipToQueueItem(index);
+
+  void toggleShuffle() => _handler.setShuffleModeEnabled(!state.shuffle);
+
+  /// Cycles off → all → one → off, same order as the web client.
+  void toggleRepeat() {
+    const order = [LoopMode.off, LoopMode.all, LoopMode.one];
+    final next = order[(order.indexOf(state.repeatMode) + 1) % order.length];
+    _handler.setLoopMode(next);
+  }
 }
 
 final playerProvider =
@@ -209,6 +286,17 @@ final artistDetailProvider =
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.getArtistDetail(id);
+});
+
+/// All songs across every album by this artist, flattened — backs the
+/// artist detail screen's "Songs" tab.
+final artistSongsProvider =
+    FutureProvider.autoDispose.family<List<Song>, String>((ref, artistId) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  final detail = await client.getArtistDetail(artistId);
+  final results = await Future.wait(detail.albums.map((a) => client.getAlbum(a.id)));
+  return results.expand((r) => r.songs).toList();
 });
 
 final albumDetailProvider =
@@ -248,7 +336,94 @@ final playlistDetailProvider =
   return client.getPlaylist(id);
 });
 
+/// When each track was added to this playlist — drives the "date added"
+/// column and the "sort by date added" view on the playlist detail screen.
+final playlistTrackDatesProvider =
+    FutureProvider.autoDispose.family<Map<String, DateTime>, String>((ref, id) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getPlaylistTrackDates(id);
+});
+
 final downloadsProvider =
     FutureProvider.autoDispose<List<DownloadedTrack>>((ref) async {
   return ref.read(downloadServiceProvider).getDownloads();
+});
+
+/// Per-user pin/recency state for the unified Library list (see
+/// `screens/library_screen.dart` and `utils/library_sidebar_order.dart`).
+final librarySidebarStateProvider =
+    FutureProvider.autoDispose<List<LibrarySidebarItem>>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getLibrarySidebarState();
+});
+
+// ── Home page ─────────────────────────────────────────────────────────────────
+
+final lastPlayedProvider = FutureProvider.autoDispose<Song?>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getLastPlayed();
+});
+
+final mostPlayedProvider = FutureProvider.autoDispose<List<Song>>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getMostPlayed();
+});
+
+final recentlyPlayedProvider = FutureProvider.autoDispose<List<Song>>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getRecentlyPlayed();
+});
+
+final rediscoverProvider = FutureProvider.autoDispose<List<Song>>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getRediscover();
+});
+
+// ── Wrapped & Discover ───────────────────────────────────────────────────────
+
+final wrappedProvider =
+    FutureProvider.autoDispose.family<WrappedStats, int>((ref, year) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getWrapped(year: year);
+});
+
+/// 'similar' or 'discover'.
+final recommendationsProvider =
+    FutureProvider.autoDispose.family<RecommendationsResult, String>((ref, type) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getRecommendations(type);
+});
+
+// ── Account & admin ─────────────────────────────────────────────────────────
+
+final meProvider = FutureProvider.autoDispose<MeInfo>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getMe();
+});
+
+final adminUsersProvider = FutureProvider.autoDispose<List<AdminUser>>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.adminGetUsers();
+});
+
+final adminLibrariesProvider = FutureProvider.autoDispose<List<Library>>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.adminGetLibraries();
+});
+
+final adminSettingsProvider = FutureProvider.autoDispose<Map<String, String>>((ref) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.adminGetSettings();
 });

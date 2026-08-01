@@ -113,6 +113,12 @@ class Song {
   final String suffix;
   final String? starred;
   final double? replayGainTrackGain;
+  /// When this track was indexed into the library — the Subsonic `created`
+  /// field. Shown as a "date added" column wherever the surrounding screen
+  /// (All Songs, playlists) chooses to pass it through.
+  final DateTime? created;
+  final int? bitRate;
+  final int? playCount;
 
   const Song({
     required this.id,
@@ -130,6 +136,9 @@ class Song {
     required this.suffix,
     this.starred,
     this.replayGainTrackGain,
+    this.created,
+    this.bitRate,
+    this.playCount,
   });
 
   factory Song.fromJson(Map<String, dynamic> j) => Song(
@@ -149,6 +158,9 @@ class Song {
         starred: j['starred'] as String?,
         replayGainTrackGain:
             (j['replayGainTrackGain'] as num?)?.toDouble(),
+        created: j['created'] != null ? DateTime.tryParse(j['created'] as String) : null,
+        bitRate: (j['bitRate'] as num?)?.toInt(),
+        playCount: (j['playCount'] as num?)?.toInt(),
       );
 
   bool get isStarred => starred != null;
@@ -161,6 +173,8 @@ class Playlist {
   final int songCount;
   final int duration;
   final String? coverArt;
+  /// Playlist description — "comment" is the Subsonic API's field name for it.
+  final String? comment;
   final List<Song>? entries;
 
   const Playlist({
@@ -170,6 +184,7 @@ class Playlist {
     required this.songCount,
     required this.duration,
     this.coverArt,
+    this.comment,
     this.entries,
   });
 
@@ -180,6 +195,7 @@ class Playlist {
         songCount: (j['songCount'] as num?)?.toInt() ?? 0,
         duration: (j['duration'] as num?)?.toInt() ?? 0,
         coverArt: j['coverArt'] as String?,
+        comment: j['comment'] as String?,
         entries: (j['entry'] as List<dynamic>?)
             ?.map((s) => Song.fromJson(s as Map<String, dynamic>))
             .toList(),
@@ -218,4 +234,214 @@ class DownloadedTrack {
     this.fileSize,
     required this.downloadedAt,
   });
+}
+
+class WrappedTopTrack {
+  final String id;
+  final String title;
+  final String artist;
+  final String artistId;
+  final String album;
+  final String albumId;
+  final String? coverArt;
+  final int playCount;
+
+  const WrappedTopTrack({
+    required this.id,
+    required this.title,
+    required this.artist,
+    required this.artistId,
+    required this.album,
+    required this.albumId,
+    this.coverArt,
+    required this.playCount,
+  });
+
+  factory WrappedTopTrack.fromJson(Map<String, dynamic> j) => WrappedTopTrack(
+        id: j['id'] as String,
+        title: j['title'] as String,
+        artist: j['artist'] as String? ?? '',
+        artistId: j['artistId'] as String? ?? '',
+        album: j['album'] as String? ?? '',
+        albumId: j['albumId'] as String? ?? '',
+        coverArt: j['coverArt'] as String?,
+        playCount: (j['playCount'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class WrappedTopArtist {
+  final String id;
+  final String name;
+  final String? coverArt;
+  final int playCount;
+
+  const WrappedTopArtist({
+    required this.id,
+    required this.name,
+    this.coverArt,
+    required this.playCount,
+  });
+
+  factory WrappedTopArtist.fromJson(Map<String, dynamic> j) => WrappedTopArtist(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        coverArt: j['coverArt'] as String?,
+        playCount: (j['playCount'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class WrappedMonth {
+  final int month;
+  final int plays;
+
+  const WrappedMonth({required this.month, required this.plays});
+
+  factory WrappedMonth.fromJson(Map<String, dynamic> j) => WrappedMonth(
+        month: (j['month'] as num).toInt(),
+        plays: (j['plays'] as num).toInt(),
+      );
+}
+
+class WrappedStats {
+  final int year;
+  final int totalPlays;
+  final int totalMinutes;
+  final List<WrappedTopTrack> topTracks;
+  final List<WrappedTopArtist> topArtists;
+  final List<WrappedMonth> byMonth;
+
+  const WrappedStats({
+    required this.year,
+    required this.totalPlays,
+    required this.totalMinutes,
+    required this.topTracks,
+    required this.topArtists,
+    required this.byMonth,
+  });
+
+  factory WrappedStats.fromJson(Map<String, dynamic> j) => WrappedStats(
+        year: (j['year'] as num).toInt(),
+        totalPlays: (j['totalPlays'] as num?)?.toInt() ?? 0,
+        totalMinutes: (j['totalMinutes'] as num?)?.toInt() ?? 0,
+        topTracks: (j['topTracks'] as List<dynamic>? ?? [])
+            .map((t) => WrappedTopTrack.fromJson(t as Map<String, dynamic>))
+            .toList(),
+        topArtists: (j['topArtists'] as List<dynamic>? ?? [])
+            .map((a) => WrappedTopArtist.fromJson(a as Map<String, dynamic>))
+            .toList(),
+        byMonth: (j['byMonth'] as List<dynamic>? ?? [])
+            .map((m) => WrappedMonth.fromJson(m as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class RecommendationsResult {
+  final List<Song> songs;
+  final String? source;
+
+  const RecommendationsResult({required this.songs, this.source});
+}
+
+class UserPreferences {
+  final String? transcodeFormat;
+  final int? transcodeBitrate;
+  final String? lastfmSessionKey;
+  final String? listenbrainzToken;
+
+  const UserPreferences({
+    this.transcodeFormat,
+    this.transcodeBitrate,
+    this.lastfmSessionKey,
+    this.listenbrainzToken,
+  });
+
+  factory UserPreferences.fromJson(Map<String, dynamic> j) => UserPreferences(
+        transcodeFormat: j['transcode_format'] as String?,
+        transcodeBitrate: (j['transcode_bitrate'] as num?)?.toInt(),
+        lastfmSessionKey: j['lastfm_session_key'] as String?,
+        listenbrainzToken: j['listenbrainz_token'] as String?,
+      );
+}
+
+class MeInfo {
+  final int id;
+  final String username;
+  final String role;
+  final UserPreferences? preferences;
+
+  const MeInfo({
+    required this.id,
+    required this.username,
+    required this.role,
+    this.preferences,
+  });
+
+  factory MeInfo.fromJson(Map<String, dynamic> j) => MeInfo(
+        id: (j['id'] as num).toInt(),
+        username: j['username'] as String,
+        role: j['role'] as String,
+        preferences: j['preferences'] != null
+            ? UserPreferences.fromJson(j['preferences'] as Map<String, dynamic>)
+            : null,
+      );
+
+  bool get isAdmin => role == 'admin';
+}
+
+class AdminUser {
+  final int id;
+  final String username;
+  final String role;
+  final int createdAt;
+
+  const AdminUser({
+    required this.id,
+    required this.username,
+    required this.role,
+    required this.createdAt,
+  });
+
+  factory AdminUser.fromJson(Map<String, dynamic> j) => AdminUser(
+        id: (j['id'] as num).toInt(),
+        username: j['username'] as String,
+        role: j['role'] as String,
+        createdAt: (j['created_at'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class Library {
+  final int id;
+  final String name;
+  final String path;
+
+  const Library({required this.id, required this.name, required this.path});
+
+  factory Library.fromJson(Map<String, dynamic> j) => Library(
+        id: (j['id'] as num).toInt(),
+        name: j['name'] as String,
+        path: j['path'] as String,
+      );
+}
+
+/// Per-user pin/recency state for a single Library sidebar entry — either a
+/// fixed system view (Favourites, Recently Played, ...) or a playlist.
+class LibrarySidebarItem {
+  final String itemType; // 'system' | 'playlist'
+  final String itemKey;
+  final DateTime? pinnedAt;
+  final DateTime lastInteractedAt;
+
+  const LibrarySidebarItem({
+    required this.itemType,
+    required this.itemKey,
+    this.pinnedAt,
+    required this.lastInteractedAt,
+  });
+
+  factory LibrarySidebarItem.fromJson(Map<String, dynamic> j) => LibrarySidebarItem(
+        itemType: j['itemType'] as String,
+        itemKey: j['itemKey'] as String,
+        pinnedAt: j['pinnedAt'] != null ? DateTime.tryParse(j['pinnedAt'] as String) : null,
+        lastInteractedAt: DateTime.tryParse(j['lastInteractedAt'] as String) ?? DateTime.fromMillisecondsSinceEpoch(0),
+      );
 }

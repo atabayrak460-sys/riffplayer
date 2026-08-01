@@ -3,21 +3,27 @@ import 'package:flutter/material.dart';
 
 class CoverArt extends StatelessWidget {
   final String? url;
-  final double size;
+  /// Fixed square size in logical pixels. Leave null to fill whatever space
+  /// the parent gives it (e.g. inside a grid cell's `Expanded`).
+  final double? size;
   final BorderRadius? borderRadius;
+  /// Shown instead of the generic placeholder when [url] is null or fails to
+  /// load — e.g. a branded stock cover for a system view or playlist.
+  final Widget? fallback;
 
   const CoverArt({
     super.key,
     required this.url,
     this.size = 48,
     this.borderRadius,
+    this.fallback,
   });
 
   @override
   Widget build(BuildContext context) {
     final radius = borderRadius ?? BorderRadius.circular(6);
 
-    if (url == null) return _placeholder(radius);
+    if (url == null) return fallback ?? _placeholder(radius);
 
     return ClipRRect(
       borderRadius: radius,
@@ -27,7 +33,7 @@ class CoverArt extends StatelessWidget {
         height: size,
         fit: BoxFit.cover,
         placeholder: (_, __) => _placeholderBox(),
-        errorWidget: (_, __, ___) => _placeholderBox(),
+        errorWidget: (_, __, ___) => fallback ?? _placeholderBox(),
       ),
     );
   }
@@ -43,7 +49,7 @@ class CoverArt extends StatelessWidget {
         color: const Color(0xFF27272A),
         child: Icon(
           Icons.music_note,
-          size: size * 0.4,
+          size: (size ?? 48) * 0.4,
           color: const Color(0xFF52525B),
         ),
       );

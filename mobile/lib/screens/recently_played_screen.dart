@@ -1,0 +1,58 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/providers.dart';
+import '../widgets/song_tile.dart';
+import '../widgets/stock_covers.dart' as stock;
+
+class RecentlyPlayedScreen extends ConsumerWidget {
+  const RecentlyPlayedScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final songsAsync = ref.watch(recentlyPlayedProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Recently Played'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => ref.invalidate(recentlyPlayedProvider),
+          ),
+        ],
+      ),
+      body: songsAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => const Center(
+          child: Text('Could not load history.', style: TextStyle(color: Color(0xFF71717A))),
+        ),
+        data: (songs) {
+          if (songs.isEmpty) {
+            return const Center(
+              child: Text('Nothing played yet.', style: TextStyle(color: Color(0xFF71717A))),
+            );
+          }
+          return ListView(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    stock.RecentlyPlayedCover(size: 56, borderRadius: BorderRadius.circular(10)),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Text('Recently Played',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  ],
+                ),
+              ),
+              ...songs.map((song) => SongTile(song: song, queue: songs, showAlbum: true)),
+              const SizedBox(height: 24),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}

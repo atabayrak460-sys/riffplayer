@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../providers/providers.dart';
 import '../widgets/song_tile.dart';
 
@@ -77,6 +78,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     if (results.artists.isNotEmpty) ...[
                       const _SectionHeader('Artists'),
                       ...results.artists.map((a) => ListTile(
+                            onTap: () => context.push('/artists/${a.id}'),
                             leading: const Icon(Icons.person, color: Color(0xFF71717A)),
                             title: Text(a.name,
                                 style: const TextStyle(color: Colors.white)),
@@ -85,6 +87,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     if (results.albums.isNotEmpty) ...[
                       const _SectionHeader('Albums'),
                       ...results.albums.map((a) => ListTile(
+                            onTap: () => context.push('/albums/${a.id}'),
                             leading: const Icon(Icons.album, color: Color(0xFF71717A)),
                             title: Text(a.name,
                                 style: const TextStyle(color: Colors.white)),

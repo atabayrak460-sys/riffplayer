@@ -211,11 +211,191 @@ class SubsonicClient {
     return Playlist.fromJson(r['playlist'] as Map<String, dynamic>);
   }
 
-  Future<void> createPlaylist(String name) =>
-      _get('createPlaylist.view', {'name': name});
+  Future<Playlist> createPlaylist(String name) async {
+    final r = await _get('createPlaylist.view', {'name': name});
+    return Playlist.fromJson(r['playlist'] as Map<String, dynamic>);
+  }
 
   Future<void> deletePlaylist(String id) =>
       _get('deletePlaylist.view', {'id': id});
+
+  Future<void> renamePlaylist(String playlistId, String name) =>
+      _get('updatePlaylist.view', {'playlistId': playlistId, 'name': name});
+
+  Future<void> setPlaylistDescription(String playlistId, String comment) =>
+      _get('updatePlaylist.view', {'playlistId': playlistId, 'comment': comment});
+
+  Future<void> addSongToPlaylist(String playlistId, String songId) => _get(
+        'updatePlaylist.view',
+        {'playlistId': playlistId, 'songIdToAdd': songId},
+      );
+
+  // ── Custom /api/v1 endpoints (Subsonic auth doesn't cover these) ────────────
+
+  Future<Map<String, dynamic>> _apiCall(
+    String method,
+    String path, {
+    Object? data,
+  }) async {
+    final headers = <String, String>{
+      if (credentials.token != null) 'Authorization': 'Bearer ${credentials.token}',
+    };
+    final response = await _dio.request<Map<String, dynamic>>(
+      '${credentials.serverUrl}/api/v1/$path',
+      data: data,
+      options: Options(method: method, headers: headers),
+    );
+    return response.data ?? {};
+  }
+
+  Future<void> reorderPlaylistTracks(String playlistId, List<String> trackIds) =>
+      _apiCall('PUT', 'playlists/$playlistId/tracks', data: {'trackIds': trackIds});
+
+  /// When each track was added to this playlist, keyed by track id.
+  Future<Map<String, DateTime>> getPlaylistTrackDates(String playlistId) async {
+    final r = await _apiCall('GET', 'playlists/$playlistId/track-dates');
+    final dates = r['dates'] as Map<String, dynamic>? ?? {};
+    return dates.map((k, v) => MapEntry(k, DateTime.parse(v as String)));
+  }
+
+  Future<void> uploadPlaylistCover(String playlistId, String filePath) async {
+    final form = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath),
+    });
+    await _apiCall('POST', 'playlists/$playlistId/cover', data: form);
+  }
+
+  // ── Listening history (Home page) ────────────────────────────────────────────
+
+  Future<List<Song>> getMostPlayed() async {
+    final r = await _apiCall('GET', 'history/most-played');
+    return (r['songs'] as List<dynamic>? ?? [])
+        .map((s) => Song.fromJson(s as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// The single most recently played track, or null with no play history yet.
+  Future<Song?> getLastPlayed() async {
+    final r = await _apiCall('GET', 'history/last-played');
+    final song = r['song'] as Map<String, dynamic>?;
+    return song != null ? Song.fromJson(song) : null;
+  }
+
+  /// Tracks never played (or played longest ago) among ones old enough to count.
+  Future<List<Song>> getRediscover() async {
+    final r = await _apiCall('GET', 'history/rediscover');
+    return (r['songs'] as List<dynamic>? ?? [])
+        .map((s) => Song.fromJson(s as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Most recently played tracks, newest first.
+  Future<List<Song>> getRecentlyPlayed() async {
+    final r = await _apiCall('GET', 'history/recent');
+    return (r['songs'] as List<dynamic>? ?? [])
+        .map((s) => Song.fromJson(s as Map<String, dynamic>))
+        .toList();
+  }
+
+  // ── Library sidebar (pin + recency state for the unified Library list) ───────
+
+  Future<List<LibrarySidebarItem>> getLibrarySidebarState() async {
+    final r = await _apiCall('GET', 'library-sidebar');
+    return (r['items'] as List<dynamic>? ?? [])
+        .map((i) => LibrarySidebarItem.fromJson(i as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> recordLibraryInteraction(String itemType, String itemKey) =>
+      _apiCall('POST', 'library-sidebar/interact',
+          data: {'itemType': itemType, 'itemKey': itemKey});
+
+  Future<void> pinLibraryItem(String itemType, String itemKey) => _apiCall(
+      'POST', 'library-sidebar/pin', data: {'itemType': itemType, 'itemKey': itemKey});
+
+  Future<void> unpinLibraryItem(String itemType, String itemKey) => _apiCall(
+      'POST', 'library-sidebar/unpin', data: {'itemType': itemType, 'itemKey': itemKey});
+
+  // ── Recommendations & Wrapped ─────────────────────────────────────────────────
+
+  Future<RecommendationsResult> getRecommendations(String type) async {
+    final r = await _apiCall('GET', 'recommendations/$type');
+    final songs = (r['songs'] as List<dynamic>? ?? [])
+        .map((s) => Song.fromJson(s as Map<String, dynamic>))
+        .toList();
+    return RecommendationsResult(songs: songs, source: r['source'] as String?);
+  }
+
+  Future<WrappedStats> getWrapped({int? year}) async {
+    final path = year != null ? 'recommendations/wrapped?year=$year' : 'recommendations/wrapped';
+    final r = await _apiCall('GET', path);
+    return WrappedStats.fromJson(r);
+  }
+
+  Future<String> generateWrappedSummary({int? year}) async {
+    final path = year != null
+        ? 'recommendations/wrapped/summary?year=$year'
+        : 'recommendations/wrapped/summary';
+    final r = await _apiCall('POST', path);
+    return r['summary'] as String? ?? '';
+  }
+
+  // ── User preferences ──────────────────────────────────────────────────────────
+
+  Future<MeInfo> getMe() async {
+    final r = await _apiCall('GET', 'users/me');
+    return MeInfo.fromJson(r);
+  }
+
+  Future<void> updateMyPreferences(Map<String, dynamic> prefs) =>
+      _apiCall('PATCH', 'users/me/preferences', data: prefs);
+
+  // ── Admin: users ────────────────────────────────────────────────────────────
+
+  Future<List<AdminUser>> adminGetUsers() async {
+    final r = await _apiCall('GET', 'admin/users');
+    return (r['users'] as List<dynamic>? ?? [])
+        .map((u) => AdminUser.fromJson(u as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> adminCreateUser(String username, String password, String role) =>
+      _apiCall('POST', 'admin/users',
+          data: {'username': username, 'password': password, 'role': role});
+
+  Future<void> adminUpdateUser(int id, {String? password, String? role}) =>
+      _apiCall('PATCH', 'admin/users/$id', data: {
+        if (password != null) 'password': password,
+        if (role != null) 'role': role,
+      });
+
+  Future<void> adminDeleteUser(int id) => _apiCall('DELETE', 'admin/users/$id');
+
+  // ── Admin: libraries ────────────────────────────────────────────────────────
+
+  Future<List<Library>> adminGetLibraries() async {
+    final r = await _apiCall('GET', 'admin/libraries');
+    return (r['libraries'] as List<dynamic>? ?? [])
+        .map((l) => Library.fromJson(l as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> adminAddLibrary(String name, String path) =>
+      _apiCall('POST', 'admin/libraries', data: {'name': name, 'path': path});
+
+  Future<void> adminDeleteLibrary(int id) => _apiCall('DELETE', 'admin/libraries/$id');
+
+  Future<void> adminScanLibrary(int id) => _apiCall('POST', 'admin/libraries/$id/scan');
+
+  // ── Admin: server settings ─────────────────────────────────────────────────
+
+  Future<Map<String, String>> adminGetSettings() async {
+    final r = await _apiCall('GET', 'admin/settings');
+    return Map<String, String>.from(r['settings'] as Map? ?? {});
+  }
+
+  Future<void> adminPatchSettings(Map<String, String?> patch) =>
+      _apiCall('PATCH', 'admin/settings', data: patch);
 
   // ── Scrobble ─────────────────────────────────────────────────────────────────
 

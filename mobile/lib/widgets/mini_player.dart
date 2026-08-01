@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/providers.dart';
-import '../api/types.dart';
 import 'cover_art.dart';
 
 class MiniPlayer extends ConsumerWidget {
@@ -21,6 +20,7 @@ class MiniPlayer extends ConsumerWidget {
 
     return GestureDetector(
       onTap: () => context.push('/player'),
+      behavior: HitTestBehavior.opaque,
       child: Container(
         color: const Color(0xFF27272A),
         child: Column(

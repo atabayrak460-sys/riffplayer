@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import '../api/types.dart';
 import '../providers/providers.dart';
+import 'add_to_playlist_dialog.dart';
 import 'cover_art.dart';
+import 'song_info_dialog.dart';
 
 String _fmtDuration(int? seconds) {
   if (seconds == null) return '';
@@ -11,12 +15,19 @@ String _fmtDuration(int? seconds) {
   return '$m:${s.toString().padLeft(2, '0')}';
 }
 
+final _addedAtFormat = DateFormat.yMMMd();
+
 class SongTile extends ConsumerWidget {
   final Song song;
   final List<Song>? queue;
   final int? index;
   final bool showAlbum;
   final bool showNumber;
+  /// Shown as a right-aligned "date added" column when set — pass the
+  /// track's own [Song.created] (library index date) in library-wide views
+  /// like All Songs, or a playlist's per-track added-at date inside a
+  /// playlist view.
+  final DateTime? addedAt;
 
   const SongTile({
     super.key,
@@ -25,6 +36,7 @@ class SongTile extends ConsumerWidget {
     this.index,
     this.showAlbum = false,
     this.showNumber = false,
+    this.addedAt,
   });
 
   @override
@@ -75,6 +87,13 @@ class SongTile extends ConsumerWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (addedAt != null) ...[
+            Text(
+              _addedAtFormat.format(addedAt!),
+              style: const TextStyle(color: Color(0xFF71717A), fontSize: 12),
+            ),
+            const SizedBox(width: 12),
+          ],
           Text(
             _fmtDuration(song.duration),
             style: const TextStyle(color: Color(0xFF71717A), fontSize: 12),
@@ -83,14 +102,19 @@ class SongTile extends ConsumerWidget {
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Color(0xFF71717A), size: 18),
             itemBuilder: (_) => [
+              const PopupMenuItem(value: 'playNext', child: Text('Play next')),
               const PopupMenuItem(value: 'queue', child: Text('Add to queue')),
+              const PopupMenuItem(value: 'playlist', child: Text('Add to playlist')),
               const PopupMenuItem(value: 'download', child: Text('Download')),
               PopupMenuItem(
                 value: 'star',
                 child: Text(song.isStarred ? 'Unstar' : 'Star'),
               ),
+              const PopupMenuItem(value: 'album', child: Text('Go to album')),
+              const PopupMenuItem(value: 'artist', child: Text('Go to artist')),
+              const PopupMenuItem(value: 'info', child: Text('Song info')),
             ],
-            onSelected: (v) => _onMenu(v, ref),
+            onSelected: (v) => _onMenu(v, context, ref),
           ),
         ],
       ),
@@ -115,13 +139,18 @@ class SongTile extends ConsumerWidget {
         );
   }
 
-  void _onMenu(String action, WidgetRef ref) {
+  void _onMenu(String action, BuildContext context, WidgetRef ref) {
     final client = ref.read(apiClientProvider);
     if (client == null) return;
     switch (action) {
+      case 'playNext':
+        final downloads = ref.read(downloadServiceProvider);
+        ref.read(playerProvider.notifier).playNext(song, client, downloads);
       case 'queue':
         final downloads = ref.read(downloadServiceProvider);
         ref.read(playerProvider.notifier).addToQueue(song, client, downloads);
+      case 'playlist':
+        showDialog(context: context, builder: (_) => AddToPlaylistDialog(songId: song.id));
       case 'download':
         final downloads = ref.read(downloadServiceProvider);
         downloads.download(song, client).ignore();
@@ -131,6 +160,12 @@ class SongTile extends ConsumerWidget {
         } else {
           client.star(id: song.id).ignore();
         }
+      case 'album':
+        context.push('/albums/${song.albumId}');
+      case 'artist':
+        context.push('/artists/${song.artistId}');
+      case 'info':
+        showDialog(context: context, builder: (_) => SongInfoDialog(song: song));
     }
   }
 }
