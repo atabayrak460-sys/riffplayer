@@ -8,6 +8,16 @@ class SubsonicClient {
   final Credentials credentials;
   final Dio _dio;
 
+  // Salted token computed once per client (i.e. once per login session) and
+  // reused for every request — NOT regenerated per call. Media URLs built
+  // from these params (coverArtUrl, streamUrl) get embedded as `<img src>`/
+  // cache keys; a fresh salt on every call made every "identical" cover art
+  // request look like a different URL, defeating CachedNetworkImage's cache
+  // entirely and re-fetching + re-decoding the same image nonstop (visible
+  // as dozens of duplicate getCoverArt requests per second in server logs).
+  late final String _salt = _randomSalt();
+  late final String _token = _computeToken(credentials.password, _salt);
+
   SubsonicClient(this.credentials)
       : _dio = Dio(BaseOptions(
           connectTimeout: const Duration(seconds: 10),
@@ -28,11 +38,10 @@ class SubsonicClient {
   }
 
   Map<String, String> _authParams() {
-    final salt = _randomSalt();
     return {
       'u': credentials.username,
-      't': _computeToken(credentials.password, salt),
-      's': salt,
+      't': _token,
+      's': _salt,
       'v': '1.16.1',
       'c': 'cadence-flutter',
       'f': 'json',
@@ -165,6 +174,37 @@ class SubsonicClient {
           .map((s) => Song.fromJson(s as Map<String, dynamic>))
           .toList(),
     );
+  }
+
+  /// A flat, paginated view of every song in the library — a wildcard
+  /// search3 query, matching the web client's approach (no dedicated
+  /// server endpoint exists for this).
+  Future<List<Song>> getAllSongs(int offset, int limit) async {
+    final r = await _get('search3.view', {
+      'query': '',
+      'artistCount': '0',
+      'albumCount': '0',
+      'songCount': '$limit',
+      'songOffset': '$offset',
+    });
+    final sr3 = r['searchResult3'] as Map<String, dynamic>? ?? {};
+    return (sr3['song'] as List<dynamic>? ?? [])
+        .map((s) => Song.fromJson(s as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Synced (or plain-text) lyrics for a track, or null if none are
+  /// available anywhere (DB cache, .lrc sidecar, LRCLIB).
+  Future<Lyrics?> getLyrics(String songId) async {
+    try {
+      final r = await _get('getLyricsBySongId.view', {'id': songId});
+      final list = (r['lyricsList']
+          as Map<String, dynamic>?)?['structuredLyrics'] as List<dynamic>?;
+      if (list == null || list.isEmpty) return null;
+      return Lyrics.fromJson(list.first as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
   }
 
   // ── Favourites ──────────────────────────────────────────────────────────────

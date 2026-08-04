@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:just_audio/just_audio.dart';
 import '../providers/providers.dart';
 import '../widgets/cover_art.dart';
+import '../widgets/lyrics_view.dart';
 
 String _fmt(Duration d) {
   final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -19,6 +20,7 @@ class PlayerScreen extends ConsumerWidget {
     final state = ref.watch(playerProvider);
     final song = state.currentSong;
     final client = ref.read(apiClientProvider);
+    final showLyrics = ref.watch(showLyricsProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -29,6 +31,13 @@ class PlayerScreen extends ConsumerWidget {
         title: const Text('Now Playing',
             style: TextStyle(fontSize: 14, color: Color(0xFF71717A))),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.queue_music),
+            tooltip: 'Queue',
+            onPressed: () => context.push('/queue'),
+          ),
+        ],
       ),
       body: song == null
           ? const Center(
@@ -40,14 +49,20 @@ class PlayerScreen extends ConsumerWidget {
                 child: Column(
                   children: [
                     const Spacer(),
-                    // Cover art
-                    CoverArt(
-                      url: song.coverArt != null
-                          ? client?.coverArtUrl(song.coverArt!, size: 500)
-                          : null,
-                      size: MediaQuery.of(context).size.width - 56,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+                    // Cover art / lyrics
+                    showLyrics
+                        ? LyricsView(
+                            songId: song.id,
+                            position: state.position,
+                            size: MediaQuery.of(context).size.width - 56,
+                          )
+                        : CoverArt(
+                            url: song.coverArt != null
+                                ? client?.coverArtUrl(song.coverArt!, size: 500)
+                                : null,
+                            size: MediaQuery.of(context).size.width - 56,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                     const SizedBox(height: 32),
                     // Song info
                     Row(
@@ -67,17 +82,38 @@ class PlayerScreen extends ConsumerWidget {
                                 overflow: TextOverflow.ellipsis,
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                song.artist,
-                                style: const TextStyle(
-                                  color: Color(0xFF71717A),
-                                  fontSize: 15,
+                              GestureDetector(
+                                // `.go()`, not `.push()`: the artist page may
+                                // already be underneath this screen in the
+                                // stack (e.g. tapped a song from that same
+                                // artist's page to get here) — pushing a
+                                // second copy of the same route crashes with
+                                // a duplicate-GlobalKey assertion. `.go()`
+                                // rebuilds the stack fresh instead of
+                                // appending, so it can never collide.
+                                onTap: () => context.go('/artists/${song.artistId}'),
+                                child: Text(
+                                  song.artist,
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.primary,
+                                    fontSize: 15,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
                             ],
                           ),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            showLyrics ? Icons.lyrics : Icons.lyrics_outlined,
+                            color: showLyrics
+                                ? Theme.of(context).colorScheme.primary
+                                : const Color(0xFF71717A),
+                          ),
+                          onPressed: () => ref.read(showLyricsProvider.notifier).state =
+                              !showLyrics,
                         ),
                         IconButton(
                           icon: Icon(

@@ -1,8 +1,18 @@
+import 'dart:math';
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import '../api/types.dart';
 import '../api/subsonic.dart';
 import '../services/download_service.dart';
+
+/// Converts a ReplayGain track-gain dB value into a linear volume multiplier,
+/// clamped to just_audio's 0.0-1.0 range. Mirrors the web client's formula
+/// (`web/src/store/player.ts`) — there's no master-volume control on mobile
+/// to compose it with, so this is the final output volume.
+double _replayGainVolume(double? dbGain) {
+  if (dbGain == null) return 1.0;
+  return pow(10, dbGain / 20).toDouble().clamp(0.0, 1.0);
+}
 
 /// Converts a [Song] into a [MediaItem] for lock-screen / notification display.
 MediaItem songToMediaItem(Song song, SubsonicClient client) => MediaItem(
@@ -46,7 +56,10 @@ class CadenceAudioHandler extends BaseAudioHandler
     _player.sequenceStateStream.listen((state) {
       if (state == null) return;
       final tag = state.currentSource?.tag;
-      if (tag is MediaItem) mediaItem.add(tag);
+      if (tag is MediaItem) {
+        mediaItem.add(tag);
+        _player.setVolume(_replayGainVolume(tag.extras?['replayGainTrackGain'] as double?));
+      }
     });
 
     // Auto-advance handled by just_audio; expose queue to audio_service
@@ -74,23 +87,13 @@ class CadenceAudioHandler extends BaseAudioHandler
     await _player.play();
   }
 
-  /// Append a single track to the end of the current queue.
-  Future<void> appendToQueue(AudioSource source) async {
+  /// Insert a track at [index] in the queue.
+  Future<void> insertAt(int index, AudioSource source) async {
     if (_queue == null) {
       await playQueue([source], 0);
       return;
     }
-    await _queue!.add(source);
-  }
-
-  /// Insert a track immediately after the one currently playing.
-  Future<void> insertNext(AudioSource source) async {
-    if (_queue == null) {
-      await playQueue([source], 0);
-      return;
-    }
-    final insertAt = (_player.currentIndex ?? -1) + 1;
-    await _queue!.insert(insertAt, source);
+    await _queue!.insert(index, source);
   }
 
   // ── Shuffle / repeat ─────────────────────────────────────────────────────────
@@ -115,6 +118,23 @@ class CadenceAudioHandler extends BaseAudioHandler
 
   Future<void> moveQueueItem(int oldIndex, int newIndex) async {
     await _queue?.move(oldIndex, newIndex);
+  }
+
+  Future<void> clearQueue() async {
+    await _queue?.clear();
+    await _player.stop();
+  }
+
+  /// Seeks to [index] first, then removes everything before it — order
+  /// matters: trimming first would shift [index] out from under itself.
+  /// just_audio adjusts the player's current-item tracking automatically
+  /// when items ahead of it are removed, so the seeked-to track keeps
+  /// playing uninterrupted once the removal completes.
+  Future<void> playFromIndex(int index) async {
+    await _player.seek(Duration.zero, index: index);
+    if (index > 0) {
+      await _queue?.removeRange(0, index);
+    }
   }
 
   // ── AudioHandler overrides ──────────────────────────────────────────────────

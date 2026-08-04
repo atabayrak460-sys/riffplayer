@@ -6,6 +6,15 @@ import 'stock_covers.dart' as stock;
 
 Widget _stockCoverFor(String key, {required double size, required BorderRadius borderRadius}) {
   switch (key) {
+    case 'albums':
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(color: const Color(0xFF27272A), borderRadius: borderRadius),
+        child: Icon(Icons.album_outlined, color: const Color(0xFF71717A), size: size * 0.5),
+      );
+    case 'all-songs':
+      return stock.AllSongsCover(size: size, borderRadius: borderRadius);
     case 'favorites':
       return stock.FavouritesCover(size: size, borderRadius: borderRadius);
     case 'recent':

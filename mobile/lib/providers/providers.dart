@@ -112,7 +112,6 @@ class PlayerState {
 
 class PlayerNotifier extends StateNotifier<PlayerState> {
   final CadenceAudioHandler _handler;
-  List<Song> _songs = [];
 
   // "Now playing" scrobbles fire immediately in playSong(); this tracks the
   // one-time "submission" scrobble (counts as a real play) sent once a track
@@ -121,6 +120,14 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   SubsonicClient? _scrobbleClient;
   String? _scrobbledSongId;
   String? _nowPlayingSongId;
+
+  // How many songs "Add to queue" has inserted directly after the current
+  // one, in this run — the next addition goes after all of them, so
+  // queueing A then B plays A before B instead of each jumping to right
+  // after current (which would play B before A). Reset to 0 whenever the
+  // current track changes for any reason, since a new "next block" starts
+  // fresh relative to whatever's now playing.
+  int _queuedCount = 0;
 
   PlayerNotifier(this._handler) : super(const PlayerState()) {
     _handler.positionStream.listen((pos) {
@@ -135,6 +142,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     });
     _handler.currentIndexStream.listen((idx) {
       state = state.copyWith(currentIndex: idx ?? -1);
+      _queuedCount = 0;
       // Skipping (next/previous/tap-in-queue) changes the track without going
       // through playSong() — send its "now playing" scrobble here instead.
       final song = state.currentSong;
@@ -150,10 +158,6 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     _handler.loopModeStream.listen((mode) {
       state = state.copyWith(repeatMode: mode);
     });
-    _handler.queue.listen((items) {
-      // Rebuild queue list from handler queue
-      // (songs are stored separately for metadata)
-    });
   }
 
   Future<void> playSong(
@@ -165,18 +169,25 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   }) async {
     final songs = queue ?? [song];
     final idx = queueIndex ?? songs.indexWhere((s) => s.id == song.id);
-    _songs = songs;
+    final resolvedIndex = idx < 0 ? 0 : idx;
 
     final sources = await Future.wait(
       songs.map((s) => buildAudioSource(s, client, downloads)),
     );
-    await _handler.playQueue(sources, idx < 0 ? 0 : idx);
-    state = state.copyWith(queue: songs, currentIndex: idx < 0 ? 0 : idx);
 
-    // Send "now playing" scrobble
+    // Update the UI-facing state (and fire the scrobble) before waiting on
+    // playback to actually start, not after — `_handler.playQueue()` awaits
+    // just_audio's `setAudioSource`/`play()`, which on a slow/flaky network
+    // response can take an unpredictable while to resolve even though
+    // playback is genuinely starting. Gating the mini-player etc. on that
+    // full round-trip made it appear to hang with nothing showing as
+    // playing even once audio was already audible.
+    state = state.copyWith(queue: songs, currentIndex: resolvedIndex);
     _scrobbleClient = client;
     _nowPlayingSongId = song.id;
     client.scrobble(song.id, submission: false).ignore();
+
+    await _handler.playQueue(sources, resolvedIndex);
   }
 
   void _maybeScrobble(Duration pos) {
@@ -191,43 +202,44 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     }
   }
 
+  // Every method below reads `state.queue` and writes the updated list back
+  // in the same synchronous expression (never via an intermediate variable
+  // held across an `await`). Dart's single-threaded event loop means that
+  // synchronous span can't be interrupted, so two calls started in quick
+  // succession (e.g. tapping "Add to queue" on two songs back to back) can
+  // never read each other's stale pre-await snapshot and clobber one
+  // another — a real bug an earlier version of this class had via a
+  // separately-tracked `_songs` list.
+
+  /// Inserts [song] right after the current track, or after any songs
+  /// already added this way — so adding A then B plays current → A → B.
   Future<void> addToQueue(
     Song song,
     SubsonicClient client,
     DownloadService downloads,
   ) async {
     final source = await buildAudioSource(song, client, downloads);
-    await _handler.appendToQueue(source);
-    state = state.copyWith(queue: [..._songs, song]);
-    _songs = [..._songs, song];
-  }
-
-  Future<void> playNext(
-    Song song,
-    SubsonicClient client,
-    DownloadService downloads,
-  ) async {
-    final source = await buildAudioSource(song, client, downloads);
-    await _handler.insertNext(source);
     if (state.currentIndex < 0) {
-      // Nothing was playing — insertNext() starts this track from scratch.
-      _songs = [song];
-      state = state.copyWith(queue: _songs, currentIndex: 0);
+      // Nothing playing — this starts it from scratch.
+      await _handler.insertAt(0, source);
+      state = state.copyWith(queue: [song], currentIndex: 0);
       _scrobbleClient = client;
       _nowPlayingSongId = song.id;
       client.scrobble(song.id, submission: false).ignore();
       return;
     }
-    final insertAt = state.currentIndex + 1;
-    final newSongs = [..._songs.sublist(0, insertAt), song, ..._songs.sublist(insertAt)];
-    _songs = newSongs;
-    state = state.copyWith(queue: newSongs);
+    final insertAt = state.currentIndex + 1 + _queuedCount;
+    await _handler.insertAt(insertAt, source);
+    final current = state.queue;
+    state = state.copyWith(
+      queue: [...current.sublist(0, insertAt), song, ...current.sublist(insertAt)],
+    );
+    _queuedCount++;
   }
 
   Future<void> removeFromQueue(int index) async {
     await _handler.removeQueueItemAt(index);
-    final newSongs = [..._songs]..removeAt(index);
-    _songs = newSongs;
+    final newSongs = [...state.queue]..removeAt(index);
     int newIdx = state.currentIndex;
     if (index < newIdx) newIdx--;
     state = state.copyWith(queue: newSongs, currentIndex: newIdx);
@@ -235,11 +247,24 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
 
   Future<void> reorderQueue(int from, int to) async {
     await _handler.moveQueueItem(from, to);
-    final newSongs = [..._songs];
+    final newSongs = [...state.queue];
     final moved = newSongs.removeAt(from);
     newSongs.insert(to, moved);
-    _songs = newSongs;
     state = state.copyWith(queue: newSongs);
+  }
+
+  Future<void> clearQueue() async {
+    await _handler.clearQueue();
+    _queuedCount = 0;
+    state = state.copyWith(queue: [], currentIndex: -1, playing: false);
+  }
+
+  /// Jumps playback to [index] within the queue and permanently drops
+  /// everything before it — tapping a song further down "Up Next" plays it
+  /// and discards the skipped-over tracks, matching Spotify's queue model.
+  Future<void> playFromQueueIndex(int index) async {
+    await _handler.playFromIndex(index);
+    state = state.copyWith(queue: state.queue.sublist(index), currentIndex: 0);
   }
 
   void play() => _handler.play();
@@ -247,7 +272,6 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   void seek(Duration pos) => _handler.seek(pos);
   void next() => _handler.skipToNext();
   void previous() => _handler.skipToPrevious();
-  void skipTo(int index) => _handler.skipToQueueItem(index);
 
   void toggleShuffle() => _handler.setShuffleModeEnabled(!state.shuffle);
 
@@ -349,6 +373,17 @@ final downloadsProvider =
     FutureProvider.autoDispose<List<DownloadedTrack>>((ref) async {
   return ref.read(downloadServiceProvider).getDownloads();
 });
+
+final lyricsProvider =
+    FutureProvider.autoDispose.family<Lyrics?, String>((ref, songId) async {
+  final client = ref.read(apiClientProvider);
+  if (client == null) throw Exception('Not authenticated');
+  return client.getLyrics(songId);
+});
+
+/// Whether the full-screen player is currently showing the lyrics view
+/// instead of the cover art.
+final showLyricsProvider = StateProvider.autoDispose<bool>((ref) => false);
 
 /// Per-user pin/recency state for the unified Library list (see
 /// `screens/library_screen.dart` and `utils/library_sidebar_order.dart`).

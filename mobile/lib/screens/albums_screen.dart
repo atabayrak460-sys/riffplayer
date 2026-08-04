@@ -21,6 +21,7 @@ class _AlbumsScreenState extends ConsumerState<AlbumsScreen> {
     ('frequent', 'Most Played'),
     ('starred', 'Starred'),
     ('alphabeticalByName', 'A–Z'),
+    ('alphabeticalByArtist', 'By Artist'),
     ('random', 'Random'),
   ];
 

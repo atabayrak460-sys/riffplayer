@@ -6,6 +6,8 @@ import '../utils/library_sidebar_order.dart';
 import '../widgets/library_list_row.dart';
 
 const _systemItems = <LibraryRow>[
+  LibraryRow(itemType: 'system', itemKey: 'albums', to: '/albums', label: 'Albums', stockCoverKey: 'albums'),
+  LibraryRow(itemType: 'system', itemKey: 'all-songs', to: '/songs', label: 'All Songs', stockCoverKey: 'all-songs'),
   LibraryRow(itemType: 'system', itemKey: 'favorites', to: '/favorites', label: 'Favourites', stockCoverKey: 'favorites'),
   LibraryRow(itemType: 'system', itemKey: 'recent', to: '/recent', label: 'Recently Played', stockCoverKey: 'recent'),
   LibraryRow(itemType: 'system', itemKey: 'most-played', to: '/most-played', label: 'Most Played', stockCoverKey: 'most-played'),

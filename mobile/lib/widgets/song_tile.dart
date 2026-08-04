@@ -28,6 +28,12 @@ class SongTile extends ConsumerWidget {
   /// like All Songs, or a playlist's per-track added-at date inside a
   /// playlist view.
   final DateTime? addedAt;
+  /// Overrides the default "play this song, replacing the queue with
+  /// [queue]" tap behavior — used by the Queue screen to jump to a song
+  /// within the existing queue instead of replacing it.
+  final VoidCallback? onTap;
+  /// When set, adds a "Remove from queue" action to the overflow menu.
+  final VoidCallback? onRemove;
 
   const SongTile({
     super.key,
@@ -37,6 +43,8 @@ class SongTile extends ConsumerWidget {
     this.showAlbum = false,
     this.showNumber = false,
     this.addedAt,
+    this.onTap,
+    this.onRemove,
   });
 
   @override
@@ -45,7 +53,7 @@ class SongTile extends ConsumerWidget {
     final isCurrent = playerState.currentSong?.id == song.id;
 
     return ListTile(
-      onTap: () => _play(ref),
+      onTap: onTap ?? () => _play(ref),
       leading: showAlbum
           ? CoverArt(
               url: _coverUrl(ref, song.coverArt),
@@ -102,7 +110,6 @@ class SongTile extends ConsumerWidget {
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Color(0xFF71717A), size: 18),
             itemBuilder: (_) => [
-              const PopupMenuItem(value: 'playNext', child: Text('Play next')),
               const PopupMenuItem(value: 'queue', child: Text('Add to queue')),
               const PopupMenuItem(value: 'playlist', child: Text('Add to playlist')),
               const PopupMenuItem(value: 'download', child: Text('Download')),
@@ -113,6 +120,8 @@ class SongTile extends ConsumerWidget {
               const PopupMenuItem(value: 'album', child: Text('Go to album')),
               const PopupMenuItem(value: 'artist', child: Text('Go to artist')),
               const PopupMenuItem(value: 'info', child: Text('Song info')),
+              if (onRemove != null)
+                const PopupMenuItem(value: 'remove', child: Text('Remove from queue')),
             ],
             onSelected: (v) => _onMenu(v, context, ref),
           ),
@@ -143,9 +152,6 @@ class SongTile extends ConsumerWidget {
     final client = ref.read(apiClientProvider);
     if (client == null) return;
     switch (action) {
-      case 'playNext':
-        final downloads = ref.read(downloadServiceProvider);
-        ref.read(playerProvider.notifier).playNext(song, client, downloads);
       case 'queue':
         final downloads = ref.read(downloadServiceProvider);
         ref.read(playerProvider.notifier).addToQueue(song, client, downloads);
@@ -161,11 +167,17 @@ class SongTile extends ConsumerWidget {
           client.star(id: song.id).ignore();
         }
       case 'album':
-        context.push('/albums/${song.albumId}');
+        // `.go()`, not `.push()`: this menu is reachable from a track's own
+        // album/artist page (e.g. an album's own track list), where pushing
+        // a duplicate of the page already underneath crashes with a
+        // duplicate-GlobalKey assertion.
+        context.go('/albums/${song.albumId}');
       case 'artist':
-        context.push('/artists/${song.artistId}');
+        context.go('/artists/${song.artistId}');
       case 'info':
         showDialog(context: context, builder: (_) => SongInfoDialog(song: song));
+      case 'remove':
+        onRemove?.call();
     }
   }
 }

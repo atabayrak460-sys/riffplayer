@@ -6,6 +6,7 @@ import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/home_page_screen.dart';
 import 'screens/albums_screen.dart';
+import 'screens/all_songs_screen.dart';
 import 'screens/album_detail_screen.dart';
 import 'screens/artists_screen.dart';
 import 'screens/artist_detail_screen.dart';
@@ -16,6 +17,7 @@ import 'screens/library_screen.dart';
 import 'screens/playlist_detail_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/player_screen.dart';
+import 'screens/queue_screen.dart';
 import 'screens/wrapped_screen.dart';
 import 'screens/discover_screen.dart';
 import 'screens/recently_played_screen.dart';
@@ -63,6 +65,7 @@ class _CadenceAppState extends ConsumerState<CadenceApp> {
 
         // Full-screen player (outside the shell)
         GoRoute(path: '/player', builder: (_, __) => const PlayerScreen()),
+        GoRoute(path: '/queue', builder: (_, __) => const QueueScreen()),
 
         // Shell with bottom nav + mini player
         ShellRoute(
@@ -70,6 +73,7 @@ class _CadenceAppState extends ConsumerState<CadenceApp> {
           routes: [
             GoRoute(path: '/home', builder: (_, __) => const HomePageScreen()),
             GoRoute(path: '/albums', builder: (_, __) => const AlbumsScreen()),
+            GoRoute(path: '/songs', builder: (_, __) => const AllSongsScreen()),
             GoRoute(
               path: '/albums/:id',
               builder: (_, state) =>

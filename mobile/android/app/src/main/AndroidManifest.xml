@@ -49,6 +49,19 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Impeller's Vulkan backend has a severe GPU-memory leak on this
+             device's Adreno driver (observed climbing to 6.6GB, well past
+             MIUI's watchdog threshold, killing the app: "Unable to allocate
+             Vulkan Image" on every launch). Force Impeller onto the OpenGL
+             ES backend instead, which doesn't hit this bug. Must be a direct
+             child of <application>, not <activity> — FlutterLoader reads
+             engine-level flags from the app's own ApplicationInfo.metaData,
+             which doesn't include activity-scoped meta-data. Debug/profile
+             builds only (Flutter compiles this override out of release). -->
+        <meta-data
+            android:name="io.flutter.embedding.android.ImpellerBackend"
+            android:value="opengles" />
+
         <!-- audio_service background service -->
         <service
             android:name="com.ryanheise.audioservice.AudioService"

@@ -423,6 +423,32 @@ class Library {
       );
 }
 
+class LyricsLine {
+  final int start; // ms
+  final String value;
+
+  const LyricsLine({required this.start, required this.value});
+
+  factory LyricsLine.fromJson(Map<String, dynamic> j) => LyricsLine(
+        start: (j['start'] as num?)?.toInt() ?? 0,
+        value: j['value'] as String? ?? '',
+      );
+}
+
+class Lyrics {
+  final bool synced;
+  final List<LyricsLine> line;
+
+  const Lyrics({required this.synced, required this.line});
+
+  factory Lyrics.fromJson(Map<String, dynamic> j) => Lyrics(
+        synced: j['synced'] as bool? ?? false,
+        line: (j['line'] as List<dynamic>? ?? [])
+            .map((l) => LyricsLine.fromJson(l as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 /// Per-user pin/recency state for a single Library sidebar entry — either a
 /// fixed system view (Favourites, Recently Played, ...) or a playlist.
 class LibrarySidebarItem {
