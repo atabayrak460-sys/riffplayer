@@ -30,9 +30,12 @@ async function apiAuth(req: FastifyRequest, reply: FastifyReply): Promise<void> 
       const payload = verifyToken(token);
       const db = getDb();
       const user = db
-        .prepare('SELECT id, username, role FROM users WHERE id = ?')
-        .get(Number(payload.sub)) as { id: number; username: string; role: string } | undefined;
+        .prepare('SELECT id, username, role, token_version FROM users WHERE id = ?')
+        .get(Number(payload.sub)) as
+        { id: number; username: string; role: string; token_version: number } | undefined;
       if (!user) return reply.code(401).send({ error: 'Unauthorized' }) as unknown as void;
+      if (user.token_version !== payload.tokenVersion)
+        return reply.code(401).send({ error: 'Token has been revoked' }) as unknown as void;
       req.subsonicUser = user;
       return;
     } catch {
@@ -63,8 +66,9 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
 
     const db = getDb();
     const user = db
-      .prepare('SELECT id, username, role, subsonic_token, password_hash FROM users WHERE username = ? COLLATE NOCASE')
-      .get(username) as { id: number; username: string; role: string; subsonic_token: string | null; password_hash: string } | undefined;
+      .prepare('SELECT id, username, role, subsonic_token, password_hash, token_version FROM users WHERE username = ? COLLATE NOCASE')
+      .get(username) as
+      { id: number; username: string; role: string; subsonic_token: string | null; password_hash: string; token_version: number } | undefined;
 
     if (!user) return jsonError(reply, 401, 'Wrong username or password');
 
@@ -192,7 +196,12 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
       db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
     }
     if (password) {
-      db.prepare('UPDATE users SET password_hash = ?, subsonic_token = ? WHERE id = ?').run(
+      // Bumping token_version invalidates every JWT already issued to this
+      // user — otherwise a token signed before this change stays valid
+      // (per its own signature+expiry) for up to 90 more days.
+      db.prepare(
+        'UPDATE users SET password_hash = ?, subsonic_token = ?, token_version = token_version + 1 WHERE id = ?',
+      ).run(
         hashPassword(password),
         encryptPassword(password, secret),
         userId,

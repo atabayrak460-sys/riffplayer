@@ -106,7 +106,7 @@ describe('POST /api/v1/artists/:id/cover', () => {
         .prepare("INSERT INTO users (username, password_hash, role) VALUES ('regular', 'x', 'user')")
         .run().lastInsertRowid,
     );
-    const token = signToken({ id: userId, username: 'regular', role: 'user' });
+    const token = signToken({ id: userId, username: 'regular', role: 'user', token_version: 0 });
 
     const { body, contentType } = multipart('artist.png', 'image/png', TINY_PNG);
     const res = await app.inject({
@@ -187,7 +187,7 @@ describe('DELETE /api/v1/artists/:id/cover', () => {
         .prepare("INSERT INTO users (username, password_hash, role) VALUES ('regular2', 'x', 'user')")
         .run().lastInsertRowid,
     );
-    const token = signToken({ id: userId, username: 'regular2', role: 'user' });
+    const token = signToken({ id: userId, username: 'regular2', role: 'user', token_version: 0 });
 
     const res = await app.inject({
       method: 'DELETE',

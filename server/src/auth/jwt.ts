@@ -6,6 +6,7 @@ export interface JwtPayload {
   sub: string;      // user id as string
   username: string;
   role: string;
+  tokenVersion: number;
 }
 
 function getJwtSecret(): string {
@@ -20,9 +21,11 @@ function getJwtSecret(): string {
   return secret;
 }
 
-export function signToken(user: { id: number; username: string; role: string }): string {
+export function signToken(
+  user: { id: number; username: string; role: string; token_version: number },
+): string {
   return jwt.sign(
-    { username: user.username, role: user.role },
+    { username: user.username, role: user.role, tokenVersion: user.token_version },
     getJwtSecret(),
     { subject: String(user.id), expiresIn: '90d' },
   );
