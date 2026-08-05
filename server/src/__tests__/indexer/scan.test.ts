@@ -5,7 +5,7 @@ import path from 'path';
 import os from 'os';
 import { initDb, closeDb } from '../../db/database.js';
 import { runMigrations } from '../../db/migrate.js';
-import { scanLibrary, upsertArtist, upsertAlbum } from '../../indexer/scan.js';
+import { scanLibrary, upsertArtist, upsertAlbum, isScanInProgress, ScanInProgressError } from '../../indexer/scan.js';
 import type Database from 'better-sqlite3';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -267,5 +267,30 @@ describe('scanLibrary', () => {
       db.prepare('SELECT COUNT(*) as n FROM play_history WHERE track_id = ?').get(trackId) as { n: number }
     ).n;
     expect(historyCount).toBe(1);
+  });
+
+  it('rejects a second concurrent scan of the same library', async () => {
+    writeWav(path.join(tmpDir, 'track.wav'));
+
+    const first = scanLibrary(tmpDir);
+    await expect(scanLibrary(tmpDir)).rejects.toThrow(ScanInProgressError);
+    await expect(first).resolves.toMatchObject({ added: 1 });
+  });
+
+  it('isScanInProgress reflects the in-flight state and clears once done', async () => {
+    writeWav(path.join(tmpDir, 'track.wav'));
+
+    expect(isScanInProgress(tmpDir)).toBe(false);
+    const pending = scanLibrary(tmpDir);
+    expect(isScanInProgress(tmpDir)).toBe(true);
+    await pending;
+    expect(isScanInProgress(tmpDir)).toBe(false);
+  });
+
+  it('allows scanning the same library again once the previous scan finishes', async () => {
+    writeWav(path.join(tmpDir, 'track.wav'));
+
+    await scanLibrary(tmpDir);
+    await expect(scanLibrary(tmpDir)).resolves.toMatchObject({ skipped: 1 });
   });
 });

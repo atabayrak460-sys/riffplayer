@@ -21,8 +21,17 @@ export function LibrariesPage() {
 
   const scan = async (id: number) => {
     setScanning(id);
-    try { await adminScanLibrary(id); }
-    finally { setScanning(null); }
+    try {
+      await adminScanLibrary(id);
+      // Reflects the server's own scanning state (true for every client,
+      // not just this tab) — the backend now rejects an overlapping scan
+      // of the same library with a 409, caught below.
+      qc.invalidateQueries({ queryKey: ['admin-libraries'] });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to start scan');
+    } finally {
+      setScanning(null);
+    }
   };
 
   return (
@@ -61,10 +70,10 @@ export function LibrariesPage() {
               <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={() => scan(lib.id)}
-                  disabled={scanning === lib.id}
+                  disabled={scanning === lib.id || lib.scanning}
                   className="text-xs text-zinc-300 hover:text-white border border-zinc-600 px-3 py-1 rounded transition-colors disabled:opacity-50"
                 >
-                  {scanning === lib.id ? 'Scanning…' : '⟳ Scan'}
+                  {scanning === lib.id || lib.scanning ? 'Scanning…' : '⟳ Scan'}
                 </button>
                 <button onClick={() => { if (confirm(`Remove library "${lib.name}"? Track data stays.`)) deleteMut.mutate(lib.id); }} className="text-xs text-red-500 hover:text-red-400 border border-red-900 px-2 py-1 rounded transition-colors">Remove</button>
               </div>

@@ -6,7 +6,7 @@ import { subsonicAuth } from '../../auth/preHandler.js';
 import { signToken, verifyToken } from '../../auth/jwt.js';
 import { decryptPassword, hashPassword, encryptPassword, verifyPasswordHash } from '../../auth/crypto.js';
 import { getOrCreateServerSecret } from '../../auth/seed.js';
-import { scanLibrary } from '../../indexer/scan.js';
+import { scanLibrary, isScanInProgress, ScanInProgressError } from '../../indexer/scan.js';
 import { recommendationsPlugin } from './recommendations.js';
 import { historyPlugin } from './history.js';
 import { librarySidebarPlugin } from './librarySidebar.js';
@@ -221,7 +221,9 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
 
   // GET /api/v1/admin/libraries
   app.get('/admin/libraries', { preHandler: [apiAuth, requireAdmin] }, async (_req, reply) => {
-    const libs = getDb().prepare('SELECT id, name, fs_path AS path FROM libraries').all();
+    const libs = (getDb().prepare('SELECT id, name, fs_path AS path FROM libraries').all() as
+      { id: number; name: string; path: string }[])
+      .map((lib) => ({ ...lib, scanning: isScanInProgress(lib.path) }));
     reply.send({ libraries: libs });
   });
 
@@ -247,10 +249,17 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
       .prepare('SELECT fs_path FROM libraries WHERE id = ?')
       .get(Number((req.params as { id: string }).id)) as { fs_path: string } | undefined;
     if (!lib) return jsonError(reply, 404, 'Library not found');
+    if (isScanInProgress(lib.fs_path))
+      return jsonError(reply, 409, 'A scan is already in progress for this library');
 
-    // Fire-and-forget; client can poll /admin/libraries to see changes
+    // Fire-and-forget; client can poll /admin/libraries to see changes.
+    // scanLibrary() itself is the authoritative guard against overlapping
+    // scans (the check above is just a faster, clearer rejection for the
+    // common case) — so a ScanInProgressError here means a second request
+    // for the same library landed in the tiny window between the check
+    // above and this call, which is expected and not worth logging as one.
     scanLibrary(lib.fs_path).catch((err) => {
-      req.log.error({ err }, '[scan] background scan failed');
+      if (!(err instanceof ScanInProgressError)) req.log.error({ err }, '[scan] background scan failed');
     });
     reply.send({ ok: true, message: 'Scan started' });
   });

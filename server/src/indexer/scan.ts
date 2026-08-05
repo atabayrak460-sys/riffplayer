@@ -47,7 +47,35 @@ function nextSharedId(db: Database.Database): number {
   return row.id;
 }
 
+// Library paths currently being scanned — guards against two overlapping
+// scans of the same library doing redundant/interleaved reads and writes.
+// Checked-and-set synchronously (no `await` in between) at the top of
+// scanLibrary(), so it's safe even if two scan requests are handled back to
+// back on the same event loop tick.
+const scansInProgress = new Set<string>();
+
+export function isScanInProgress(libraryPath: string): boolean {
+  return scansInProgress.has(libraryPath);
+}
+
+export class ScanInProgressError extends Error {
+  constructor(libraryPath: string) {
+    super(`A scan is already in progress for ${libraryPath}`);
+    this.name = 'ScanInProgressError';
+  }
+}
+
 export async function scanLibrary(libraryPath: string): Promise<ScanResult> {
+  if (scansInProgress.has(libraryPath)) throw new ScanInProgressError(libraryPath);
+  scansInProgress.add(libraryPath);
+  try {
+    return await runScan(libraryPath);
+  } finally {
+    scansInProgress.delete(libraryPath);
+  }
+}
+
+async function runScan(libraryPath: string): Promise<ScanResult> {
   const db = getDb();
   const result: ScanResult = { added: 0, updated: 0, skipped: 0, removed: 0, renamed: 0, errors: 0 };
 

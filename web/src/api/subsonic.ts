@@ -393,7 +393,7 @@ export interface StructuredLyrics {
 // ── Admin API ────────────────────────────────────────────────────────────────
 
 export interface AdminUser { id: number; username: string; role: string; created_at: number; }
-export interface Library { id: number; name: string; path: string; }
+export interface Library { id: number; name: string; path: string; scanning: boolean; }
 
 export async function adminGetUsers(): Promise<AdminUser[]> {
   const r = await apiCall('GET', 'admin/users') as { users: AdminUser[] };
