@@ -267,6 +267,18 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     state = state.copyWith(queue: state.queue.sublist(index), currentIndex: 0);
   }
 
+  /// Updates the starred status of every queue entry matching [songId] in
+  /// place — the player screen's favorite icon reads `currentSong.isStarred`
+  /// straight off the queue, not off `starredProvider`, so star/unstar
+  /// there needs to patch this state directly to show up immediately.
+  void setStarredInQueue(String songId, String? starred) {
+    final newQueue = [
+      for (final s in state.queue)
+        s.id == songId ? s.withStarred(starred) : s,
+    ];
+    state = state.copyWith(queue: newQueue);
+  }
+
   void play() => _handler.play();
   void pause() => _handler.pause();
   void seek(Duration pos) => _handler.seek(pos);

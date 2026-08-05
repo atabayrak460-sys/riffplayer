@@ -123,11 +123,15 @@ class PlayerScreen extends ConsumerWidget {
                                 : const Color(0xFF71717A),
                           ),
                           onPressed: () {
-                            if (song.isStarred) {
-                              client?.unstar(id: song.id).ignore();
-                            } else {
-                              client?.star(id: song.id).ignore();
-                            }
+                            final newStarred = song.isStarred ? null : 'true';
+                            final future = song.isStarred
+                                ? client?.unstar(id: song.id)
+                                : client?.star(id: song.id);
+                            future?.then((_) {
+                              ref.read(playerProvider.notifier)
+                                  .setStarredInQueue(song.id, newStarred);
+                              ref.invalidate(starredProvider);
+                            }).ignore();
                           },
                         ),
                       ],

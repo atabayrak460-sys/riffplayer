@@ -53,6 +53,10 @@ export function verifyPasswordHash(password: string, stored: string): boolean {
 
 export function checkSubsonicToken(plainPassword: string, token: string, salt: string): boolean {
   const expected = createHash('md5').update(plainPassword + salt).digest('hex');
+  // timingSafeEqual throws RangeError on mismatched buffer lengths — token is
+  // an unvalidated, attacker-controlled query param, so a short/long `t`
+  // must not be able to crash the request with a 500 pre-auth.
+  if (token.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(expected), Buffer.from(token));
 }
 

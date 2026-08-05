@@ -161,11 +161,14 @@ class SongTile extends ConsumerWidget {
         final downloads = ref.read(downloadServiceProvider);
         downloads.download(song, client).ignore();
       case 'star':
-        if (song.isStarred) {
-          client.unstar(id: song.id).ignore();
-        } else {
-          client.star(id: song.id).ignore();
-        }
+        final newStarred = song.isStarred ? null : 'true';
+        final future = song.isStarred
+            ? client.unstar(id: song.id)
+            : client.star(id: song.id);
+        future.then((_) {
+          ref.read(playerProvider.notifier).setStarredInQueue(song.id, newStarred);
+          ref.invalidate(starredProvider);
+        }).ignore();
       case 'album':
         // `.go()`, not `.push()`: this menu is reachable from a track's own
         // album/artist page (e.g. an album's own track list), where pushing

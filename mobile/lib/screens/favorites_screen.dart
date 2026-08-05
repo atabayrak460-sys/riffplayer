@@ -67,8 +67,11 @@ class FavoritesScreen extends ConsumerWidget {
                               color: Color(0xFF71717A), fontSize: 12)),
                       trailing: IconButton(
                         icon: const Icon(Icons.star, color: Color(0xFFA78BFA)),
-                        onPressed: () =>
-                            ref.read(apiClientProvider)?.unstar(albumId: a.id).ignore(),
+                        onPressed: () => ref
+                            .read(apiClientProvider)
+                            ?.unstar(albumId: a.id)
+                            .then((_) => ref.invalidate(starredProvider))
+                            .ignore(),
                       ),
                     )),
               ],

@@ -164,6 +164,27 @@ class Song {
       );
 
   bool get isStarred => starred != null;
+
+  Song withStarred(String? starred) => Song(
+        id: id,
+        title: title,
+        artist: artist,
+        artistId: artistId,
+        album: album,
+        albumId: albumId,
+        track: track,
+        discNumber: discNumber,
+        year: year,
+        duration: duration,
+        size: size,
+        coverArt: coverArt,
+        suffix: suffix,
+        starred: starred,
+        replayGainTrackGain: replayGainTrackGain,
+        created: created,
+        bitRate: bitRate,
+        playCount: playCount,
+      );
 }
 
 class Playlist {
