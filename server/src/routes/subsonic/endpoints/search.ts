@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../../db/database.js';
+import { escapeLike } from '../../../db/likeEscape.js';
 import { sendOk } from '../response.js';
 import { xmlTag, artistAttrs, albumAttrs, songAttrs, toJson, type ArtistRow, type AlbumRow, type SongRow } from '../serialize.js';
 
@@ -13,7 +14,7 @@ const ARTIST_COLS = `
 FROM artists a
 LEFT JOIN albums al ON al.artist_id = a.id
 LEFT JOIN favorites f ON f.item_type = 'artist' AND f.item_id = a.id AND f.user_id = ?
-WHERE a.name LIKE ?
+WHERE a.name LIKE ? ESCAPE '\\'
 GROUP BY a.id
 ORDER BY a.name
 LIMIT ? OFFSET ?`;
@@ -28,7 +29,7 @@ FROM albums al
 JOIN artists ar ON ar.id = al.artist_id
 LEFT JOIN tracks t ON t.album_id = al.id
 LEFT JOIN favorites f ON f.item_type = 'album' AND f.item_id = al.id AND f.user_id = ?
-WHERE al.name LIKE ?
+WHERE al.name LIKE ? ESCAPE '\\'
 GROUP BY al.id
 ORDER BY al.name
 LIMIT ? OFFSET ?`;
@@ -43,7 +44,7 @@ FROM tracks t
 JOIN artists ar ON ar.id = t.artist_id
 JOIN albums al ON al.id = t.album_id
 LEFT JOIN favorites f ON f.item_type = 'track' AND f.item_id = t.id AND f.user_id = ?
-WHERE t.title LIKE ?
+WHERE t.title LIKE ? ESCAPE '\\'
 ORDER BY t.title
 LIMIT ? OFFSET ?`;
 
@@ -58,7 +59,7 @@ function search3(req: FastifyRequest, reply: FastifyReply): void {
 
   const db = getDb();
   const userId = req.subsonicUser!.id;
-  const like = `%${query}%`;
+  const like = `%${escapeLike(query)}%`;
 
   const artists = db.prepare(`SELECT ${ARTIST_COLS}`).all(userId, like, Number(artistCount), Number(artistOffset)) as ArtistRow[];
   const albums  = db.prepare(`SELECT ${ALBUM_COLS}`).all(userId, like, Number(albumCount), Number(albumOffset)) as AlbumRow[];

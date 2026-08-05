@@ -67,4 +67,23 @@ describe('search3', () => {
     const result = (sr(res.body).searchResult3) as Record<string, unknown[]>;
     expect(result.song.length).toBe(1);
   });
+
+  it('treats a literal underscore in the query as a literal character, not a wildcard', async () => {
+    // "Test_Artist" would spuriously match "Test Artist" if `_` were left as
+    // an unescaped LIKE wildcard (it matches any single character, including
+    // the space) — it must not match once `_` is escaped.
+    const res = await app.inject({
+      url: `/rest/search3.view?${auth}&query=${encodeURIComponent('Test_Artist')}&albumCount=0&songCount=0`,
+    });
+    const result = (sr(res.body).searchResult3) as Record<string, unknown[]>;
+    expect(result.artist.length).toBe(0);
+  });
+
+  it('treats a literal percent sign in the query as a literal character, not a wildcard', async () => {
+    const res = await app.inject({
+      url: `/rest/search3.view?${auth}&query=${encodeURIComponent('Test%Artist')}&albumCount=0&songCount=0`,
+    });
+    const result = (sr(res.body).searchResult3) as Record<string, unknown[]>;
+    expect(result.artist.length).toBe(0);
+  });
 });

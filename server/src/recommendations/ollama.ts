@@ -9,6 +9,7 @@
  *   4. No data leaves the user's server; Ollama runs locally.
  */
 import { getDb } from '../db/database.js';
+import { escapeLike } from '../db/likeEscape.js';
 import { getUserTopArtists } from './lastfm.js';
 
 interface OllamaChatResponse {
@@ -61,10 +62,10 @@ function findLocalMatch(artist: string, track: string) {
       FROM tracks t
       JOIN artists ar ON ar.id = t.artist_id
       JOIN albums al ON al.id = t.album_id
-      WHERE ar.name LIKE ? AND t.title LIKE ?
+      WHERE ar.name LIKE ? ESCAPE '\\' AND t.title LIKE ? ESCAPE '\\'
       LIMIT 1
     `)
-    .get(`%${artist}%`, `%${track}%`);
+    .get(`%${escapeLike(artist)}%`, `%${escapeLike(track)}%`);
 }
 
 function getUserTopTracks(userId: number, limitDays = 90, count = 10) {

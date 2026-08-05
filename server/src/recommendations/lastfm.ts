@@ -7,6 +7,7 @@
  * No external links or acquisition paths are ever provided.
  */
 import { getDb } from '../db/database.js';
+import { escapeLike } from '../db/likeEscape.js';
 
 interface TopArtist {
   name: string;
@@ -82,11 +83,11 @@ function findLocalTracksByArtistName(artistName: string, limit = 3): LocalSong[]
       FROM tracks t
       JOIN artists ar ON ar.id = t.artist_id
       JOIN albums al ON al.id = t.album_id
-      WHERE ar.name LIKE ?
+      WHERE ar.name LIKE ? ESCAPE '\\'
       ORDER BY RANDOM()
       LIMIT ?
     `)
-    .all(`%${artistName}%`, limit) as LocalSong[];
+    .all(`%${escapeLike(artistName)}%`, limit) as LocalSong[];
 }
 
 /** In-memory cache: key → { songs, timestamp } */
