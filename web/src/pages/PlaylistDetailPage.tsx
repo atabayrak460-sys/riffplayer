@@ -20,7 +20,7 @@ import { PlaylistCover } from '../components/StockCovers';
 import { SongRow } from '../components/SongRow';
 import { DownloadButton } from '../components/DownloadButton';
 import { sortPlaylistTracks, type PlaylistSortMode } from '../lib/playlistSort';
-import type { Song } from '../api/types';
+import type { Playlist, Song } from '../api/types';
 
 function formatDuration(s: number) {
   const h = Math.floor(s / 3600);
@@ -113,7 +113,26 @@ export function PlaylistDetailPage() {
   });
 
   const reorderMutation = useMutation({
-    mutationFn: (trackIds: string[]) => reorderPlaylistTracks(id!, trackIds),
+    mutationFn: ({ trackIds }: { trackIds: string[]; reordered: Song[] }) =>
+      reorderPlaylistTracks(id!, trackIds),
+    // Writes the new order into the cache immediately, rather than waiting
+    // for the round-trip to resolve — otherwise the drop visibly reverts to
+    // the old order for a beat before refetch. It also means a second drag
+    // started before this one settles reads the already-reordered list (via
+    // the `songs` closure below, refreshed by the re-render this triggers)
+    // instead of a stale pre-drag snapshot, so it can no longer silently
+    // undo the first reorder.
+    onMutate: async ({ reordered }) => {
+      await qc.cancelQueries({ queryKey: ['playlist', id] });
+      const previousPlaylist = qc.getQueryData<Playlist>(['playlist', id]);
+      qc.setQueryData<Playlist | undefined>(['playlist', id], (old) =>
+        old ? { ...old, entry: reordered } : old,
+      );
+      return { previousPlaylist };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousPlaylist) qc.setQueryData(['playlist', id], context.previousPlaylist);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['playlist', id] }),
   });
 
@@ -153,7 +172,7 @@ export function PlaylistDetailPage() {
     const reordered = [...songs];
     const [moved] = reordered.splice(from, 1);
     reordered.splice(to, 0, moved);
-    reorderMutation.mutate(reordered.map((s) => s.id));
+    reorderMutation.mutate({ trackIds: reordered.map((s) => s.id), reordered });
   };
 
   return (
