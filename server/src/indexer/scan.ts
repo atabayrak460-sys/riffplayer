@@ -26,6 +26,17 @@ export interface ScanResult {
   errors: number;
 }
 
+/// Atomically claims the next id from the shared artists/albums/tracks
+/// counter (see migration 009) — new rows in any of those three tables draw
+/// from this instead of their own per-table AUTOINCREMENT, so a new album
+/// can never end up with the same numeric id as an unrelated artist.
+function nextSharedId(db: Database.Database): number {
+  const row = db
+    .prepare('UPDATE id_sequence SET next_id = next_id + 1 WHERE id = 1 RETURNING next_id - 1 AS id')
+    .get() as { id: number };
+  return row.id;
+}
+
 export async function scanLibrary(libraryPath: string): Promise<ScanResult> {
   const db = getDb();
   const result: ScanResult = { added: 0, updated: 0, skipped: 0, errors: 0 };
@@ -112,14 +123,14 @@ async function processFile(
     } else {
       db.prepare(`
         INSERT INTO tracks
-          (title, album_id, artist_id, disc_no, track_no, duration_s,
+          (id, title, album_id, artist_id, disc_no, track_no, duration_s,
            path, size, mtime, bitrate, format, sample_rate,
            replaygain_track, replaygain_album, mbid)
         VALUES
-          (:title, :album_id, :artist_id, :disc_no, :track_no, :duration_s,
+          (:id, :title, :album_id, :artist_id, :disc_no, :track_no, :duration_s,
            :path, :size, :mtime, :bitrate, :format, :sample_rate,
            :replaygain_track, :replaygain_album, :mbid)
-      `).run({ ...fields, path: filePath });
+      `).run({ ...fields, id: nextSharedId(db), path: filePath });
       result.added++;
     }
   } catch (err) {
@@ -133,7 +144,9 @@ export function upsertArtist(db: Database.Database, name: string): number {
     .prepare('SELECT id FROM artists WHERE name = ? COLLATE NOCASE')
     .get(name) as { id: number } | undefined;
   if (row) return row.id;
-  return Number(db.prepare('INSERT INTO artists (name) VALUES (?)').run(name).lastInsertRowid);
+  const id = nextSharedId(db);
+  db.prepare('INSERT INTO artists (id, name) VALUES (?, ?)').run(id, name);
+  return id;
 }
 
 export function upsertAlbum(
@@ -151,9 +164,8 @@ export function upsertAlbum(
     if (mbid) db.prepare('UPDATE albums SET mbid = ? WHERE id = ? AND mbid IS NULL').run(mbid, row.id);
     return row.id;
   }
-  return Number(
-    db
-      .prepare('INSERT INTO albums (name, artist_id, year, mbid) VALUES (?, ?, ?, ?)')
-      .run(name, artistId, year, mbid ?? null).lastInsertRowid,
-  );
+  const id = nextSharedId(db);
+  db.prepare('INSERT INTO albums (id, name, artist_id, year, mbid) VALUES (?, ?, ?, ?, ?)')
+    .run(id, name, artistId, year, mbid ?? null);
+  return id;
 }
