@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, utimes, chmod } from 'fs/promises';
+import { mkdtemp, rm, unlink, rename, utimes, chmod } from 'fs/promises';
 import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -10,11 +10,14 @@ import type Database from 'better-sqlite3';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-/** Minimal valid WAV file (44-byte header, no audio data). */
-function writeWav(filePath: string): void {
-  const buf = Buffer.alloc(44);
+/** Minimal valid WAV file. Includes a fixed chunk of silent PCM data (rather
+ * than a zero-length data chunk) so music-metadata reports a real, non-zero
+ * duration — needed for tests that rely on scanLibrary's size+duration
+ * rename-fingerprint matching. */
+function writeWav(filePath: string, dataBytes = 4410): void {
+  const buf = Buffer.alloc(44 + dataBytes);
   buf.write('RIFF', 0, 'ascii');
-  buf.writeUInt32LE(36, 4);
+  buf.writeUInt32LE(36 + dataBytes, 4);
   buf.write('WAVE', 8, 'ascii');
   buf.write('fmt ', 12, 'ascii');
   buf.writeUInt32LE(16, 16);
@@ -25,7 +28,7 @@ function writeWav(filePath: string): void {
   buf.writeUInt16LE(2, 32); // block align
   buf.writeUInt16LE(16, 34); // bits per sample
   buf.write('data', 36, 'ascii');
-  buf.writeUInt32LE(0, 40);
+  buf.writeUInt32LE(dataBytes, 40);
   writeFileSync(filePath, buf);
 }
 
@@ -159,7 +162,7 @@ describe('scanLibrary', () => {
 
   it('handles an empty directory without error', async () => {
     const result = await scanLibrary(tmpDir);
-    expect(result).toEqual({ added: 0, updated: 0, skipped: 0, errors: 0 });
+    expect(result).toEqual({ added: 0, updated: 0, skipped: 0, removed: 0, renamed: 0, errors: 0 });
   });
 
   it('increments errors counter for permission-denied audio files', async () => {
@@ -175,5 +178,94 @@ describe('scanLibrary', () => {
 
     expect(result.errors).toBe(1);
     expect(result.added).toBe(0);
+  });
+
+  it('removes a track whose file was deleted from disk', async () => {
+    const p = path.join(tmpDir, 'track.wav');
+    writeWav(p);
+    await scanLibrary(tmpDir);
+
+    await unlink(p);
+    const result = await scanLibrary(tmpDir);
+
+    expect(result.removed).toBe(1);
+    const count = (db.prepare('SELECT COUNT(*) as n FROM tracks').get() as { n: number }).n;
+    expect(count).toBe(0);
+  });
+
+  it('does not delete a track whose directory merely failed to read this scan', async () => {
+    const sub = path.join(tmpDir, 'locked');
+    mkdirSync(sub, { recursive: true });
+    const p = path.join(sub, 'track.wav');
+    writeWav(p);
+    await scanLibrary(tmpDir);
+    const before = (db.prepare('SELECT COUNT(*) as n FROM tracks').get() as { n: number }).n;
+    expect(before).toBe(1);
+
+    // Deny read on the directory itself so walkDir's readdir() fails and
+    // silently skips it — the file underneath still exists on disk though.
+    await chmod(sub, 0o000);
+    let result: Awaited<ReturnType<typeof scanLibrary>>;
+    try {
+      result = await scanLibrary(tmpDir);
+    } finally {
+      await chmod(sub, 0o755);
+    }
+
+    expect(result.removed).toBe(0);
+    const after = (db.prepare('SELECT COUNT(*) as n FROM tracks').get() as { n: number }).n;
+    expect(after).toBe(1);
+  });
+
+  it('cleans up play_history and favorites for a removed track without throwing', async () => {
+    const p = path.join(tmpDir, 'track.wav');
+    writeWav(p);
+    await scanLibrary(tmpDir);
+    const trackId = (db.prepare('SELECT id FROM tracks').get() as { id: number }).id;
+
+    const userId = Number(
+      db.prepare("INSERT INTO users (username, password_hash) VALUES ('u', 'x')").run().lastInsertRowid,
+    );
+    db.prepare('INSERT INTO play_history (user_id, track_id) VALUES (?, ?)').run(userId, trackId);
+    db.prepare("INSERT INTO favorites (user_id, item_type, item_id) VALUES (?, 'track', ?)").run(userId, trackId);
+
+    await unlink(p);
+    const result = await scanLibrary(tmpDir);
+
+    expect(result.removed).toBe(1);
+    expect((db.prepare('SELECT COUNT(*) as n FROM play_history').get() as { n: number }).n).toBe(0);
+    expect((db.prepare('SELECT COUNT(*) as n FROM favorites').get() as { n: number }).n).toBe(0);
+  });
+
+  it('detects a moved/renamed file by fingerprint and keeps its id and history', async () => {
+    const oldPath = path.join(tmpDir, 'old-name.wav');
+    writeWav(oldPath);
+    await scanLibrary(tmpDir);
+    const trackId = (db.prepare('SELECT id FROM tracks').get() as { id: number }).id;
+
+    const userId = Number(
+      db.prepare("INSERT INTO users (username, password_hash) VALUES ('u', 'x')").run().lastInsertRowid,
+    );
+    db.prepare('INSERT INTO play_history (user_id, track_id) VALUES (?, ?)').run(userId, trackId);
+
+    const newDir = path.join(tmpDir, 'Renamed Folder');
+    mkdirSync(newDir, { recursive: true });
+    const newPath = path.join(newDir, 'new-name.wav');
+    await rename(oldPath, newPath);
+
+    const result = await scanLibrary(tmpDir);
+
+    expect(result.renamed).toBe(1);
+    expect(result.removed).toBe(0);
+    expect(result.added).toBe(0);
+
+    const track = db.prepare('SELECT id, path FROM tracks').get() as { id: number; path: string };
+    expect(track.id).toBe(trackId);
+    expect(track.path).toBe(newPath);
+
+    const historyCount = (
+      db.prepare('SELECT COUNT(*) as n FROM play_history WHERE track_id = ?').get(trackId) as { n: number }
+    ).n;
+    expect(historyCount).toBe(1);
   });
 });
