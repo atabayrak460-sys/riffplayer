@@ -288,6 +288,10 @@ function getAlbumList2(req: FastifyRequest, reply: FastifyReply): void {
   let orderBy: string;
   let extraJoin = '';
   let extraWhere = '';
+  // Bound values for extraWhere's `?` placeholders (currently only used by
+  // 'byYear') — kept separate from `params` below so they can be spliced in
+  // at the right position regardless of which branch ran.
+  const extraParams: number[] = [];
 
   switch (type) {
     case 'newest':          orderBy = 'al.created_at DESC'; break;
@@ -295,8 +299,11 @@ function getAlbumList2(req: FastifyRequest, reply: FastifyReply): void {
     case 'alphabeticalByArtist': orderBy = 'ar.name, al.name'; break;
     case 'byYear':
       if (fromYear && toYear) {
-        const asc = Number(fromYear) <= Number(toYear);
-        extraWhere = `AND al.year BETWEEN ${Math.min(Number(fromYear), Number(toYear))} AND ${Math.max(Number(fromYear), Number(toYear))}`;
+        const fy = Number(fromYear);
+        const ty = Number(toYear);
+        const asc = fy <= ty;
+        extraWhere = 'AND al.year BETWEEN ? AND ?';
+        extraParams.push(Math.min(fy, ty), Math.max(fy, ty));
         orderBy = asc ? 'al.year ASC, al.name' : 'al.year DESC, al.name';
       } else {
         orderBy = 'al.year DESC, al.name';
@@ -322,7 +329,7 @@ function getAlbumList2(req: FastifyRequest, reply: FastifyReply): void {
   }
 
   const needsPlayHistory = type === 'recent' || type === 'frequent';
-  const params = needsPlayHistory ? [userId, userId] : [userId];
+  const params = [userId, ...(needsPlayHistory ? [userId] : []), ...extraParams];
 
   const albums = db
     .prepare(`

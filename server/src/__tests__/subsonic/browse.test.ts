@@ -147,6 +147,30 @@ describe('getAlbumList2', () => {
     const r = sr(res.body);
     expect(r.status).toBe('ok');
   });
+
+  it('returns albums within the given fromYear/toYear range (byYear)', async () => {
+    const res = await app.inject({ url: `/rest/getAlbumList2.view?${auth}&type=byYear&fromYear=2020&toYear=2025` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const list = (r.albumList2 as Record<string, unknown[]>).album;
+    expect(list.length).toBe(1); // seedLibrary's album is year 2024
+  });
+
+  it('excludes albums outside the given fromYear/toYear range (byYear)', async () => {
+    const res = await app.inject({ url: `/rest/getAlbumList2.view?${auth}&type=byYear&fromYear=1990&toYear=1999` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const list = (r.albumList2 as Record<string, unknown[]>).album;
+    expect(list.length).toBe(0);
+  });
+
+  it('handles a reversed fromYear/toYear range without error (byYear)', async () => {
+    const res = await app.inject({ url: `/rest/getAlbumList2.view?${auth}&type=byYear&fromYear=2025&toYear=2020` });
+    const r = sr(res.body);
+    expect(r.status).toBe('ok');
+    const list = (r.albumList2 as Record<string, unknown[]>).album;
+    expect(list.length).toBe(1);
+  });
 });
 
 describe('getMusicDirectory', () => {
