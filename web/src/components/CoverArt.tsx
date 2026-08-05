@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { coverArtUrl } from '../api/subsonic';
 import { getCoverBlob } from '../lib/offlineDb';
 
@@ -18,8 +18,13 @@ export function CoverArt({ id, size = 200, className = '', alt = '', fallback }:
   // artwork visible with no internet.
   const [state, setState] = useState<'network' | 'offline' | 'placeholder'>('network');
   const [offlineUrl, setOfflineUrl] = useState<string | null>(null);
+  // Tracks the current `id` so a handleError() lookup that's still in flight
+  // when `id` changes again can tell it's stale and skip applying its result
+  // — otherwise it can land afterward and apply a blob for the wrong cover.
+  const idRef = useRef(id);
 
   useEffect(() => {
+    idRef.current = id;
     setState('network');
     setOfflineUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -38,7 +43,9 @@ export function CoverArt({ id, size = 200, className = '', alt = '', fallback }:
       setState('placeholder');
       return;
     }
-    getCoverBlob(id).then((blob) => {
+    const requestedId = id;
+    getCoverBlob(requestedId).then((blob) => {
+      if (idRef.current !== requestedId) return; // id changed while this lookup was in flight
       if (blob) {
         setOfflineUrl(URL.createObjectURL(blob));
         setState('offline');
