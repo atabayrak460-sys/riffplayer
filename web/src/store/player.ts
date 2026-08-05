@@ -12,6 +12,21 @@ audio.preload = 'metadata';
 // revoked when playback moves to a different track — object URLs otherwise leak.
 let currentObjectUrl: string | null = null;
 
+// Incremented on every loadAndPlay() call. resolvePlaybackUrl() has variable
+// latency (IndexedDB lookup for a downloaded track vs. near-synchronous for a
+// streamed one), so a rapid skip can let an older, slower call resolve after
+// a newer one already took over — checking this after the await lets a
+// superseded call detect that and bail out instead of reverting audio.src.
+let loadGeneration = 0;
+
+// Detaches the scrobble-threshold `timeupdate` listener installed by the
+// most recent loadAndPlay() call that actually started playback, if it
+// hasn't fired yet. Replaced (never left dangling) on every track change —
+// otherwise a listener from a track skipped before its threshold stays
+// attached to the singleton audio element forever, and can later fire
+// scrobble() against whatever unrelated track happens to be playing then.
+let removeScrobbleListener: (() => void) | null = null;
+
 /** Prefer a locally downloaded copy so offline-played tracks need no network. */
 async function resolvePlaybackUrl(song: Song): Promise<string> {
   if (useDownloadsStore.getState().trackState(song.id) === 'downloaded') {
@@ -94,7 +109,10 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
   audio.addEventListener('pause', () => set({ playing: false }));
 
   async function loadAndPlay(song: Song): Promise<void> {
+    const generation = ++loadGeneration;
     const url = await resolvePlaybackUrl(song);
+    if (generation !== loadGeneration) return; // a newer loadAndPlay() call already took over
+
     if (audio.src !== url) {
       if (currentObjectUrl) {
         URL.revokeObjectURL(currentObjectUrl);
@@ -117,16 +135,21 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     audio.play().catch(() => {/* autoplay policy */});
     scrobble(song.id, false).catch(() => {/* best-effort */});
 
-    // Scrobble submission after 30 s or 50% played (whichever first)
+    // Scrobble submission after 30 s or 50% played (whichever first). Replace
+    // any listener left over from a track skipped before its own threshold
+    // fired, so at most one is ever attached and it always matches this track.
+    removeScrobbleListener?.();
     let scrobbled = false;
     const onTime = () => {
       if (!scrobbled && audio.currentTime >= Math.min(30, (audio.duration || 60) * 0.5)) {
         scrobbled = true;
         scrobble(song.id, true).catch(() => {});
         audio.removeEventListener('timeupdate', onTime);
+        removeScrobbleListener = null;
       }
     };
     audio.addEventListener('timeupdate', onTime);
+    removeScrobbleListener = () => audio.removeEventListener('timeupdate', onTime);
 
     // Media Session API
     if ('mediaSession' in navigator) {

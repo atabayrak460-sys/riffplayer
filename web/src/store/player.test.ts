@@ -5,6 +5,10 @@ import type { Song } from '../api/types';
 // doesn't exist in this project's node test environment — stub a minimal
 // fake before importing so the module (and its real store logic) loads.
 class FakeAudio {
+  /** The one instance loadAndPlay() actually talks to — player.ts creates it
+   * once at module load, so tests read state through this static reference
+   * rather than needing player.ts to export the audio element itself. */
+  static instance: FakeAudio;
   preload = '';
   src = '';
   volume = 1;
@@ -12,11 +16,22 @@ class FakeAudio {
   currentTime = 0;
   duration = 0;
   private listeners: Record<string, ((...a: unknown[]) => void)[]> = {};
+  constructor() {
+    FakeAudio.instance = this;
+  }
   addEventListener(type: string, cb: (...a: unknown[]) => void) {
     (this.listeners[type] ??= []).push(cb);
   }
   removeEventListener(type: string, cb: (...a: unknown[]) => void) {
     this.listeners[type] = (this.listeners[type] ?? []).filter((l) => l !== cb);
+  }
+  /** Fires every listener registered for `type`, e.g. simulating playback
+   * crossing the scrobble threshold via a 'timeupdate' event. */
+  emit(type: string) {
+    for (const l of this.listeners[type] ?? []) l();
+  }
+  listenerCount(type: string) {
+    return (this.listeners[type] ?? []).length;
   }
   play() {
     this.paused = false;
@@ -28,8 +43,43 @@ class FakeAudio {
   load() {}
 }
 vi.stubGlobal('Audio', FakeAudio);
+// Only used by the downloaded-track branch of resolvePlaybackUrl(); real
+// object-URL creation needs a browser. Extends the real URL (rather than
+// replacing the global outright) since other modules in the import graph
+// construct real `new URL(...)` instances.
+class StubURL extends URL {
+  static createObjectURL() {
+    return 'blob:fake';
+  }
+  static revokeObjectURL() {}
+}
+vi.stubGlobal('URL', StubURL);
+
+// Lets the race-condition tests below control exactly when a "downloaded
+// track" lookup resolves (and in what order), independent of call order —
+// vi.hoisted() so the map exists before vi.mock()'s factory runs.
+const { blobResolvers } = vi.hoisted(() => ({
+  blobResolvers: {} as Record<string, (v: { blob: Blob; mimeType: string } | null) => void>,
+}));
+vi.mock('../lib/offlineDb', () => ({
+  getTrackAudioBlob: (id: string) =>
+    new Promise((resolve) => {
+      blobResolvers[id] = resolve;
+    }),
+}));
+vi.mock('../api/subsonic', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/subsonic')>()),
+  scrobble: vi.fn().mockResolvedValue(undefined),
+}));
 
 const { usePlayerStore } = await import('./player');
+const { useDownloadsStore } = await import('./downloads');
+const { scrobble } = await import('../api/subsonic');
+
+/** Drains pending microtasks — loadAndPlay() chains two awaits
+ * (resolvePlaybackUrl awaiting getTrackAudioBlob) after a blobResolvers[id]
+ * call, so a plain `await Promise.resolve()` isn't reliably enough hops. */
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function song(id: string): Song {
   return {
@@ -235,5 +285,58 @@ describe('repeat-one manual override (Spotify parity)', () => {
     expect(usePlayerStore.getState().repeatMode).toBe('one');
     usePlayerStore.getState().toggleRepeat();
     expect(usePlayerStore.getState().repeatMode).toBe('off');
+  });
+});
+
+describe('loadAndPlay race conditions (#35 / #36)', () => {
+  beforeEach(() => {
+    useDownloadsStore.setState({ status: { 't:a': 'downloaded', 't:b': 'downloaded' } });
+  });
+
+  it('a slower, stale URL resolution does not override a track loaded after it (#36)', async () => {
+    const a = song('a');
+    const b = song('b');
+
+    usePlayerStore.getState().playSong(a, [a, b]); // starts resolving a's URL
+    usePlayerStore.getState().playSong(b, [a, b]); // supersedes it before a resolves
+
+    // Resolve the newer call (b) first, then the stale one (a) — the
+    // reverse of call order, simulating a's lookup finishing last.
+    blobResolvers['b']({ blob: {} as Blob, mimeType: 'audio/mpeg' });
+    await flush();
+    expect(FakeAudio.instance.src).toBe('blob:fake'); // b applied
+
+    blobResolvers['a']({ blob: {} as Blob, mimeType: 'audio/mpeg' });
+    await flush();
+    // a's stale resolution must not have reverted playback
+    expect(FakeAudio.instance.src).toBe('blob:fake');
+    expect(usePlayerStore.getState().currentSong?.id).toBe('b');
+  });
+
+  it('replaces (never stacks) the scrobble-threshold listener when skipped before it fires (#35)', async () => {
+    const a = song('a');
+    const b = song('b');
+
+    usePlayerStore.getState().playSong(a, [a, b]);
+    blobResolvers['a']({ blob: {} as Blob, mimeType: 'audio/mpeg' });
+    await flush();
+    const afterA = FakeAudio.instance.listenerCount('timeupdate');
+
+    // Skip to b before a's scrobble threshold (30s / 50%) is ever reached.
+    usePlayerStore.getState().playSong(b, [a, b]);
+    blobResolvers['b']({ blob: {} as Blob, mimeType: 'audio/mpeg' });
+    await flush();
+    const afterB = FakeAudio.instance.listenerCount('timeupdate');
+
+    // Same count, not +1 — a's stale listener was removed, not left dangling.
+    expect(afterB).toBe(afterA);
+
+    // Cross the threshold: only b (the actually-playing track) may scrobble.
+    FakeAudio.instance.currentTime = 31;
+    FakeAudio.instance.duration = 200;
+    FakeAudio.instance.emit('timeupdate');
+
+    expect(scrobble).toHaveBeenCalledWith('b', true);
+    expect(scrobble).not.toHaveBeenCalledWith('a', true);
   });
 });
