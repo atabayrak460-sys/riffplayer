@@ -33,7 +33,13 @@ class FakeAudio {
   listenerCount(type: string) {
     return (this.listeners[type] ?? []).length;
   }
+  /** Set by a test to simulate a browser autoplay-policy rejection. */
+  static rejectPlay = false;
   play() {
+    if (FakeAudio.rejectPlay) {
+      this.paused = true;
+      return Promise.reject(new Error('NotAllowedError'));
+    }
     this.paused = false;
     return Promise.resolve();
   }
@@ -46,12 +52,11 @@ vi.stubGlobal('Audio', FakeAudio);
 // Only used by the downloaded-track branch of resolvePlaybackUrl(); real
 // object-URL creation needs a browser. Extends the real URL (rather than
 // replacing the global outright) since other modules in the import graph
-// construct real `new URL(...)` instances.
+// construct real `new URL(...)` instances. Wrapped in vi.fn() so tests can
+// assert on create/revoke call counts, not just the (fixed) returned string.
 class StubURL extends URL {
-  static createObjectURL() {
-    return 'blob:fake';
-  }
-  static revokeObjectURL() {}
+  static createObjectURL = vi.fn(() => 'blob:fake');
+  static revokeObjectURL = vi.fn();
 }
 vi.stubGlobal('URL', StubURL);
 
@@ -408,6 +413,80 @@ describe('setVolume', () => {
 
     expect(FakeAudio.instance.volume).toBe(0.3);
     expect(usePlayerStore.getState().volume).toBe(0.3);
+  });
+});
+
+describe('loadAndPlay async behavior (#49)', () => {
+  beforeEach(() => {
+    useDownloadsStore.setState({ status: {} });
+    FakeAudio.rejectPlay = false;
+    StubURL.createObjectURL.mockClear();
+    StubURL.revokeObjectURL.mockClear();
+  });
+
+  it('applies ReplayGain track gain, converting dB to a linear volume scalar', async () => {
+    usePlayerStore.setState({ volume: 0.5 });
+    const a: Song = { ...song('a'), replayGainTrackGain: -6 };
+    usePlayerStore.getState().playSong(a, [a]);
+    await flush();
+
+    expect(FakeAudio.instance.volume).toBeCloseTo(0.5 * Math.pow(10, -6 / 20), 5);
+  });
+
+  it('clamps a ReplayGain-boosted volume at 1 rather than exceeding it', async () => {
+    usePlayerStore.setState({ volume: 1 });
+    const a: Song = { ...song('a'), replayGainTrackGain: 12 };
+    usePlayerStore.getState().playSong(a, [a]);
+    await flush();
+
+    expect(FakeAudio.instance.volume).toBe(1);
+  });
+
+  it('uses the plain user volume for a track with no ReplayGain tag', async () => {
+    usePlayerStore.setState({ volume: 0.7 });
+    usePlayerStore.getState().playSong(song('a'), [song('a')]);
+    await flush();
+
+    expect(FakeAudio.instance.volume).toBe(0.7);
+  });
+
+  it('does not create or revoke any object URL when playing a streamed (non-downloaded) track', async () => {
+    usePlayerStore.getState().playSong(song('a'), [song('a')]);
+    await flush();
+
+    expect(StubURL.createObjectURL).not.toHaveBeenCalled();
+    expect(StubURL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('revokes the previous object URL exactly once when switching between two downloaded tracks', async () => {
+    useDownloadsStore.setState({ status: { 't:a': 'downloaded', 't:b': 'downloaded' } });
+    const a = song('a'); const b = song('b');
+
+    // The real browser API returns a distinct string per call; give the stub
+    // the same property so `audio.src !== url` actually detects the switch
+    // (the mock otherwise always returns the same fixed string).
+    StubURL.createObjectURL.mockReturnValueOnce('blob:fake-a');
+    usePlayerStore.getState().playSong(a, [a, b]);
+    blobResolvers['a']({ blob: {} as Blob, mimeType: 'audio/mpeg' });
+    await flush();
+    expect(StubURL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(StubURL.revokeObjectURL).not.toHaveBeenCalled(); // nothing to revoke on the first track
+
+    StubURL.createObjectURL.mockReturnValueOnce('blob:fake-b');
+    usePlayerStore.getState().playSong(b, [a, b]);
+    blobResolvers['b']({ blob: {} as Blob, mimeType: 'audio/mpeg' });
+    await flush();
+    expect(StubURL.createObjectURL).toHaveBeenCalledTimes(2);
+    expect(StubURL.revokeObjectURL).toHaveBeenCalledTimes(1); // a's URL, released on switching to b
+    expect(StubURL.revokeObjectURL).toHaveBeenCalledWith('blob:fake-a');
+  });
+
+  it('does not throw synchronously or leave an unhandled rejection when audio.play() rejects (autoplay policy)', async () => {
+    FakeAudio.rejectPlay = true;
+    expect(() => usePlayerStore.getState().playSong(song('a'), [song('a')])).not.toThrow();
+    await flush();
+    // If loadAndPlay's `.catch()` on audio.play() were removed, the rejected
+    // promise above would surface as an unhandled rejection and fail this test.
   });
 });
 
