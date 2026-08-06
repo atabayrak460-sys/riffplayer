@@ -13,6 +13,7 @@ import {
   removePlaylistDownload,
   reconcileEvictedTracks,
   getTracksByIds,
+  getTrackAudioBlob,
 } from './offlineDb';
 import type { Song } from '../api/types';
 
@@ -132,7 +133,79 @@ describe('playlists', () => {
 
     await removePlaylistDownload('42');
 
+    // Not just "still downloaded" — the removed playlist's tag must actually
+    // be gone from retainedBy, leaving exactly the other playlist's tag.
     expect(await isTrackDownloaded('1')).toBe(true);
+    const all = await getAllDownloadedTracks();
+    expect(all[0].retainedBy).toEqual(['playlist:43']);
+  });
+});
+
+describe('multi-tag retain/release interaction (#4.9)', () => {
+  it('releases the audio blob only once every retain tag is gone, in either removal order', async () => {
+    // Order 1: playlist tag released first, then the individual one.
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'individual');
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'playlist:42');
+
+    await releaseTrack('1', 'playlist:42');
+    expect(await isTrackDownloaded('1')).toBe(true);
+    expect((await getTrackAudioBlob('1'))?.blob.size).toBe(BLOB.size);
+
+    await releaseTrack('1', 'individual');
+    expect(await isTrackDownloaded('1')).toBe(false);
+    expect(await getTrackAudioBlob('1')).toBeNull();
+    expect(await getAllDownloadedTracks()).toHaveLength(0);
+  });
+
+  it('releases the audio blob only once every retain tag is gone, in the reverse order', async () => {
+    // Order 2: individual tag released first, then the playlist one — via
+    // removePlaylistDownload, mirroring how the UI actually removes a
+    // playlist's offline copy rather than calling releaseTrack directly.
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'individual');
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'playlist:42');
+    await savePlaylist({ id: '42', name: 'Road Trip', downloadedAt: Date.now(), trackIds: ['1'] });
+
+    await releaseTrack('1', 'individual');
+    expect(await isTrackDownloaded('1')).toBe(true);
+    expect((await getTrackAudioBlob('1'))?.blob.size).toBe(BLOB.size);
+
+    await removePlaylistDownload('42');
+    expect(await isTrackDownloaded('1')).toBe(false);
+    expect(await getTrackAudioBlob('1')).toBeNull();
+  });
+
+  it('a track retained three ways (individual + two playlists) survives until the last tag is released', async () => {
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'individual');
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'playlist:42');
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'playlist:43');
+    let all = await getAllDownloadedTracks();
+    expect(all[0].retainedBy.sort()).toEqual(['individual', 'playlist:42', 'playlist:43']);
+
+    await releaseTrack('1', 'playlist:42');
+    all = await getAllDownloadedTracks();
+    expect(all[0].retainedBy.sort()).toEqual(['individual', 'playlist:43']);
+    expect(await isTrackDownloaded('1')).toBe(true);
+
+    await releaseTrack('1', 'individual');
+    all = await getAllDownloadedTracks();
+    expect(all[0].retainedBy).toEqual(['playlist:43']);
+    expect(await isTrackDownloaded('1')).toBe(true);
+
+    await releaseTrack('1', 'playlist:43');
+    expect(await isTrackDownloaded('1')).toBe(false);
+    expect(await getTrackAudioBlob('1')).toBeNull();
+  });
+
+  it('re-releasing an already-removed tag is a no-op and does not affect the remaining tag', async () => {
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'individual');
+    await saveTrack(song('1'), BLOB, 'audio/mpeg', 'playlist:42');
+
+    await releaseTrack('1', 'individual');
+    await releaseTrack('1', 'individual'); // already gone — must not touch playlist:42's retention
+
+    expect(await isTrackDownloaded('1')).toBe(true);
+    const all = await getAllDownloadedTracks();
+    expect(all[0].retainedBy).toEqual(['playlist:42']);
   });
 });
 
