@@ -3,45 +3,49 @@ import { getDb } from '../../../db/database.js';
 import { sendOk, sendError, SubsonicErrorCode } from '../response.js';
 import { xmlTag, artistAttrs, albumAttrs, songAttrs, toJson, type ArtistRow, type AlbumRow, type SongRow } from '../serialize.js';
 
-type Q = Record<string, string | undefined>;
+type Q = Record<string, string | string[] | undefined>;
 const p = (req: FastifyRequest) => ({ ...(req.query as Q), ...((req.body as Q) ?? {}) });
+// The Subsonic spec allows repeated `id`/`albumId`/`artistId` for multi-select
+// star/unstar — coerce whatever Fastify parsed (a bare string for one, an
+// array for several) into a uniform array. Same pattern as playlists.ts.
+const arr = (v: string | string[] | undefined): string[] => ([] as string[]).concat(v ?? []);
+const str = (v: string | string[] | undefined): string | undefined => (Array.isArray(v) ? v[0] : v);
 
 type ItemType = 'artist' | 'album' | 'track';
 
-function resolveItemType(req: FastifyRequest): { type: ItemType; id: number } | null {
+function resolveItems(req: FastifyRequest): { type: ItemType; id: number }[] {
   const { id, albumId, artistId } = p(req);
-  if (artistId) return { type: 'artist', id: Number(artistId) };
-  if (albumId)  return { type: 'album',  id: Number(albumId) };
-  if (id)       return { type: 'track',  id: Number(id) };
-  return null;
+  return [
+    ...arr(artistId).map((v) => ({ type: 'artist' as const, id: Number(v) })),
+    ...arr(albumId).map((v) => ({ type: 'album' as const, id: Number(v) })),
+    ...arr(id).map((v) => ({ type: 'track' as const, id: Number(v) })),
+  ];
 }
 
 function star(req: FastifyRequest, reply: FastifyReply): void {
-  const { f } = p(req);
-  const item = resolveItemType(req);
-  if (!item) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id, albumId, or artistId required' });
+  const f = str(p(req).f);
+  const items = resolveItems(req);
+  if (!items.length) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id, albumId, or artistId required' });
 
-  getDb()
-    .prepare('INSERT OR IGNORE INTO favorites (user_id, item_type, item_id) VALUES (?, ?, ?)')
-    .run(req.subsonicUser!.id, item.type, item.id);
+  const insert = getDb().prepare('INSERT OR IGNORE INTO favorites (user_id, item_type, item_id) VALUES (?, ?, ?)');
+  for (const item of items) insert.run(req.subsonicUser!.id, item.type, item.id);
 
   sendOk(reply, f);
 }
 
 function unstar(req: FastifyRequest, reply: FastifyReply): void {
-  const { f } = p(req);
-  const item = resolveItemType(req);
-  if (!item) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id, albumId, or artistId required' });
+  const f = str(p(req).f);
+  const items = resolveItems(req);
+  if (!items.length) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id, albumId, or artistId required' });
 
-  getDb()
-    .prepare('DELETE FROM favorites WHERE user_id = ? AND item_type = ? AND item_id = ?')
-    .run(req.subsonicUser!.id, item.type, item.id);
+  const del = getDb().prepare('DELETE FROM favorites WHERE user_id = ? AND item_type = ? AND item_id = ?');
+  for (const item of items) del.run(req.subsonicUser!.id, item.type, item.id);
 
   sendOk(reply, f);
 }
 
 function getStarred2(req: FastifyRequest, reply: FastifyReply): void {
-  const { f } = p(req);
+  const f = str(p(req).f);
   const db = getDb();
   const userId = req.subsonicUser!.id;
 
@@ -75,7 +79,7 @@ function getStarred2(req: FastifyRequest, reply: FastifyReply): void {
 
   const songs = db.prepare(`
     SELECT t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
-           t.format, t.path, t.added_at, t.album_id, t.artist_id,
+           t.format, t.path, t.added_at, t.album_id, t.artist_id, t.genre,
            t.replaygain_track, t.replaygain_album,
            ar.name AS artist_name, al.name AS album_name, al.year,
            fav.created_at AS starred

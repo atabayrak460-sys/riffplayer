@@ -75,6 +75,47 @@ describe('star / unstar / getStarred2', () => {
     expect(starred.artist.length).toBe(0);
   });
 
+  it('stars multiple tracks in one request (repeated id)', async () => {
+    const db = getDb();
+    const trackId2 = Number(
+      db.prepare('INSERT INTO tracks (title, album_id, artist_id, track_no, duration_s, path, size, format, bitrate) VALUES (?, ?, ?, 2, 200, ?, 1024, ?, 320)')
+        .run('Test Track 2', ids.albumId, ids.artistId, '/music/test2.mp3', 'MPEG').lastInsertRowid,
+    );
+
+    await app.inject({ url: `/rest/star.view?${auth}&id=${ids.trackId}&id=${trackId2}` });
+
+    const res = await app.inject({ url: `/rest/getStarred2.view?${auth}` });
+    const starred = sr(res.body).starred2 as Record<string, unknown[]>;
+    expect(starred.song.length).toBe(2);
+  });
+
+  it('stars a mix of track, album, and artist ids in one request', async () => {
+    await app.inject({
+      url: `/rest/star.view?${auth}&id=${ids.trackId}&albumId=${ids.albumId}&artistId=${ids.artistId}`,
+    });
+
+    const res = await app.inject({ url: `/rest/getStarred2.view?${auth}` });
+    const starred = sr(res.body).starred2 as Record<string, unknown[]>;
+    expect(starred.song.length).toBe(1);
+    expect(starred.album.length).toBe(1);
+    expect(starred.artist.length).toBe(1);
+  });
+
+  it('unstars multiple tracks in one request (repeated id)', async () => {
+    const db = getDb();
+    const trackId2 = Number(
+      db.prepare('INSERT INTO tracks (title, album_id, artist_id, track_no, duration_s, path, size, format, bitrate) VALUES (?, ?, ?, 2, 200, ?, 1024, ?, 320)')
+        .run('Test Track 2', ids.albumId, ids.artistId, '/music/test2.mp3', 'MPEG').lastInsertRowid,
+    );
+    await app.inject({ url: `/rest/star.view?${auth}&id=${ids.trackId}&id=${trackId2}` });
+
+    await app.inject({ url: `/rest/unstar.view?${auth}&id=${ids.trackId}&id=${trackId2}` });
+
+    const res = await app.inject({ url: `/rest/getStarred2.view?${auth}` });
+    const starred = sr(res.body).starred2 as Record<string, unknown[]>;
+    expect(starred.song.length).toBe(0);
+  });
+
   it('returns MISSING_PARAM when no id is supplied to star.view', async () => {
     const res = await app.inject({ url: `/rest/star.view?${auth}` });
     const r = sr(res.body);

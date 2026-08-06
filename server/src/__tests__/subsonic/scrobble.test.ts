@@ -108,6 +108,34 @@ describe('scrobble.view', () => {
     expect(JSON.parse(res.body)['subsonic-response'].status).toBe('ok');
     expect(playHistory()).toHaveLength(0);
   });
+
+  it('logs multiple plays in one request (repeated id), with per-id time', async () => {
+    const db = getDb();
+    const artistId = Number(db.prepare("INSERT INTO artists (name) VALUES ('A2')").run().lastInsertRowid);
+    const albumId  = Number(db.prepare("INSERT INTO albums (name, artist_id) VALUES ('B2', ?)").run(artistId).lastInsertRowid);
+    const trackId2 = Number(
+      db.prepare('INSERT INTO tracks (title, album_id, artist_id, path, size) VALUES (?, ?, ?, ?, 44)')
+        .run('T2', albumId, artistId, path.join(tmpDir, 'nonexistent-but-fine-for-a-DB-only-check.wav')).lastInsertRowid,
+    );
+    const t1 = 1_700_000_000_000;
+    const t2 = 1_700_000_100_000;
+
+    const res = await app.inject({
+      url: `/rest/scrobble.view?${auth}&id=${trackId}&id=${trackId2}&time=${t1}&time=${t2}`,
+    });
+    expect(JSON.parse(res.body)['subsonic-response'].status).toBe('ok');
+
+    const rows = playHistory();
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.track_id === trackId)?.played_at).toBe(Math.floor(t1 / 1000));
+    expect(rows.find((r) => r.track_id === trackId2)?.played_at).toBe(Math.floor(t2 / 1000));
+  });
+
+  it('skips unknown ids in a batch but still scrobbles the known ones', async () => {
+    const res = await app.inject({ url: `/rest/scrobble.view?${auth}&id=${trackId}&id=99999` });
+    expect(JSON.parse(res.body)['subsonic-response'].status).toBe('ok');
+    expect(playHistory()).toHaveLength(1);
+  });
 });
 
 // ── stream.view play logging ──────────────────────────────────────────────────
