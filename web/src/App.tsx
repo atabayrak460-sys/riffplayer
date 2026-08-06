@@ -3,6 +3,7 @@ import { Navigate, createBrowserRouter, RouterProvider, Outlet } from 'react-rou
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './store/auth';
 import { Layout } from './components/Layout';
+import { RouteErrorPage } from './components/RouteErrorPage';
 import { LoginPage } from './pages/LoginPage';
 import { AlbumsPage } from './pages/AlbumsPage';
 
@@ -45,9 +46,10 @@ function ProtectedRoute() {
 }
 
 const router = createBrowserRouter([
-  { path: '/login', element: <LoginPage /> },
+  { path: '/login', element: <LoginPage />, errorElement: <RouteErrorPage /> },
   {
     element: <ProtectedRoute />,
+    errorElement: <RouteErrorPage />,
     children: [
       {
         element: <Layout />,
