@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -11,11 +11,11 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
   getPlaylist, renamePlaylist, setPlaylistDescription, deletePlaylist,
-  reorderPlaylistTracks, uploadPlaylistCover, getPlaylistTrackDates,
+  reorderPlaylistTracks, uploadPlaylistCover, removePlaylistCover, getPlaylistTrackDates,
 } from '../api/subsonic';
 import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
-import { CoverArt } from '../components/CoverArt';
+import { CoverUploadControl } from '../components/CoverUploadControl';
 import { PlaylistCover } from '../components/StockCovers';
 import { SongRow } from '../components/SongRow';
 import { DownloadButton } from '../components/DownloadButton';
@@ -64,7 +64,6 @@ export function PlaylistDetailPage() {
   const downloadState = useDownloadsStore((s) => (id ? s.playlistState(id) : undefined));
   const requestDownload = useDownloadsStore((s) => s.requestDownload);
   const removePlaylistDownload = useDownloadsStore((s) => s.removePlaylistDownload);
-  const fileRef = useRef<HTMLInputElement>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [editingDescription, setEditingDescription] = useState(false);
@@ -140,6 +139,10 @@ export function PlaylistDetailPage() {
     mutationFn: (file: File) => uploadPlaylistCover(id!, file),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['playlist', id] }),
   });
+  const removeCoverMutation = useMutation({
+    mutationFn: () => removePlaylistCover(id!),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['playlist', id] }),
+  });
   const coverError = coverMutation.isError
     ? coverMutation.error instanceof Error
       ? coverMutation.error.message
@@ -179,38 +182,20 @@ export function PlaylistDetailPage() {
     <div className="p-6">
       {/* Header */}
       <div className="flex gap-6 mb-6">
-        <div className="relative flex-shrink-0 group/cover">
-          <CoverArt
-            id={playlist.coverArt}
-            size={440}
-            className="w-56 h-56 rounded-lg object-cover shadow-xl"
-            alt={playlist.name}
-            fallback={<PlaylistCover className="w-full h-full" />}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            title="Upload cover"
-            className="absolute inset-0 bg-black/60 rounded-lg flex items-center justify-center opacity-0 group-hover/cover:opacity-100 transition-opacity"
-          >
-            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-            </svg>
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) coverMutation.mutate(f);
-              e.target.value = '';
-            }}
-          />
-          {coverError && (
-            <p className="absolute top-full mt-1 text-xs text-red-400 w-56">{coverError}</p>
-          )}
-        </div>
+        <CoverUploadControl
+          coverId={playlist.coverArt}
+          coverSize={440}
+          coverClassName="w-56 h-56 rounded-lg object-cover shadow-xl"
+          alt={playlist.name}
+          fallback={<PlaylistCover className="w-full h-full" />}
+          shape="square"
+          hasCover={!!playlist.coverArt}
+          uploadTitle="Upload cover"
+          removeTitle="Reset to default cover"
+          onUpload={(file) => coverMutation.mutate(file)}
+          onRemove={() => removeCoverMutation.mutate()}
+          error={coverError}
+        />
 
         <div className="flex flex-col flex-1 min-w-0 h-56">
           <p className="text-xs uppercase tracking-widest text-zinc-400">Playlist</p>

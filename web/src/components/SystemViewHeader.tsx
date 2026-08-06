@@ -1,10 +1,10 @@
-import { useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { useState, type ComponentType, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getSystemViewSettings, setSystemViewDescription, uploadSystemViewCover, removeSystemViewCover,
   type SystemViewKey,
 } from '../api/subsonic';
-import { CoverArt } from './CoverArt';
+import { CoverUploadControl } from './CoverUploadControl';
 
 interface Props {
   viewKey: SystemViewKey;
@@ -19,7 +19,6 @@ interface Props {
 
 export function SystemViewHeader({ viewKey, title, defaultDescription, StockCover, meta }: Props) {
   const qc = useQueryClient();
-  const fileRef = useRef<HTMLInputElement>(null);
   const [editingDescription, setEditingDescription] = useState(false);
   const [descriptionValue, setDescriptionValue] = useState('');
 
@@ -56,49 +55,20 @@ export function SystemViewHeader({ viewKey, title, defaultDescription, StockCove
 
   return (
     <div className="flex gap-6 mb-6">
-      <div className="relative flex-shrink-0 group/cover">
-        <CoverArt
-          id={hasCover ? `sv-${viewKey}` : undefined}
-          size={440}
-          className="w-56 h-56 rounded-lg object-cover shadow-xl"
-          alt={title}
-          fallback={<StockCover className="w-full h-full" />}
-        />
-        <button
-          onClick={() => fileRef.current?.click()}
-          title="Upload cover"
-          className="absolute inset-0 bg-black/60 rounded-lg flex items-center justify-center opacity-0 group-hover/cover:opacity-100 transition-opacity"
-        >
-          <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-          </svg>
-        </button>
-        {hasCover && (
-          <button
-            onClick={() => removeCoverMutation.mutate()}
-            title="Reset to default cover"
-            className="absolute top-2 right-2 w-7 h-7 rounded-full bg-zinc-900/90 border border-zinc-700 flex items-center justify-center text-zinc-400 hover:text-red-400 opacity-0 group-hover/cover:opacity-100 transition-opacity"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-            </svg>
-          </button>
-        )}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) coverMutation.mutate(f);
-            e.target.value = '';
-          }}
-        />
-        {coverError && (
-          <p className="absolute top-full mt-1 text-xs text-red-400 w-56">{coverError}</p>
-        )}
-      </div>
+      <CoverUploadControl
+        coverId={hasCover ? `sv-${viewKey}` : undefined}
+        coverSize={440}
+        coverClassName="w-56 h-56 rounded-lg object-cover shadow-xl"
+        alt={title}
+        fallback={<StockCover className="w-full h-full" />}
+        shape="square"
+        hasCover={hasCover}
+        uploadTitle="Upload cover"
+        removeTitle="Reset to default cover"
+        onUpload={(file) => coverMutation.mutate(file)}
+        onRemove={() => removeCoverMutation.mutate()}
+        error={coverError}
+      />
 
       <div className="flex flex-col flex-1 min-w-0 h-56">
         <h1 className="text-3xl font-bold text-white">{title}</h1>

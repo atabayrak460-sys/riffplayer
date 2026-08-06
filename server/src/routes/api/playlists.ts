@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, writeFile, rm } from 'fs/promises';
 import path from 'path';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../db/database.js';
@@ -101,6 +101,28 @@ export async function playlistsPlugin(app: FastifyInstance): Promise<void> {
       db.prepare('UPDATE playlists SET cover_path = ?, updated_at = unixepoch() WHERE id = ?').run(
         coverPath, playlistId,
       );
+      reply.send({ ok: true });
+    },
+  );
+
+  // DELETE /api/v1/playlists/:id/cover — reset to the stock cover
+  app.delete(
+    '/playlists/:id/cover',
+    { preHandler: apiAuth },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const playlistId = Number((req.params as { id: string }).id);
+      const db = getDb();
+      const userId = req.subsonicUser!.id;
+
+      const playlist = db
+        .prepare('SELECT id, cover_path FROM playlists WHERE id = ? AND owner_id = ?')
+        .get(playlistId, userId) as { id: number; cover_path: string | null } | undefined;
+      if (!playlist) return jsonError(reply, 404, 'Playlist not found or not owned');
+
+      if (playlist.cover_path) {
+        await rm(playlist.cover_path, { force: true });
+      }
+      db.prepare('UPDATE playlists SET cover_path = NULL, updated_at = unixepoch() WHERE id = ?').run(playlistId);
       reply.send({ ok: true });
     },
   );

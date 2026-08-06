@@ -307,6 +307,10 @@ export async function uploadPlaylistCover(playlistId: string, file: File): Promi
   await apiPostForm(`playlists/${playlistId}/cover`, form);
 }
 
+export async function removePlaylistCover(playlistId: string): Promise<void> {
+  await apiDelete(`playlists/${playlistId}/cover`);
+}
+
 export async function uploadArtistCover(artistId: string, file: File): Promise<void> {
   const form = new FormData();
   form.append('file', file);
