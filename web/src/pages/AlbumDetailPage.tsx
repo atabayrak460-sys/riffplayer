@@ -23,7 +23,9 @@ function formatDuration(s: number) {
 
 export function AlbumDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { playQueue, playNext, addToQueue } = usePlayerStore();
+  const playQueue = usePlayerStore((s) => s.playQueue);
+  const playNext = usePlayerStore((s) => s.playNext);
+  const addToQueue = usePlayerStore((s) => s.addToQueue);
   const requestDownload = useDownloadsStore((s) => s.requestDownload);
   const { menu, openAt, close } = useContextMenu();
 

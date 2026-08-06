@@ -92,8 +92,12 @@ function QueueItem({ song, index, isCurrent, onRemove, onPlay }: QueueItemProps)
 }
 
 export function QueuePage() {
-  const { queue, queueIndex, reorderQueue, removeFromQueue, clearQueue, playQueue } =
-    usePlayerStore();
+  const queue = usePlayerStore((s) => s.queue);
+  const queueIndex = usePlayerStore((s) => s.queueIndex);
+  const reorderQueue = usePlayerStore((s) => s.reorderQueue);
+  const removeFromQueue = usePlayerStore((s) => s.removeFromQueue);
+  const clearQueue = usePlayerStore((s) => s.clearQueue);
+  const playQueue = usePlayerStore((s) => s.playQueue);
 
   const sensors = useSensors(
     useSensor(PointerSensor),

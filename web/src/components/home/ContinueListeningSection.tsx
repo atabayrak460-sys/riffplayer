@@ -6,7 +6,7 @@ import { AlbumCard } from '../AlbumCard';
 import { HomeRow } from '../HomeRow';
 
 export function ContinueListeningSection() {
-  const { playQueue } = usePlayerStore();
+  const playQueue = usePlayerStore((s) => s.playQueue);
   const { data: lastPlayed } = useQuery({ queryKey: ['home-last-played'], queryFn: getLastPlayed });
   const { data: recentAlbums = [] } = useQuery({
     queryKey: ['home-recent-albums'],

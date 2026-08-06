@@ -13,22 +13,20 @@ function formatTime(s: number) {
 }
 
 export function PlayerBar() {
-  const {
-    currentSong,
-    playing,
-    currentTime,
-    duration,
-    volume,
-    repeatMode,
-    shuffle,
-    togglePlay,
-    next,
-    prev,
-    seek,
-    setVolume,
-    toggleRepeat,
-    toggleShuffle,
-  } = usePlayerStore();
+  const currentSong = usePlayerStore((s) => s.currentSong);
+  const playing = usePlayerStore((s) => s.playing);
+  const currentTime = usePlayerStore((s) => s.currentTime);
+  const duration = usePlayerStore((s) => s.duration);
+  const volume = usePlayerStore((s) => s.volume);
+  const repeatMode = usePlayerStore((s) => s.repeatMode);
+  const shuffle = usePlayerStore((s) => s.shuffle);
+  const togglePlay = usePlayerStore((s) => s.togglePlay);
+  const next = usePlayerStore((s) => s.next);
+  const prev = usePlayerStore((s) => s.prev);
+  const seek = usePlayerStore((s) => s.seek);
+  const setVolume = usePlayerStore((s) => s.setVolume);
+  const toggleRepeat = usePlayerStore((s) => s.toggleRepeat);
+  const toggleShuffle = usePlayerStore((s) => s.toggleShuffle);
 
   const seekRef = useRef<HTMLInputElement>(null);
   const [showLyrics, setShowLyrics] = useState(false);

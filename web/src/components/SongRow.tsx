@@ -55,7 +55,11 @@ export function SongRow({
   song, queue, index, showAlbum = false, addedAt, condensed = false, condensedSubtitle,
 }: Props) {
   const navigate = useNavigate();
-  const { playSong, currentSong, playing, playNext, addToQueue } = usePlayerStore();
+  const playSong = usePlayerStore((s) => s.playSong);
+  const currentSong = usePlayerStore((s) => s.currentSong);
+  const playing = usePlayerStore((s) => s.playing);
+  const playNext = usePlayerStore((s) => s.playNext);
+  const addToQueue = usePlayerStore((s) => s.addToQueue);
   const isCurrent = currentSong?.id === song.id;
   const downloadState = useDownloadsStore((s) => s.trackState(song.id));
   const requestDownload = useDownloadsStore((s) => s.requestDownload);

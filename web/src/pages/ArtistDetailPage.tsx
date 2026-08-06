@@ -14,7 +14,7 @@ type Tab = 'albums' | 'songs';
 
 export function ArtistDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { playQueue } = usePlayerStore();
+  const playQueue = usePlayerStore((s) => s.playQueue);
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();

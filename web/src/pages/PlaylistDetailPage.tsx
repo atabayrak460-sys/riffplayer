@@ -60,7 +60,7 @@ export function PlaylistDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { playQueue } = usePlayerStore();
+  const playQueue = usePlayerStore((s) => s.playQueue);
   const downloadState = useDownloadsStore((s) => (id ? s.playlistState(id) : undefined));
   const requestDownload = useDownloadsStore((s) => s.requestDownload);
   const removePlaylistDownload = useDownloadsStore((s) => s.removePlaylistDownload);

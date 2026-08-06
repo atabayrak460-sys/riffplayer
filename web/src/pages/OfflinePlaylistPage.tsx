@@ -11,7 +11,7 @@ import { DownloadButton } from '../components/DownloadButton';
 /** Read-only offline view of a downloaded playlist — not editable, works with no network. */
 export function OfflinePlaylistPage() {
   const { id } = useParams<{ id: string }>();
-  const { playQueue } = usePlayerStore();
+  const playQueue = usePlayerStore((s) => s.playQueue);
   const removePlaylistDownload = useDownloadsStore((s) => s.removePlaylistDownload);
 
   const { data: playlist, isLoading: loadingPlaylist } = useQuery({

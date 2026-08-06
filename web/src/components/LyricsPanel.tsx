@@ -8,7 +8,8 @@ interface Props {
 }
 
 export function LyricsPanel({ onClose }: Props) {
-  const { currentSong, currentTime } = usePlayerStore();
+  const currentSong = usePlayerStore((s) => s.currentSong);
+  const currentTime = usePlayerStore((s) => s.currentTime);
   const activeLyricRef = useRef<HTMLParagraphElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 

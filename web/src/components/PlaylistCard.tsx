@@ -13,7 +13,7 @@ interface Props {
 }
 
 export function PlaylistCard({ pl, onDelete }: Props) {
-  const { playQueue } = usePlayerStore();
+  const playQueue = usePlayerStore((s) => s.playQueue);
   const downloadState = useDownloadsStore((s) => s.playlistState(pl.id));
   const requestDownload = useDownloadsStore((s) => s.requestDownload);
   const removePlaylistDownload = useDownloadsStore((s) => s.removePlaylistDownload);

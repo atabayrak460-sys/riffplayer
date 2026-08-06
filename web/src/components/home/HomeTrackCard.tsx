@@ -8,7 +8,8 @@ interface Props {
 }
 
 export function HomeTrackCard({ song, queue }: Props) {
-  const { playSong, currentSong } = usePlayerStore();
+  const playSong = usePlayerStore((s) => s.playSong);
+  const currentSong = usePlayerStore((s) => s.currentSong);
   const isCurrent = currentSong?.id === song.id;
 
   return (
