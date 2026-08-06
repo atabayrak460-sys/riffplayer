@@ -174,20 +174,31 @@ describe('getAlbumList2', () => {
 });
 
 describe('getMusicDirectory', () => {
-  it('browses an artist directory', async () => {
+  it('browses an artist directory, returning its album as the child', async () => {
     const res = await app.inject({ url: `/rest/getMusicDirectory.view?${auth}&id=${ids.artistId}` });
     const r = sr(res.body);
     expect(r.status).toBe('ok');
     const dir = r.directory as Record<string, unknown>;
-    expect((dir.child as unknown[]).length).toBe(1);
+    const children = dir.child as Record<string, unknown>[];
+    expect(children.length).toBe(1);
+    // Assert identity, not just count — with a fixture where artist/album ids
+    // collided, a count-only assertion passed regardless of which branch
+    // (artist-with-albums vs album-with-songs) actually ran.
+    expect(children[0].id).toBe(String(ids.albumId));
+    expect(children[0].isDir).toBe(true);
+    expect(children[0].name).toBe('Test Album');
   });
 
-  it('browses an album directory', async () => {
+  it('browses an album directory, returning its track as the child', async () => {
     const res = await app.inject({ url: `/rest/getMusicDirectory.view?${auth}&id=${ids.albumId}` });
     const r = sr(res.body);
     expect(r.status).toBe('ok');
     const dir = r.directory as Record<string, unknown>;
-    expect((dir.child as unknown[]).length).toBe(1);
+    const children = dir.child as Record<string, unknown>[];
+    expect(children.length).toBe(1);
+    expect(children[0].id).toBe(String(ids.trackId));
+    expect(children[0].isDir).toBe(false);
+    expect(children[0].title).toBe('Test Track');
   });
 
   it('returns DATA_NOT_FOUND for unknown directory id', async () => {
