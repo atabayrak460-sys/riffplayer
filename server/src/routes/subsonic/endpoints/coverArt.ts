@@ -98,7 +98,37 @@ async function fetchFromCoverArtArchive(
   }
 }
 
+// Coalesces concurrent requests for the same not-yet-cached album's cover
+// art. Without this, several simultaneous requests for the same album (e.g.
+// a grid view loading many albums at once, or a freshly emptied cache) would
+// each independently re-parse the track file or re-fetch from Cover Art
+// Archive and race to write the same cache file — not corruption, but
+// wasted CPU and network. Checked-and-set synchronously (no `await` in
+// between), so it's safe even for requests handled back to back.
+const inFlightExtractions = new Map<number, Promise<{ filePath: string; mime: string } | null>>();
+
+/** Primarily for tests — the number of album covers currently being
+ * extracted, to verify concurrent requests for the same album coalesce into
+ * a single in-flight entry rather than each starting their own. */
+export function getInFlightExtractionCount(): number {
+  return inFlightExtractions.size;
+}
+
 async function extractAndCacheAlbumArt(
+  albumId: number,
+  coversDir: string,
+): Promise<{ filePath: string; mime: string } | null> {
+  const inFlight = inFlightExtractions.get(albumId);
+  if (inFlight) return inFlight;
+
+  const promise = doExtractAndCacheAlbumArt(albumId, coversDir).finally(() => {
+    inFlightExtractions.delete(albumId);
+  });
+  inFlightExtractions.set(albumId, promise);
+  return promise;
+}
+
+async function doExtractAndCacheAlbumArt(
   albumId: number,
   coversDir: string,
 ): Promise<{ filePath: string; mime: string } | null> {

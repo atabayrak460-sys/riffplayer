@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../app.js';
 import { closeDb, getDb } from '../../db/database.js';
 import { authParams } from './helpers.js';
+import { getInFlightExtractionCount } from '../../routes/subsonic/endpoints/coverArt.js';
 
 /**
  * Build a minimal ID3v2.3 binary containing a single APIC (attached picture)
@@ -260,6 +261,37 @@ describe('getCoverArt.view — embedded art MIME normalisation', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toMatch(/image\/jpeg/);
     expect(res.rawPayload.length).toBeGreaterThan(0);
+  });
+
+  it('coalesces concurrent requests for the same uncached album into a single in-flight extraction', async () => {
+    const filePath = path.join(tmpDir, 'coalesce.mp3');
+    writeFileSync(filePath, buildId3WithApic('image/jpeg', tinyJpeg));
+    const albumId = await insertAlbumWithTrack('Coalesce', filePath);
+
+    const requests = Array.from({ length: 5 }, () =>
+      app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}` }),
+    );
+
+    // Poll briefly for the extraction to actually start, then assert only
+    // one is ever in flight despite 5 concurrent callers for the same album.
+    let sawInFlight = false;
+    for (let i = 0; i < 20; i++) {
+      const n = getInFlightExtractionCount();
+      if (n > 0) {
+        sawInFlight = true;
+        expect(n).toBe(1);
+        break;
+      }
+      await new Promise((r) => setImmediate(r));
+    }
+    expect(sawInFlight).toBe(true);
+
+    const results = await Promise.all(requests);
+    for (const res of results) {
+      expect(res.statusCode).toBe(200);
+      expect(res.rawPayload.equals(results[0].rawPayload)).toBe(true);
+    }
+    expect(getInFlightExtractionCount()).toBe(0);
   });
 });
 
