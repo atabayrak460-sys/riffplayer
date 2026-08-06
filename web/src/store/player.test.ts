@@ -288,6 +288,129 @@ describe('repeat-one manual override (Spotify parity)', () => {
   });
 });
 
+describe('removeFromQueue', () => {
+  it('removes a track before the current index and decrements queueIndex to keep pointing at the same song', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b'), song('c')], queueIndex: 2, currentSong: song('c') });
+    usePlayerStore.getState().removeFromQueue(0);
+
+    const { queue, queueIndex, currentSong } = usePlayerStore.getState();
+    expect(queue.map((s) => s.id)).toEqual(['b', 'c']);
+    expect(queueIndex).toBe(1); // still pointing at 'c'
+    expect(currentSong?.id).toBe('c'); // untouched — only the currently-playing track's own removal clears it
+  });
+
+  it('removes a track after the current index without moving queueIndex', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b'), song('c')], queueIndex: 0 });
+    usePlayerStore.getState().removeFromQueue(2);
+
+    const { queue, queueIndex } = usePlayerStore.getState();
+    expect(queue.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(queueIndex).toBe(0);
+  });
+
+  it('removing the currently playing track clears playback and stops the audio element', () => {
+    usePlayerStore.setState({
+      queue: [song('a'), song('b'), song('c')], queueIndex: 1, currentSong: song('b'), playing: true,
+    });
+    FakeAudio.instance.paused = false;
+    usePlayerStore.getState().removeFromQueue(1);
+
+    const { queue, queueIndex, currentSong, playing } = usePlayerStore.getState();
+    expect(queue.map((s) => s.id)).toEqual(['a', 'c']);
+    expect(queueIndex).toBe(-1);
+    expect(currentSong).toBeNull();
+    expect(playing).toBe(false);
+    expect(FakeAudio.instance.paused).toBe(true);
+  });
+
+  it('also removes the matching entry from originalQueue (shuffle active)', () => {
+    const a = song('a'); const b = song('b'); const c = song('c');
+    usePlayerStore.setState({ queue: [a, b, c], queueIndex: 0, originalQueue: [c, a, b] });
+    usePlayerStore.getState().removeFromQueue(2); // removes 'c' from the (shuffled) queue
+
+    expect(usePlayerStore.getState().originalQueue?.map((s) => s.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('reorderQueue', () => {
+  it('branch: moving the currently-playing track itself — queueIndex follows it to `to`', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b'), song('c'), song('d')], queueIndex: 1 });
+    usePlayerStore.getState().reorderQueue(1, 3);
+
+    const { queue, queueIndex } = usePlayerStore.getState();
+    expect(queue.map((s) => s.id)).toEqual(['a', 'c', 'd', 'b']);
+    expect(queueIndex).toBe(3);
+    expect(queue[queueIndex].id).toBe('b');
+  });
+
+  it('branch: a track moves from before to at-or-past the current index — queueIndex shifts down by one', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b'), song('c'), song('d')], queueIndex: 2 });
+    usePlayerStore.getState().reorderQueue(0, 2);
+
+    const { queue, queueIndex } = usePlayerStore.getState();
+    expect(queue.map((s) => s.id)).toEqual(['b', 'c', 'a', 'd']);
+    expect(queueIndex).toBe(1);
+    expect(queue[queueIndex].id).toBe('c'); // still points at the same song
+  });
+
+  it('branch: a track moves from after to at-or-before the current index — queueIndex shifts up by one', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b'), song('c'), song('d')], queueIndex: 1 });
+    usePlayerStore.getState().reorderQueue(3, 0);
+
+    const { queue, queueIndex } = usePlayerStore.getState();
+    expect(queue.map((s) => s.id)).toEqual(['d', 'a', 'b', 'c']);
+    expect(queueIndex).toBe(2);
+    expect(queue[queueIndex].id).toBe('b'); // still points at the same song
+  });
+
+  it('a reorder entirely on one side of the current index leaves queueIndex untouched', () => {
+    usePlayerStore.setState({ queue: [song('a'), song('b'), song('c'), song('d')], queueIndex: 2 });
+    usePlayerStore.getState().reorderQueue(0, 1);
+
+    const { queue, queueIndex } = usePlayerStore.getState();
+    expect(queue.map((s) => s.id)).toEqual(['b', 'a', 'c', 'd']);
+    expect(queueIndex).toBe(2);
+    expect(queue[queueIndex].id).toBe('c'); // still points at the same song
+  });
+});
+
+describe('clearQueue', () => {
+  it('empties the queue, resets position and current song, and pauses the audio element', () => {
+    usePlayerStore.setState({
+      queue: [song('a'), song('b')], queueIndex: 1, currentSong: song('b'), playing: true,
+      originalQueue: [song('b'), song('a')],
+    });
+    FakeAudio.instance.paused = false;
+    usePlayerStore.getState().clearQueue();
+
+    const { queue, queueIndex, currentSong, playing, originalQueue } = usePlayerStore.getState();
+    expect(queue).toEqual([]);
+    expect(queueIndex).toBe(-1);
+    expect(currentSong).toBeNull();
+    expect(playing).toBe(false);
+    expect(originalQueue).toBeNull();
+    expect(FakeAudio.instance.paused).toBe(true);
+  });
+});
+
+describe('seek', () => {
+  it('updates both the audio element and the store currentTime', () => {
+    usePlayerStore.getState().seek(42.5);
+
+    expect(FakeAudio.instance.currentTime).toBe(42.5);
+    expect(usePlayerStore.getState().currentTime).toBe(42.5);
+  });
+});
+
+describe('setVolume', () => {
+  it('updates both the audio element and the store volume', () => {
+    usePlayerStore.getState().setVolume(0.3);
+
+    expect(FakeAudio.instance.volume).toBe(0.3);
+    expect(usePlayerStore.getState().volume).toBe(0.3);
+  });
+});
+
 describe('loadAndPlay race conditions (#35 / #36)', () => {
   beforeEach(() => {
     useDownloadsStore.setState({ status: { 't:a': 'downloaded', 't:b': 'downloaded' } });
