@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { NowPlayingPanel } from './NowPlayingPanel';
@@ -32,7 +32,9 @@ export function Layout() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <Outlet />
+          <Suspense fallback={<div className="p-6 text-zinc-400 text-sm">Loading…</div>}>
+            <Outlet />
+          </Suspense>
         </main>
         <NowPlayingPanel />
       </div>

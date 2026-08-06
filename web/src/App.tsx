@@ -1,30 +1,36 @@
+import { lazy } from 'react';
 import { Navigate, createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './store/auth';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
-import { HomePage } from './pages/HomePage';
 import { AlbumsPage } from './pages/AlbumsPage';
-import { AlbumDetailPage } from './pages/AlbumDetailPage';
-import { ArtistsPage } from './pages/ArtistsPage';
-import { ArtistDetailPage } from './pages/ArtistDetailPage';
-import { AllSongsPage } from './pages/AllSongsPage';
-import { QueuePage } from './pages/QueuePage';
-import { SearchPage } from './pages/SearchPage';
-import { FavoritesPage } from './pages/FavoritesPage';
-import { RecentlyPlayedPage } from './pages/RecentlyPlayedPage';
-import { MostPlayedPage } from './pages/MostPlayedPage';
-import { PlaylistsPage } from './pages/PlaylistsPage';
-import { PlaylistDetailPage } from './pages/PlaylistDetailPage';
-import { DownloadedPage } from './pages/DownloadedPage';
-import { OfflinePlaylistPage } from './pages/OfflinePlaylistPage';
-import { AdminPage } from './pages/admin/AdminPage';
-import { UsersPage } from './pages/admin/UsersPage';
-import { LibrariesPage } from './pages/admin/LibrariesPage';
-import { SettingsPage } from './pages/admin/SettingsPage';
-import { UserSettingsPage, AccountSettingsPanel } from './pages/UserSettingsPage';
-import { RecommendationsPage } from './pages/RecommendationsPage';
-import { WrappedPage } from './pages/WrappedPage';
+
+// Lazy-loaded: everything reachable only after navigating past the initial
+// login/albums landing. Admin pages in particular are only reachable by
+// admins but would otherwise ship in every user's initial bundle.
+const HomePage = lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
+const AlbumDetailPage = lazy(() => import('./pages/AlbumDetailPage').then((m) => ({ default: m.AlbumDetailPage })));
+const ArtistsPage = lazy(() => import('./pages/ArtistsPage').then((m) => ({ default: m.ArtistsPage })));
+const ArtistDetailPage = lazy(() => import('./pages/ArtistDetailPage').then((m) => ({ default: m.ArtistDetailPage })));
+const AllSongsPage = lazy(() => import('./pages/AllSongsPage').then((m) => ({ default: m.AllSongsPage })));
+const QueuePage = lazy(() => import('./pages/QueuePage').then((m) => ({ default: m.QueuePage })));
+const SearchPage = lazy(() => import('./pages/SearchPage').then((m) => ({ default: m.SearchPage })));
+const FavoritesPage = lazy(() => import('./pages/FavoritesPage').then((m) => ({ default: m.FavoritesPage })));
+const RecentlyPlayedPage = lazy(() => import('./pages/RecentlyPlayedPage').then((m) => ({ default: m.RecentlyPlayedPage })));
+const MostPlayedPage = lazy(() => import('./pages/MostPlayedPage').then((m) => ({ default: m.MostPlayedPage })));
+const PlaylistsPage = lazy(() => import('./pages/PlaylistsPage').then((m) => ({ default: m.PlaylistsPage })));
+const PlaylistDetailPage = lazy(() => import('./pages/PlaylistDetailPage').then((m) => ({ default: m.PlaylistDetailPage })));
+const DownloadedPage = lazy(() => import('./pages/DownloadedPage').then((m) => ({ default: m.DownloadedPage })));
+const OfflinePlaylistPage = lazy(() => import('./pages/OfflinePlaylistPage').then((m) => ({ default: m.OfflinePlaylistPage })));
+const AdminPage = lazy(() => import('./pages/admin/AdminPage').then((m) => ({ default: m.AdminPage })));
+const UsersPage = lazy(() => import('./pages/admin/UsersPage').then((m) => ({ default: m.UsersPage })));
+const LibrariesPage = lazy(() => import('./pages/admin/LibrariesPage').then((m) => ({ default: m.LibrariesPage })));
+const SettingsPage = lazy(() => import('./pages/admin/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const UserSettingsPage = lazy(() => import('./pages/UserSettingsPage').then((m) => ({ default: m.UserSettingsPage })));
+const AccountSettingsPanel = lazy(() => import('./pages/UserSettingsPage').then((m) => ({ default: m.AccountSettingsPanel })));
+const RecommendationsPage = lazy(() => import('./pages/RecommendationsPage').then((m) => ({ default: m.RecommendationsPage })));
+const WrappedPage = lazy(() => import('./pages/WrappedPage').then((m) => ({ default: m.WrappedPage })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
