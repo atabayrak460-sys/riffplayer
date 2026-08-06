@@ -15,6 +15,7 @@ import {
 } from '../api/subsonic';
 import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
+import { resolveDragReorderIndices } from '../lib/dragReorder';
 import { CoverUploadControl } from '../components/CoverUploadControl';
 import { PlaylistCover } from '../components/StockCovers';
 import { SongRow } from '../components/SongRow';
@@ -167,14 +168,11 @@ export function PlaylistDetailPage() {
   const displayedSongs = sortPlaylistTracks(songs, trackDates, sortMode);
 
   const onDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const from = songIds.indexOf(String(active.id));
-    const to = songIds.indexOf(String(over.id));
-    if (from === -1 || to === -1) return;
+    const resolved = resolveDragReorderIndices(songIds, String(event.active.id), event.over ? String(event.over.id) : undefined);
+    if (!resolved) return;
     const reordered = [...songs];
-    const [moved] = reordered.splice(from, 1);
-    reordered.splice(to, 0, moved);
+    const [moved] = reordered.splice(resolved.from, 1);
+    reordered.splice(resolved.to, 0, moved);
     reorderMutation.mutate({ trackIds: reordered.map((s) => s.id), reordered });
   };
 

@@ -16,6 +16,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayerStore } from '../store/player';
 import { CoverArt } from '../components/CoverArt';
+import { resolveDragReorderIndices } from '../lib/dragReorder';
 import type { Song } from '../api/types';
 
 function formatDuration(s?: number) {
@@ -108,11 +109,8 @@ export function QueuePage() {
   const itemIds = queue.map((s, i) => `${s.id}-${i}`);
 
   const onDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const from = itemIds.indexOf(String(active.id));
-    const to = itemIds.indexOf(String(over.id));
-    if (from !== -1 && to !== -1) reorderQueue(from, to);
+    const resolved = resolveDragReorderIndices(itemIds, String(event.active.id), event.over ? String(event.over.id) : undefined);
+    if (resolved) reorderQueue(resolved.from, resolved.to);
   };
 
   return (
