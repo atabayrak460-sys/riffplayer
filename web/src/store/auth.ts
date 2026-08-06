@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { setCredentials, clearCredentials, setJwt } from '../api/subsonic';
 import type { Credentials } from '../api/types';
 
@@ -55,6 +55,14 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'cadence-auth',
+      // sessionStorage, not localStorage: credentials.password is the plain
+      // Subsonic password (needed client-side since Subsonic token-auth
+      // requires re-hashing it with a fresh salt on every request — there's
+      // no bearer-token alternative in the protocol). Persisting that
+      // indefinitely to localStorage would survive browser restarts and
+      // shared/public machines; sessionStorage clears when the tab/browser
+      // closes, trading "stay logged in forever" for a much smaller window.
+      storage: createJSONStorage(() => sessionStorage),
       onRehydrateStorage: () => (state) => {
         if (state?.credentials) setCredentials(state.credentials);
         if (state?.token) setJwt(state.token);
