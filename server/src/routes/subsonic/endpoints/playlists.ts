@@ -2,21 +2,13 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../../db/database.js';
 import { sendOk, sendError, SubsonicErrorCode } from '../response.js';
 import { xmlTag, songAttrs, toJson, isoDate, type SongRow } from '../serialize.js';
+import { SONG_SELECT_LIST, SONG_FROM } from './browse.js';
 
 type Q = Record<string, string | string[] | undefined>;
 const p = (req: FastifyRequest) => ({ ...(req.query as Q), ...((req.body as Q) ?? {}) });
 const str = (v: string | string[] | undefined): string | undefined => (Array.isArray(v) ? v[0] : v);
 
-const SONG_COLS = `
-  t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
-  t.format, t.path, t.added_at, t.album_id, t.artist_id, t.genre,
-  t.replaygain_track, t.replaygain_album,
-  ar.name AS artist_name, al.name AS album_name, al.year,
-  f.created_at AS starred
-FROM tracks t
-JOIN artists ar ON ar.id = t.artist_id
-JOIN albums al ON al.id = t.album_id
-LEFT JOIN favorites f ON f.item_type = 'track' AND f.item_id = t.id AND f.user_id = ?`;
+const SONG_COLS = `${SONG_SELECT_LIST}${SONG_FROM}`;
 
 interface PlaylistRow {
   id: number;
@@ -202,13 +194,10 @@ function deletePlaylist(req: FastifyRequest, reply: FastifyReply): void {
   if (!exists)
     return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'Playlist not found or not owned' });
 
-  db.transaction(() => {
-    db.prepare('DELETE FROM playlists WHERE id = ?').run(Number(id));
-    // Not an FK cascade — library_sidebar_state.item_key is a plain string shared
-    // with system view slugs, so orphans have to be swept explicitly. Any user
-    // (not just the owner) could have pinned/opened this if it was public.
-    db.prepare("DELETE FROM library_sidebar_state WHERE item_type = 'playlist' AND item_key = ?").run(String(Number(id)));
-  })();
+  // library_sidebar_state.playlist_id is a real FK (ON DELETE CASCADE, #17)
+  // now — any user's pin/interact state for this playlist is cleaned up
+  // automatically, no manual sweep needed.
+  db.prepare('DELETE FROM playlists WHERE id = ?').run(Number(id));
   sendOk(reply, f);
 }
 

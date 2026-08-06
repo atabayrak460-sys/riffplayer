@@ -38,9 +38,12 @@ describe('POST /api/v1/library-sidebar/interact', () => {
   });
 
   it('updates the timestamp on repeated interactions rather than duplicating rows', async () => {
+    const create = await app.inject({ url: `/rest/createPlaylist.view?${auth}&name=P` });
+    const plId = String((sr(create.body).playlist as Record<string, unknown>).id);
+
     await app.inject({
       method: 'POST', url: `/api/v1/library-sidebar/interact?${auth}`,
-      payload: { itemType: 'playlist', itemKey: '1' },
+      payload: { itemType: 'playlist', itemKey: plId },
     });
     const first = JSON.parse((await app.inject({ url: `/api/v1/library-sidebar?${auth}` })).body) as {
       items: { lastInteractedAt: string }[];
@@ -48,7 +51,7 @@ describe('POST /api/v1/library-sidebar/interact', () => {
 
     await app.inject({
       method: 'POST', url: `/api/v1/library-sidebar/interact?${auth}`,
-      payload: { itemType: 'playlist', itemKey: '1' },
+      payload: { itemType: 'playlist', itemKey: plId },
     });
     const second = JSON.parse((await app.inject({ url: `/api/v1/library-sidebar?${auth}` })).body) as {
       items: { lastInteractedAt: string }[];
@@ -65,6 +68,16 @@ describe('POST /api/v1/library-sidebar/interact', () => {
       payload: { itemType: 'bogus', itemKey: 'x' },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  // #17: itemKey now resolves to a real playlist_id FK — a playlist that
+  // doesn't exist must be rejected, not silently inserted as before.
+  it('returns 404 for a playlist itemKey that does not exist', async () => {
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/library-sidebar/interact?${auth}`,
+      payload: { itemType: 'playlist', itemKey: '999999' },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
 
@@ -113,13 +126,13 @@ describe('deletePlaylist cleans up its library_sidebar_state rows', () => {
       payload: { itemType: 'playlist', itemKey: plId },
     });
     expect(
-      getDb().prepare("SELECT COUNT(*) AS n FROM library_sidebar_state WHERE item_type = 'playlist' AND item_key = ?").get(plId),
+      getDb().prepare("SELECT COUNT(*) AS n FROM library_sidebar_state WHERE item_type = 'playlist' AND playlist_id = ?").get(Number(plId)),
     ).toMatchObject({ n: 1 });
 
     await app.inject({ url: `/rest/deletePlaylist.view?${auth}&id=${plId}` });
 
     expect(
-      getDb().prepare("SELECT COUNT(*) AS n FROM library_sidebar_state WHERE item_type = 'playlist' AND item_key = ?").get(plId),
+      getDb().prepare("SELECT COUNT(*) AS n FROM library_sidebar_state WHERE item_type = 'playlist' AND playlist_id = ?").get(Number(plId)),
     ).toMatchObject({ n: 0 });
   });
 });
