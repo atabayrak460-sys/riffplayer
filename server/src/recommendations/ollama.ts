@@ -39,8 +39,8 @@ async function callOllama(
   return data.message?.content ?? data.response ?? '';
 }
 
-/** Parse "Artist Name - Track Name" lines from LLM output. */
-function parseNamePairs(text: string): Array<{ artist: string; track: string }> {
+/** Parse "Artist Name - Track Name" lines from LLM output. Exported for tests. */
+export function parseNamePairs(text: string): Array<{ artist: string; track: string }> {
   return text
     .split('\n')
     .map((l) => l.replace(/^\d+\.\s*/, '').trim()) // strip leading numbers
