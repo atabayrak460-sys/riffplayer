@@ -11,14 +11,22 @@ enum _Tab { albums, songs }
 
 class ArtistDetailScreen extends ConsumerStatefulWidget {
   final String artistId;
-  const ArtistDetailScreen({super.key, required this.artistId});
+
+  /// Opens straight to the Songs tab — used by the player screen's "See
+  /// all" link on an artist's other tracks, mirroring web's `?tab=songs`.
+  final bool initialSongsTab;
+  const ArtistDetailScreen({
+    super.key,
+    required this.artistId,
+    this.initialSongsTab = false,
+  });
 
   @override
   ConsumerState<ArtistDetailScreen> createState() => _ArtistDetailScreenState();
 }
 
 class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
-  _Tab _tab = _Tab.albums;
+  late _Tab _tab = widget.initialSongsTab ? _Tab.songs : _Tab.albums;
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +34,8 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
     final client = ref.read(apiClientProvider);
 
     return detailAsync.when(
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      loading: () =>
+          const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (e, _) => Scaffold(body: Center(child: Text('Error: $e'))),
       data: (data) {
         final artist = data.artist;
@@ -113,7 +122,8 @@ class _TabChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _TabChip({required this.label, required this.selected, required this.onTap});
+  const _TabChip(
+      {required this.label, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -169,8 +179,8 @@ class _AlbumsGrid extends StatelessWidget {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: aCoverUrl != null
-                            ? Image.network(aCoverUrl, fit: BoxFit.cover,
-                                width: double.infinity)
+                            ? Image.network(aCoverUrl,
+                                fit: BoxFit.cover, width: double.infinity)
                             : Container(color: const Color(0xFF27272A)),
                       ),
                     ),

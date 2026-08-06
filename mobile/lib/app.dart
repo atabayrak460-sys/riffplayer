@@ -79,26 +79,41 @@ class _CadenceAppState extends ConsumerState<CadenceApp> {
               builder: (_, state) =>
                   AlbumDetailScreen(albumId: state.pathParameters['id']!),
             ),
-            GoRoute(path: '/artists', builder: (_, __) => const ArtistsScreen()),
+            GoRoute(
+                path: '/artists', builder: (_, __) => const ArtistsScreen()),
             GoRoute(
               path: '/artists/:id',
-              builder: (_, state) =>
-                  ArtistDetailScreen(artistId: state.pathParameters['id']!),
+              builder: (_, state) => ArtistDetailScreen(
+                artistId: state.pathParameters['id']!,
+                initialSongsTab: state.uri.queryParameters['tab'] == 'songs',
+              ),
             ),
             GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
-            GoRoute(path: '/favorites', builder: (_, __) => const FavoritesScreen()),
-            GoRoute(path: '/downloads', builder: (_, __) => const DownloadsScreen()),
-            GoRoute(path: '/library', builder: (_, __) => const LibraryScreen()),
+            GoRoute(
+                path: '/favorites',
+                builder: (_, __) => const FavoritesScreen()),
+            GoRoute(
+                path: '/downloads',
+                builder: (_, __) => const DownloadsScreen()),
+            GoRoute(
+                path: '/library', builder: (_, __) => const LibraryScreen()),
             GoRoute(
               path: '/playlists/:id',
               builder: (_, state) =>
                   PlaylistDetailScreen(playlistId: state.pathParameters['id']!),
             ),
-            GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
-            GoRoute(path: '/wrapped', builder: (_, __) => const WrappedScreen()),
-            GoRoute(path: '/discover', builder: (_, __) => const DiscoverScreen()),
-            GoRoute(path: '/recent', builder: (_, __) => const RecentlyPlayedScreen()),
-            GoRoute(path: '/most-played', builder: (_, __) => const MostPlayedScreen()),
+            GoRoute(
+                path: '/settings', builder: (_, __) => const SettingsScreen()),
+            GoRoute(
+                path: '/wrapped', builder: (_, __) => const WrappedScreen()),
+            GoRoute(
+                path: '/discover', builder: (_, __) => const DiscoverScreen()),
+            GoRoute(
+                path: '/recent',
+                builder: (_, __) => const RecentlyPlayedScreen()),
+            GoRoute(
+                path: '/most-played',
+                builder: (_, __) => const MostPlayedScreen()),
             GoRoute(path: '/admin', builder: (_, __) => const AdminScreen()),
           ],
         ),
