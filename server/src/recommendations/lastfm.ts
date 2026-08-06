@@ -9,9 +9,14 @@
 import { createHash } from 'crypto';
 import { getDb } from '../db/database.js';
 import { escapeLike } from '../db/likeEscape.js';
+import { toFts5Phrase } from '../db/fts5Escape.js';
 import { TtlCache } from './ttlCache.js';
 import { SONG_SELECT_LIST, SONG_FROM } from '../routes/subsonic/endpoints/browse.js';
 import type { SongRow } from '../routes/subsonic/serialize.js';
+
+// See search.ts's identical constant/comment — trigram FTS5 can't tokenize
+// anything shorter than this.
+const MIN_FTS_QUERY_LENGTH = 3;
 
 interface TopArtist {
   name: string;
@@ -56,17 +61,23 @@ async function fetchSimilarArtistNames(
 }
 
 function findLocalTracksByArtistName(artistName: string, limit = 3): SongRow[] {
+  const useFts = artistName.length >= MIN_FTS_QUERY_LENGTH;
+  const where = useFts
+    ? 'JOIN artists_fts ON artists_fts.rowid = ar.id WHERE artists_fts MATCH ?'
+    : "WHERE ar.name LIKE ? ESCAPE '\\'";
+  const matchArg = useFts ? toFts5Phrase(artistName) : `%${escapeLike(artistName)}%`;
+
   return getDb()
     .prepare(`
       SELECT ${SONG_SELECT_LIST}${SONG_FROM}
-      WHERE ar.name LIKE ? ESCAPE '\\'
+      ${where}
       ORDER BY RANDOM()
       LIMIT ?
     `)
     // No signed-in user for a "starred" flag here — bound NULL never
     // matches favorites.user_id, so f.created_at (and therefore starred)
     // comes back NULL for every row, same as the old NULL-literal version.
-    .all(null, `%${escapeLike(artistName)}%`, limit) as SongRow[];
+    .all(null, matchArg, limit) as SongRow[];
 }
 
 // Capped at 500 entries so it can never grow unboundedly on a long-running,

@@ -10,10 +10,15 @@
  */
 import { getDb } from '../db/database.js';
 import { escapeLike } from '../db/likeEscape.js';
+import { toFts5Phrase } from '../db/fts5Escape.js';
 import { getUserTopArtists } from './lastfm.js';
 import { TtlCache } from './ttlCache.js';
 import { SONG_SELECT_LIST, SONG_FROM } from '../routes/subsonic/endpoints/browse.js';
 import type { SongRow } from '../routes/subsonic/serialize.js';
+
+// See search.ts's identical constant/comment — trigram FTS5 can't tokenize
+// anything shorter than this.
+const MIN_FTS_QUERY_LENGTH = 3;
 
 interface OllamaChatResponse {
   message?: { content: string };
@@ -55,14 +60,28 @@ export function parseNamePairs(text: string): Array<{ artist: string; track: str
 }
 
 function findLocalMatch(artist: string, track: string): SongRow | undefined {
+  // Only worth the FTS joins when both sides can actually use them —
+  // mixing FTS/LIKE per-column for a single-name lookup like this isn't
+  // worth the extra complexity, and real artist/track names are almost
+  // always long enough anyway.
+  const useFts = artist.length >= MIN_FTS_QUERY_LENGTH && track.length >= MIN_FTS_QUERY_LENGTH;
+  const where = useFts
+    ? `JOIN artists_fts ON artists_fts.rowid = ar.id
+       JOIN tracks_fts ON tracks_fts.rowid = t.id
+       WHERE artists_fts MATCH ? AND tracks_fts MATCH ?`
+    : `WHERE ar.name LIKE ? ESCAPE '\\' AND t.title LIKE ? ESCAPE '\\'`;
+  const [artistArg, trackArg] = useFts
+    ? [toFts5Phrase(artist), toFts5Phrase(track)]
+    : [`%${escapeLike(artist)}%`, `%${escapeLike(track)}%`];
+
   return getDb()
     .prepare(`
       SELECT ${SONG_SELECT_LIST}${SONG_FROM}
-      WHERE ar.name LIKE ? ESCAPE '\\' AND t.title LIKE ? ESCAPE '\\'
+      ${where}
       LIMIT 1
     `)
     // No signed-in user for a "starred" flag here — see the identical note in lastfm.ts.
-    .get(null, `%${escapeLike(artist)}%`, `%${escapeLike(track)}%`) as SongRow | undefined;
+    .get(null, artistArg, trackArg) as SongRow | undefined;
 }
 
 function getUserTopTracks(userId: number, limitDays = 90, count = 10) {
