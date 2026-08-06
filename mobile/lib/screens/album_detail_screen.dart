@@ -18,8 +18,10 @@ class AlbumDetailScreen extends ConsumerWidget {
       data: (data) {
         final album = data.album;
         final songs = data.songs;
+        // Full-width banner (SliverAppBar background below), not a
+        // thumbnail — needs a size closer to actual screen width.
         final coverUrl = album.coverArt != null
-            ? client?.coverArtUrl(album.coverArt!, size: 400)
+            ? client?.coverArtUrl(album.coverArt!, size: 800)
             : null;
 
         return Scaffold(

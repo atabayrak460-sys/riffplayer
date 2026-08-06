@@ -44,8 +44,11 @@ class MiniPlayer extends ConsumerWidget {
               child: Row(
                 children: [
                   CoverArt(
+                    // 100, not 56 — matches the ~2.3x ratio used for every
+                    // other 44px thumbnail elsewhere (song_tile.dart,
+                    // library_list_row.dart) for consistency on high-DPI.
                     url: song.coverArt != null
-                        ? client?.coverArtUrl(song.coverArt!, size: 56)
+                        ? client?.coverArtUrl(song.coverArt!, size: 100)
                         : null,
                     size: 44,
                     borderRadius: BorderRadius.circular(4),

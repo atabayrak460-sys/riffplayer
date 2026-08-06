@@ -62,8 +62,12 @@ class PlayerScreen extends ConsumerWidget {
                             size: MediaQuery.of(context).size.width - 56,
                           )
                         : CoverArt(
+                            // Full-screen hero image — the most prominent
+                            // artwork in the app deserves a size closer to
+                            // what a high-DPI display actually needs, not
+                            // the ~44px-thumbnail-derived default.
                             url: song.coverArt != null
-                                ? client?.coverArtUrl(song.coverArt!, size: 500)
+                                ? client?.coverArtUrl(song.coverArt!, size: 800)
                                 : null,
                             size: MediaQuery.of(context).size.width - 56,
                             borderRadius: BorderRadius.circular(12),

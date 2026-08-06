@@ -40,8 +40,11 @@ class ArtistsScreen extends ConsumerWidget {
                   (artist) => ListTile(
                     onTap: () => context.push('/artists/${artist.id}'),
                     leading: CoverArt(
+                      // 100, not 80 — matches the ~2.3x ratio used for
+                      // every other 44px thumbnail elsewhere for consistency
+                      // on high-DPI displays.
                       url: artist.coverArt != null
-                          ? client?.coverArtUrl(artist.coverArt!, size: 80)
+                          ? client?.coverArtUrl(artist.coverArt!, size: 100)
                           : null,
                       size: 44,
                       borderRadius: BorderRadius.circular(22),
