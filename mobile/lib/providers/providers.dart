@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import '../api/types.dart';
@@ -328,10 +329,28 @@ final artistDetailProvider =
 /// artist detail screen's "Songs" tab.
 final artistSongsProvider =
     FutureProvider.autoDispose.family<List<Song>, String>((ref, artistId) async {
+  // Without this the provider tears down and refetches from scratch every
+  // time the tab is re-entered (autoDispose's default). Keeping it alive
+  // for a few minutes after the last listener unsubscribes means quickly
+  // flipping back to a recently-viewed artist's Songs tab reuses the
+  // cached result instead of re-fetching every album again.
+  final link = ref.keepAlive();
+  final timer = Timer(const Duration(minutes: 5), link.close);
+  ref.onDispose(timer.cancel);
+
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   final detail = await client.getArtistDetail(artistId);
-  final results = await Future.wait(detail.albums.map((a) => client.getAlbum(a.id)));
+
+  // Fetched in bounded-concurrency batches rather than firing every
+  // album's request at once — a prolific artist (20+ albums) would
+  // otherwise burst that many simultaneous network calls on one tab open.
+  const batchSize = 5;
+  final results = <({Album album, List<Song> songs})>[];
+  for (var i = 0; i < detail.albums.length; i += batchSize) {
+    final batch = detail.albums.skip(i).take(batchSize);
+    results.addAll(await Future.wait(batch.map((a) => client.getAlbum(a.id))));
+  }
   return results.expand((r) => r.songs).toList();
 });
 
