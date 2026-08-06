@@ -416,6 +416,28 @@ describe('setVolume', () => {
   });
 });
 
+describe('toggleMute', () => {
+  it('mutes to 0 and restores the previous volume on toggle back', () => {
+    usePlayerStore.getState().setVolume(0.7);
+
+    usePlayerStore.getState().toggleMute();
+    expect(usePlayerStore.getState().volume).toBe(0);
+    expect(FakeAudio.instance.volume).toBe(0);
+
+    usePlayerStore.getState().toggleMute();
+    expect(usePlayerStore.getState().volume).toBe(0.7);
+    expect(FakeAudio.instance.volume).toBe(0.7);
+  });
+
+  it('unmuting after volume was already 0 (no prior mute) restores to full volume', () => {
+    usePlayerStore.getState().setVolume(0);
+
+    usePlayerStore.getState().toggleMute();
+
+    expect(usePlayerStore.getState().volume).toBe(1);
+  });
+});
+
 describe('loadAndPlay async behavior (#49)', () => {
   beforeEach(() => {
     useDownloadsStore.setState({ status: {} });

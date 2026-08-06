@@ -87,8 +87,15 @@ export function useContextMenu() {
 
 export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: 'hidden' });
+
+  // Menu opens already focused, like a native context menu — arrow keys can
+  // navigate immediately without an extra Tab first.
+  useEffect(() => {
+    if (menu) itemRefs.current[0]?.focus();
+  }, [menu]);
 
   // Measure the menu after it mounts and flip above/left if it would
   // otherwise overflow the viewport — not used in mobile bottom-sheet mode.
@@ -110,18 +117,38 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
     const onOutside = (e: Event) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
-    const onEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      const items = itemRefs.current.filter((el): el is HTMLButtonElement => el != null);
+      if (items.length === 0) return;
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        items[(current + 1) % items.length]?.focus();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        items[(current - 1 + items.length) % items.length]?.focus();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        items[0]?.focus();
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        items[items.length - 1]?.focus();
+      }
     };
     const onScroll = () => onClose();
     document.addEventListener('mousedown', onOutside);
     document.addEventListener('touchstart', onOutside);
-    document.addEventListener('keydown', onEscape);
+    document.addEventListener('keydown', onKeyDown);
     document.addEventListener('scroll', onScroll, true);
     return () => {
       document.removeEventListener('mousedown', onOutside);
       document.removeEventListener('touchstart', onOutside);
-      document.removeEventListener('keydown', onEscape);
+      document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('scroll', onScroll, true);
     };
   }, [menu, onClose]);
@@ -131,11 +158,14 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
   const itemButtons = menu.items.map((item, i) => (
     <button
       key={i}
+      ref={(el) => { itemRefs.current[i] = el; }}
+      role="menuitem"
+      tabIndex={-1}
       onClick={() => {
         item.onClick();
         onClose();
       }}
-      className={`w-full flex items-center gap-3 text-left px-3 py-2 text-sm hover:bg-zinc-700 transition-colors ${
+      className={`w-full flex items-center gap-3 text-left px-3 py-2 text-sm hover:bg-zinc-700 transition-colors focus:outline-none focus:bg-zinc-700 ${
         item.danger ? 'text-red-400' : 'text-zinc-200'
       }`}
     >
@@ -153,6 +183,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
       <div className="fixed inset-0 bg-black/60 z-50" onClick={onClose}>
         <div
           ref={ref}
+          role="menu"
           onClick={(e) => e.stopPropagation()}
           className="absolute bottom-0 left-0 right-0 bg-zinc-800 border-t border-zinc-700 rounded-t-2xl py-2 pb-[env(safe-area-inset-bottom)]"
         >
@@ -165,6 +196,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
 
   return (
     <div
+      role="menu"
       ref={ref}
       style={style}
       className="z-50 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[11rem]"

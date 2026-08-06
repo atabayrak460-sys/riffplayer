@@ -27,6 +27,11 @@ let loadGeneration = 0;
 // scrobble() against whatever unrelated track happens to be playing then.
 let removeScrobbleListener: (() => void) | null = null;
 
+// Volume to restore on unmute — set right before setVolume(0) in toggleMute(),
+// so a manual drag to 0 on the slider doesn't count as "muted" with nothing
+// to restore to.
+let volumeBeforeMute: number | null = null;
+
 /** Prefer a locally downloaded copy so offline-played tracks need no network. */
 async function resolvePlaybackUrl(song: Song): Promise<string> {
   if (useDownloadsStore.getState().trackState(song.id) === 'downloaded') {
@@ -79,6 +84,7 @@ interface PlayerState {
   prev: () => void;
   seek: (seconds: number) => void;
   setVolume: (v: number) => void;
+  toggleMute: () => void;
   playNext: (song: Song) => void;
   addToQueue: (song: Song) => void;
   removeFromQueue: (index: number) => void;
@@ -260,6 +266,20 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     setVolume: (v) => {
       audio.volume = v;
       set({ volume: v });
+    },
+
+    toggleMute: () => {
+      const { volume } = get();
+      if (volume > 0) {
+        volumeBeforeMute = volume;
+        audio.volume = 0;
+        set({ volume: 0 });
+      } else {
+        const restored = volumeBeforeMute ?? 1;
+        volumeBeforeMute = null;
+        audio.volume = restored;
+        set({ volume: restored });
+      }
     },
 
     playNext: (song) => {
