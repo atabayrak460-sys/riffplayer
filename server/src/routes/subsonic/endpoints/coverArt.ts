@@ -2,9 +2,16 @@ import { createReadStream } from 'fs';
 import { mkdir, writeFile, access } from 'fs/promises';
 import path from 'path';
 import { parseFile } from 'music-metadata';
+import sharp from 'sharp';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../../db/database.js';
 import { sendError, SubsonicErrorCode } from '../response.js';
+
+// Subsonic clients pass arbitrary size= values (thumbnail grids commonly ask
+// for 64-300px); without an upper bound a malicious or buggy client could
+// force repeated full-resolution sharp() decodes by requesting a new huge
+// size on every call. Real UIs never need more than this.
+const MAX_COVER_SIZE = 1500;
 
 type Q = Record<string, string | undefined>;
 const p = (req: FastifyRequest) => ({ ...(req.query as Q), ...((req.body as Q) ?? {}) });
@@ -58,6 +65,77 @@ async function fileExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function parseSize(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.min(n, MAX_COVER_SIZE);
+}
+
+// Coalesces concurrent resize requests for the same cache file, mirroring
+// inFlightExtractions above — a grid of albums/artists first loading at a
+// given thumbnail size would otherwise fire several redundant sharp() runs
+// for the same output file.
+const inFlightResizes = new Map<string, Promise<void>>();
+
+/**
+ * Resize `sourcePath` to fit within size×size, caching the result on disk
+ * next to the existing per-album cover cache so repeat requests at the same
+ * size are a disk read, not a re-encode. Falls back to serving the original
+ * file untouched if sharp can't process it (e.g. an unexpected format) —
+ * a stale/no thumbnail is never worse than a 500.
+ */
+async function resizeAndCache(
+  sourcePath: string,
+  sourceMime: string,
+  size: number,
+  coversDir: string,
+  cacheKeyPrefix: string,
+): Promise<{ filePath: string; mime: string }> {
+  const ext = MIME_TO_EXT[sourceMime] ?? path.extname(sourcePath).slice(1).toLowerCase() ?? 'jpg';
+  const cachePath = path.join(coversDir, `${cacheKeyPrefix}-${size}.${ext}`);
+
+  if (await fileExists(cachePath)) {
+    return { filePath: cachePath, mime: sourceMime };
+  }
+
+  try {
+    let inFlight = inFlightResizes.get(cachePath);
+    if (!inFlight) {
+      inFlight = (async () => {
+        await mkdir(coversDir, { recursive: true });
+        await sharp(sourcePath)
+          .resize(size, size, { fit: 'inside', withoutEnlargement: true })
+          .toFile(cachePath);
+      })().finally(() => {
+        inFlightResizes.delete(cachePath);
+      });
+      inFlightResizes.set(cachePath, inFlight);
+    }
+    await inFlight;
+    return { filePath: cachePath, mime: sourceMime };
+  } catch {
+    return { filePath: sourcePath, mime: sourceMime };
+  }
+}
+
+async function respondWithImage(
+  reply: FastifyReply,
+  filePath: string,
+  mime: string,
+  size: number | undefined,
+  coversDir: string,
+  cacheKeyPrefix: string,
+): Promise<FastifyReply> {
+  if (!size) {
+    reply.header('Content-Type', mime);
+    return reply.send(createReadStream(filePath));
+  }
+  const resized = await resizeAndCache(filePath, mime, size, coversDir, cacheKeyPrefix);
+  reply.header('Content-Type', resized.mime);
+  return reply.send(createReadStream(resized.filePath));
 }
 
 async function findCachedAlbumArt(
@@ -163,10 +241,12 @@ async function doExtractAndCacheAlbumArt(
 }
 
 async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> {
-  const { id, f } = p(req);
+  const { id, f, size: sizeRaw } = p(req);
   if (!id)
     return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id required' });
 
+  const size = parseSize(sizeRaw);
+  const coversDir = getCoversDir();
   const db = getDb();
 
   // System-view covers ('sv-<key>') are keyed by the authenticated user, not
@@ -182,8 +262,14 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
     if (!row || !row.cover_path) {
       return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'No cover art' });
     }
-    reply.header('Content-Type', mimeFromPath(row.cover_path));
-    return reply.send(createReadStream(row.cover_path));
+    return respondWithImage(
+      reply,
+      row.cover_path,
+      mimeFromPath(row.cover_path),
+      size,
+      coversDir,
+      `sv-${userId}-${viewKey}`,
+    );
   }
 
   let itemType: 'album' | 'artist' | 'playlist';
@@ -214,8 +300,14 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
     if (!artist || !artist.image_path) {
       return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'No cover art' });
     }
-    reply.header('Content-Type', mimeFromPath(artist.image_path));
-    return reply.send(createReadStream(artist.image_path));
+    return respondWithImage(
+      reply,
+      artist.image_path,
+      mimeFromPath(artist.image_path),
+      size,
+      coversDir,
+      `ar-${itemId}`,
+    );
   }
 
   if (itemType === 'playlist') {
@@ -225,8 +317,14 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
     if (!playlist || !playlist.cover_path) {
       return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'No cover art' });
     }
-    reply.header('Content-Type', mimeFromPath(playlist.cover_path));
-    return reply.send(createReadStream(playlist.cover_path));
+    return respondWithImage(
+      reply,
+      playlist.cover_path,
+      mimeFromPath(playlist.cover_path),
+      size,
+      coversDir,
+      `pl-${itemId}`,
+    );
   }
 
   // Album: check manual cover_path first
@@ -238,18 +336,26 @@ async function coverArtHandler(req: FastifyRequest, reply: FastifyReply): Promis
   }
 
   if (album.cover_path) {
-    reply.header('Content-Type', mimeFromPath(album.cover_path));
-    return reply.send(createReadStream(album.cover_path));
+    // Separate cache-key namespace from the embedded/CAA path below so a
+    // manually-uploaded cover that's later removed can't serve a stale
+    // resized thumbnail cached under the same album id.
+    return respondWithImage(
+      reply,
+      album.cover_path,
+      mimeFromPath(album.cover_path),
+      size,
+      coversDir,
+      `al-${itemId}-manual`,
+    );
   }
 
   // Fall back to embedded art, cached to disk
-  const art = await extractAndCacheAlbumArt(itemId, getCoversDir());
+  const art = await extractAndCacheAlbumArt(itemId, coversDir);
   if (!art) {
     return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'No cover art found' });
   }
 
-  reply.header('Content-Type', art.mime);
-  return reply.send(createReadStream(art.filePath));
+  return respondWithImage(reply, art.filePath, art.mime, size, coversDir, `al-${itemId}`);
 }
 
 export async function coverArtPlugin(app: FastifyInstance): Promise<void> {

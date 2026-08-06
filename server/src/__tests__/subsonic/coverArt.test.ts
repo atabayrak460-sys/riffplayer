@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readdir } from 'fs/promises';
 import { writeFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import sharp from 'sharp';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../app.js';
 import { closeDb, getDb } from '../../db/database.js';
@@ -62,6 +63,14 @@ function writeWav(filePath: string): void {
   b.writeUInt16LE(2, 32);  b.writeUInt16LE(16, 34);
   b.write('data', 36, 'ascii'); b.writeUInt32LE(0, 40);
   writeFileSync(filePath, b);
+}
+
+async function makePng(size: number): Promise<Buffer> {
+  return sharp({
+    create: { width: size, height: size, channels: 3, background: { r: 200, g: 50, b: 50 } },
+  })
+    .png()
+    .toBuffer();
 }
 
 let app: FastifyInstance;
@@ -356,5 +365,144 @@ describe('getCoverArt.view — playlist cover', () => {
     const body = JSON.parse(res.body)['subsonic-response'] as Record<string, unknown>;
     expect(body.status).toBe('failed');
     expect((body.error as Record<string, unknown>).code).toBe(70);
+  });
+});
+
+describe('getCoverArt.view — size param (#72)', () => {
+  async function insertAlbumWithCover(name: string, coverPath: string): Promise<number> {
+    const db = getDb();
+    const artistId = Number(
+      db.prepare('INSERT INTO artists (name) VALUES (?)').run(name).lastInsertRowid,
+    );
+    return Number(
+      db.prepare('INSERT INTO albums (name, artist_id, cover_path) VALUES (?, ?, ?)')
+        .run(name, artistId, coverPath).lastInsertRowid,
+    );
+  }
+
+  it('downscales a manual album cover to fit within the requested size', async () => {
+    const coverFile = path.join(tmpDir, 'big-cover.png');
+    await writeFile(coverFile, await makePng(400));
+    const albumId = await insertAlbumWithCover('SizeAlbum', coverFile);
+
+    const full = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}` });
+    expect((await sharp(full.rawPayload).metadata()).width).toBe(400);
+
+    const res = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}&size=100` });
+    expect(res.statusCode).toBe(200);
+    const meta = await sharp(res.rawPayload).metadata();
+    expect(meta.width).toBeLessThanOrEqual(100);
+    expect(meta.height).toBeLessThanOrEqual(100);
+  });
+
+  it('does not upscale an image smaller than the requested size', async () => {
+    const coverFile = path.join(tmpDir, 'small-cover.png');
+    await writeFile(coverFile, await makePng(50));
+    const albumId = await insertAlbumWithCover('SmallSizeAlbum', coverFile);
+
+    const res = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}&size=300` });
+    expect(res.statusCode).toBe(200);
+    const meta = await sharp(res.rawPayload).metadata();
+    expect(meta.width).toBe(50);
+  });
+
+  it('caches the resized output to disk, keyed by size, and reuses it on the next request', async () => {
+    const coverFile = path.join(tmpDir, 'cache-cover.png');
+    await writeFile(coverFile, await makePng(400));
+    const albumId = await insertAlbumWithCover('CacheSizeAlbum', coverFile);
+    const cacheDir = process.env.COVERS_DIR!;
+
+    await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}&size=120` });
+    const cachedFile = path.join(cacheDir, `al-${albumId}-manual-120.png`);
+    const files = await readdir(cacheDir);
+    expect(files).toContain(`al-${albumId}-manual-120.png`);
+
+    // Second request should serve straight from the cached file — same bytes.
+    const res2 = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}&size=120` });
+    const cachedBytes = await sharp(cachedFile).toBuffer();
+    expect(res2.rawPayload.equals(cachedBytes)).toBe(true);
+  });
+
+  it('ignores a non-numeric size and serves the full image', async () => {
+    const coverFile = path.join(tmpDir, 'garbage-size.png');
+    await writeFile(coverFile, await makePng(200));
+    const albumId = await insertAlbumWithCover('GarbageSizeAlbum', coverFile);
+
+    const res = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}&size=notanumber` });
+    expect(res.statusCode).toBe(200);
+    const meta = await sharp(res.rawPayload).metadata();
+    expect(meta.width).toBe(200);
+  });
+
+  it('clamps an excessively large size instead of serving/caching it unbounded', async () => {
+    const coverFile = path.join(tmpDir, 'clamp-size.png');
+    await writeFile(coverFile, await makePng(300));
+    const albumId = await insertAlbumWithCover('ClampSizeAlbum', coverFile);
+
+    const res = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}&size=999999` });
+    expect(res.statusCode).toBe(200);
+    const meta = await sharp(res.rawPayload).metadata();
+    // Source is only 300px, so a clamped max size still can't upscale it —
+    // this mainly proves the request doesn't error or hang on a huge value.
+    expect(meta.width).toBe(300);
+  });
+
+  it('resizes embedded (non-manual) album art and keeps a separate cache namespace from manual covers', async () => {
+    const filePath = path.join(tmpDir, 'embedded-size.mp3');
+    const jpeg = await sharp({
+      create: { width: 250, height: 250, channels: 3, background: { r: 10, g: 200, b: 10 } },
+    })
+      .jpeg()
+      .toBuffer();
+    writeFileSync(filePath, buildId3WithApic('image/jpeg', jpeg));
+
+    const db = getDb();
+    const artistId = Number(
+      db.prepare("INSERT INTO artists (name) VALUES ('EmbeddedSize')").run().lastInsertRowid,
+    );
+    const albumId = Number(
+      db.prepare('INSERT INTO albums (name, artist_id) VALUES (?, ?)')
+        .run('EmbeddedSize', artistId).lastInsertRowid,
+    );
+    db.prepare('INSERT INTO tracks (title, album_id, artist_id, path) VALUES (?, ?, ?, ?)')
+      .run('Track', albumId, artistId, filePath);
+
+    const res = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=al-${albumId}&size=80` });
+    expect(res.statusCode).toBe(200);
+    const meta = await sharp(res.rawPayload).metadata();
+    expect(meta.width).toBeLessThanOrEqual(80);
+
+    const files = await readdir(process.env.COVERS_DIR!);
+    expect(files).toContain(`al-${albumId}-80.jpg`);
+    expect(files).not.toContain(`al-${albumId}-manual-80.jpg`);
+  });
+
+  it('serves artist and playlist images resized too, in their own cache namespaces', async () => {
+    const artistImg = path.join(tmpDir, 'artist-size.png');
+    await writeFile(artistImg, await makePng(300));
+    const db = getDb();
+    const artistId = Number(
+      db.prepare('INSERT INTO artists (name, image_path) VALUES (?, ?)')
+        .run('SizeArtist', artistImg).lastInsertRowid,
+    );
+
+    const artistRes = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=ar-${artistId}&size=64` });
+    expect(artistRes.statusCode).toBe(200);
+    expect((await sharp(artistRes.rawPayload).metadata()).width).toBeLessThanOrEqual(64);
+
+    const create = await app.inject({ url: `/rest/createPlaylist.view?${auth}&name=SizePlaylist` });
+    const plId = (JSON.parse(create.body)['subsonic-response'] as Record<string, Record<string, unknown>>)
+      .playlist.id as string;
+    const plCover = path.join(tmpDir, 'playlist-size.png');
+    await writeFile(plCover, await makePng(300));
+    db.prepare('UPDATE playlists SET cover_path = ? WHERE id = ?').run(plCover, plId);
+
+    const plRes = await app.inject({ url: `/rest/getCoverArt.view?${auth}&id=pl-${plId}&size=64` });
+    expect(plRes.statusCode).toBe(200);
+    expect((await sharp(plRes.rawPayload).metadata()).width).toBeLessThanOrEqual(64);
+
+    const files = await readdir(process.env.COVERS_DIR!);
+    expect(files).toContain(`ar-${artistId}-64.png`);
+    expect(files).toContain(`pl-${plId}-64.png`);
   });
 });
