@@ -24,6 +24,16 @@ export async function apiAuth(req: FastifyRequest, reply: FastifyReply): Promise
       return reply.code(401).send({ error: 'Invalid or expired token' }) as unknown as void;
     }
   }
+  // Truly no credentials of any kind (no Bearer header, no Subsonic u=/apiKey=
+  // query param either) — a proper 401 JSON error, not subsonicAuth's 200
+  // Subsonic-XML "missing parameter" envelope, which /api/v1 JSON clients
+  // can't parse as an auth failure.
+  const q = req.query as Record<string, string | undefined>;
+  if (!q.u && !q.apiKey) {
+    reply.code(401).send({ error: 'Unauthorized' });
+    return;
+  }
+
   // Fall back to Subsonic token auth (supports existing integrations)
   await subsonicAuth(req, reply);
 }
