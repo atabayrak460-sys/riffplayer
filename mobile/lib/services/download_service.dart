@@ -8,13 +8,17 @@ import '../api/subsonic.dart';
 
 typedef DownloadProgress = void Function(int received, int total);
 
+// Constructed exactly once via downloadServiceProvider (a plain Riverpod
+// Provider, so effectively a singleton for the app's lifetime) — state lives
+// on the instance rather than as static fields so nothing else can assume
+// (or accidentally rely on) every DownloadService sharing one global state.
 class DownloadService {
-  static Database? _db;
-  static final Map<String, CancelToken> _activeDownloads = {};
+  Database? _db;
+  final Map<String, CancelToken> _activeDownloads = {};
 
   // ── Database ────────────────────────────────────────────────────────────────
 
-  static Future<Database> get _database async {
+  Future<Database> get _database async {
     if (_db != null) return _db!;
     final dbPath = p.join(await getDatabasesPath(), 'cadence_downloads.db');
     _db = await openDatabase(
