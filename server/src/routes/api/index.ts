@@ -59,7 +59,9 @@ function requireAdmin(req: FastifyRequest, reply: FastifyReply, done: () => void
 export async function apiPlugin(app: FastifyInstance): Promise<void> {
 
   // ── POST /api/v1/auth/login — exchange credentials for a JWT ───────────────
-  app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/auth/login', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (req: FastifyRequest, reply: FastifyReply) => {
     const { username, password } = req.body as { username?: string; password?: string };
     if (!username || !password)
       return jsonError(reply, 400, 'username and password required');

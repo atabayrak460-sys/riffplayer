@@ -6,6 +6,9 @@ import { initDb } from './db/database.js';
 import { runMigrations } from './db/migrate.js';
 import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
+import helmet from '@fastify/helmet';
+import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import { subsonicPlugin } from './routes/subsonic/index.js';
 import { apiPlugin } from './routes/api/index.js';
 import { ensureAdminUser } from './auth/seed.js';
@@ -51,6 +54,33 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     const statusCode = err.statusCode && err.statusCode >= 400 && err.statusCode < 600 ? err.statusCode : 500;
     reply.code(statusCode).send({ error: err.message || 'Internal server error' });
   });
+
+  // CSP is disabled: this serves a Vite-built SPA with no nonce/hash setup
+  // for its bundled scripts, and helmet's default CSP would block them
+  // outright. HSTS is also disabled — self-hosters commonly run this behind
+  // plain HTTP (LAN access, or a reverse proxy handling TLS separately), and
+  // sending Strict-Transport-Security would make browsers refuse to connect
+  // over HTTP again for up to a year; HSTS is the reverse proxy's call to
+  // make, not this app's, since it's the one that actually knows whether
+  // TLS is in front of it. The other headers (X-Frame-Options,
+  // X-Content-Type-Options, Referrer-Policy, etc.) are real, low-risk
+  // hardening for a server that's realistically exposed to the internet.
+  app.register(helmet, { contentSecurityPolicy: false, hsts: false });
+
+  // No legitimate cross-origin browser use case today (the PWA is served
+  // from this same origin; native Subsonic clients aren't subject to CORS
+  // at all). `origin: false` means no Access-Control-Allow-Origin is ever
+  // sent, so cross-origin fetches are rejected by the browser — same-origin
+  // traffic is completely unaffected either way.
+  app.register(cors, { origin: false });
+
+  // Registered globally but inert (global: false) except where a route
+  // explicitly opts in via its own `config.rateLimit` — Subsonic clients
+  // legitimately fire many rapid requests per IP while browsing/streaming,
+  // so a blanket limit would break normal use. Only /api/v1/auth/login (the
+  // one real "enter a password" endpoint) opts in, guarding against
+  // brute-force login attempts.
+  app.register(rateLimit, { global: false });
 
   app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
   app.register(subsonicPlugin, { prefix: '/rest' });
