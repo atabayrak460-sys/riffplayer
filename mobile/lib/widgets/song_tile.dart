@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../api/types.dart';
 import '../providers/providers.dart';
+import '../utils/snackbar.dart';
 import 'add_to_playlist_dialog.dart';
 import 'cover_art.dart';
 import 'song_info_dialog.dart';
@@ -163,7 +164,12 @@ class SongTile extends ConsumerWidget {
         showDialog(context: context, builder: (_) => AddToPlaylistDialog(songId: song.id));
       case 'download':
         final downloads = ref.read(downloadServiceProvider);
-        downloads.download(song, client).ignore();
+        downloads.download(song, client).catchError((_) {
+          // showFailureSnackBar itself guards on context.mounted — the
+          // analyzer just can't see that check through the callee.
+          // ignore: use_build_context_synchronously
+          showFailureSnackBar(context, 'Download failed');
+        }).ignore();
       case 'star':
         final newStarred = song.isStarred ? null : 'true';
         final future = song.isStarred
@@ -172,6 +178,9 @@ class SongTile extends ConsumerWidget {
         future.then((_) {
           ref.read(playerProvider.notifier).setStarredInQueue(song.id, newStarred);
           ref.invalidate(starredProvider);
+        }).catchError((_) {
+          // ignore: use_build_context_synchronously
+          showFailureSnackBar(context, song.isStarred ? 'Failed to unstar' : 'Failed to star');
         }).ignore();
       case 'album':
         // `.go()`, not `.push()`: this menu is reachable from a track's own

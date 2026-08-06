@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:just_audio/just_audio.dart';
 import '../providers/providers.dart';
+import '../utils/snackbar.dart';
 import '../widgets/cover_art.dart';
 import '../widgets/lyrics_view.dart';
 
@@ -140,6 +141,10 @@ class PlayerScreen extends ConsumerWidget {
                               ref.read(playerProvider.notifier)
                                   .setStarredInQueue(song.id, newStarred);
                               ref.invalidate(starredProvider);
+                            }).catchError((_) {
+                              final msg = song.isStarred ? 'Failed to unstar' : 'Failed to star';
+                              // ignore: use_build_context_synchronously
+                              showFailureSnackBar(context, msg);
                             }).ignore();
                           },
                         ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/providers.dart';
+import '../utils/snackbar.dart';
 import '../widgets/song_tile.dart';
 import '../widgets/stock_covers.dart' as stock;
 
@@ -71,6 +72,8 @@ class FavoritesScreen extends ConsumerWidget {
                             .read(apiClientProvider)
                             ?.unstar(albumId: a.id)
                             .then((_) => ref.invalidate(starredProvider))
+                            // ignore: use_build_context_synchronously
+                            .catchError((_) => showFailureSnackBar(context, 'Failed to unstar'))
                             .ignore(),
                       ),
                     )),
