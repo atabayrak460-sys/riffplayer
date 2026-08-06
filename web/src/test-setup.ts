@@ -43,4 +43,30 @@ if (typeof window !== 'undefined') {
     removeEventListener: () => {},
     dispatchEvent: () => false,
   })) as typeof window.matchMedia;
+
+  // jsdom doesn't implement ResizeObserver at all — @tanstack/react-virtual
+  // (AllSongsPage, #57) uses it to measure the scroll container, and relies
+  // on the callback firing at least once on observe() to get an initial
+  // size (real ResizeObservers do this). jsdom has no real layout/resize
+  // events to drive further callbacks, so this only ever fires once, at
+  // observe() time, against whatever getBoundingClientRect currently
+  // reports for that element — tests needing a specific container size
+  // mock getBoundingClientRect before rendering.
+  if (typeof window.ResizeObserver === 'undefined') {
+    window.ResizeObserver = class {
+      callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+      }
+      observe(target: Element) {
+        const rect = target.getBoundingClientRect();
+        this.callback(
+          [{ target, contentRect: rect } as ResizeObserverEntry],
+          this as unknown as ResizeObserver,
+        );
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  }
 }
