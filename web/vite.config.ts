@@ -33,6 +33,28 @@ export default defineConfig({
               expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 7 },
             },
           },
+          // Resilience, not offline browsing (#13): serve a GET the app has
+          // already seen this session from cache while revalidating in the
+          // background, so a brief network drop doesn't blank a page you're
+          // already on. Deliberately excludes audio (stream/download) and
+          // cover art (already cached above, CacheFirst) — real offline
+          // playback stays the explicit Download feature's job, not the
+          // service worker's; opportunistically caching audio here would
+          // blur that line and cache data users never asked to keep.
+          {
+            urlPattern: ({ url, request }) =>
+              request.method === 'GET' &&
+              (url.pathname.startsWith('/rest/') || url.pathname.startsWith('/api/v1/')) &&
+              !url.pathname.startsWith('/rest/stream') &&
+              !url.pathname.startsWith('/rest/getCoverArt') &&
+              !url.pathname.startsWith('/rest/download'),
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'api-resilience',
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
         ],
       },
     }),
