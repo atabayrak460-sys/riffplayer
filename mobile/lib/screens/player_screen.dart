@@ -17,8 +17,13 @@ class PlayerScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(playerProvider);
-    final song = state.currentSong;
+    // Scoped to just the fields this screen shows — excludes queue/
+    // queueIndex, so e.g. adding a song to the queue while this screen is
+    // open doesn't trigger a rebuild here.
+    final (song, position, duration, shuffle, playing, repeatMode) =
+        ref.watch(playerProvider.select(
+      (s) => (s.currentSong, s.position, s.duration, s.shuffle, s.playing, s.repeatMode),
+    ));
     final client = ref.read(apiClientProvider);
     final showLyrics = ref.watch(showLyricsProvider);
 
@@ -53,7 +58,7 @@ class PlayerScreen extends ConsumerWidget {
                     showLyrics
                         ? LyricsView(
                             songId: song.id,
-                            position: state.position,
+                            position: position,
                             size: MediaQuery.of(context).size.width - 56,
                           )
                         : CoverArt(
@@ -139,15 +144,15 @@ class PlayerScreen extends ConsumerWidget {
                     const SizedBox(height: 24),
                     // Seek bar
                     Slider(
-                      value: state.duration.inMilliseconds > 0
-                          ? (state.position.inMilliseconds /
-                                  state.duration.inMilliseconds)
+                      value: duration.inMilliseconds > 0
+                          ? (position.inMilliseconds /
+                                  duration.inMilliseconds)
                               .clamp(0.0, 1.0)
                           : 0.0,
                       onChanged: (v) {
                         final target = Duration(
                           milliseconds:
-                              (v * state.duration.inMilliseconds).round(),
+                              (v * duration.inMilliseconds).round(),
                         );
                         ref.read(playerProvider.notifier).seek(target);
                       },
@@ -157,10 +162,10 @@ class PlayerScreen extends ConsumerWidget {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(_fmt(state.position),
+                          Text(_fmt(position),
                               style: const TextStyle(
                                   color: Color(0xFF71717A), fontSize: 12)),
-                          Text(_fmt(state.duration),
+                          Text(_fmt(duration),
                               style: const TextStyle(
                                   color: Color(0xFF71717A), fontSize: 12)),
                         ],
@@ -175,7 +180,7 @@ class PlayerScreen extends ConsumerWidget {
                           iconSize: 22,
                           icon: Icon(
                             Icons.shuffle,
-                            color: state.shuffle
+                            color: shuffle
                                 ? Theme.of(context).colorScheme.primary
                                 : const Color(0xFF71717A),
                           ),
@@ -199,13 +204,13 @@ class PlayerScreen extends ConsumerWidget {
                           child: IconButton(
                             iconSize: 34,
                             icon: Icon(
-                              state.playing ? Icons.pause : Icons.play_arrow,
+                              playing ? Icons.pause : Icons.play_arrow,
                               color: Colors.white,
                             ),
                             onPressed: () {
                               final notifier =
                                   ref.read(playerProvider.notifier);
-                              state.playing
+                              playing
                                   ? notifier.pause()
                                   : notifier.play();
                             },
@@ -220,10 +225,10 @@ class PlayerScreen extends ConsumerWidget {
                         IconButton(
                           iconSize: 22,
                           icon: Icon(
-                            state.repeatMode == LoopMode.one
+                            repeatMode == LoopMode.one
                                 ? Icons.repeat_one
                                 : Icons.repeat,
-                            color: state.repeatMode != LoopMode.off
+                            color: repeatMode != LoopMode.off
                                 ? Theme.of(context).colorScheme.primary
                                 : const Color(0xFF71717A),
                           ),

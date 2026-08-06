@@ -12,7 +12,10 @@ class HomeTrackCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isCurrent = ref.watch(playerProvider).currentSong?.id == song.id;
+    // Scoped via .select() — otherwise every visible card rebuilds on every
+    // position tick during playback, not just the currently-playing one.
+    final currentSongId = ref.watch(playerProvider.select((s) => s.currentSong?.id));
+    final isCurrent = currentSongId == song.id;
     final client = ref.read(apiClientProvider);
     final coverUrl =
         song.coverArt != null ? client?.coverArtUrl(song.coverArt!, size: 300) : null;

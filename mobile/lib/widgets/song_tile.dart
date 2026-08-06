@@ -49,8 +49,12 @@ class SongTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final playerState = ref.watch(playerProvider);
-    final isCurrent = playerState.currentSong?.id == song.id;
+    // Scoped to just the current song's id (via .select()) rather than
+    // watching the whole PlayerState — otherwise every visible SongTile in
+    // a list rebuilds on every position tick during playback (several
+    // times a second), not just the one that's actually playing.
+    final currentSongId = ref.watch(playerProvider.select((s) => s.currentSong?.id));
+    final isCurrent = currentSongId == song.id;
 
     return ListTile(
       onTap: onTap ?? () => _play(ref),

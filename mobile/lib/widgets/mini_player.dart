@@ -9,13 +9,17 @@ class MiniPlayer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(playerProvider);
-    final song = state.currentSong;
+    // Scoped to just the fields this widget actually shows — otherwise it
+    // also rebuilds on unrelated state changes like queue/shuffle/repeat
+    // that have no visible effect on the mini player.
+    final (song, playing, position, duration) = ref.watch(playerProvider.select(
+      (s) => (s.currentSong, s.playing, s.position, s.duration),
+    ));
     if (song == null) return const SizedBox.shrink();
 
     final client = ref.read(apiClientProvider);
-    final progress = state.duration.inMilliseconds > 0
-        ? state.position.inMilliseconds / state.duration.inMilliseconds
+    final progress = duration.inMilliseconds > 0
+        ? position.inMilliseconds / duration.inMilliseconds
         : 0.0;
 
     return GestureDetector(
@@ -80,13 +84,13 @@ class MiniPlayer extends ConsumerWidget {
                   ),
                   IconButton(
                     icon: Icon(
-                      state.playing ? Icons.pause : Icons.play_arrow,
+                      playing ? Icons.pause : Icons.play_arrow,
                       color: Colors.white,
                       size: 28,
                     ),
                     onPressed: () {
                       final notifier = ref.read(playerProvider.notifier);
-                      state.playing ? notifier.pause() : notifier.play();
+                      playing ? notifier.pause() : notifier.play();
                     },
                   ),
                   IconButton(
