@@ -1,29 +1,52 @@
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store/player';
+import { useDownloadsStore } from '../store/downloads';
 import { getAlbum } from '../api/subsonic';
 import { CoverArt } from './CoverArt';
 import { StarButton } from './StarButton';
-import type { Album } from '../api/types';
+import { ContextMenu, useContextMenu } from './ContextMenu';
+import type { Album, Song } from '../api/types';
 
 interface Props {
   album: Album;
 }
 
+const ICONS = {
+  playNext: 'M5.25 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.348a1.875 1.875 0 0 1 0 3.284l-11.54 6.347c-1.25.688-2.779-.215-2.779-1.643V5.653Z',
+  queue: 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5',
+  download: 'M12 3v13.5m0 0-4.5-4.5m4.5 4.5 4.5-4.5M4.5 19.5h15',
+};
+
 export function AlbumCard({ album }: Props) {
-  const { playQueue } = usePlayerStore();
+  const { playQueue, playNext, addToQueue } = usePlayerStore();
+  const requestDownload = useDownloadsStore((s) => s.requestDownload);
+  const { menu, handlers, close } = useContextMenu();
+
+  const fetchSongs = async (): Promise<Song[]> => (await getAlbum(album.id)).song ?? [];
 
   const playAlbum = async (e: React.MouseEvent) => {
     e.preventDefault();
     try {
-      const full = await getAlbum(album.id);
-      playQueue(full.song ?? []);
+      playQueue(await fetchSongs());
     } catch {
       // ignore
     }
   };
 
+  const contextItems = [
+    { label: 'Play next', icon: ICONS.playNext, onClick: async () => {
+      for (const song of [...(await fetchSongs())].reverse()) playNext(song);
+    } },
+    { label: 'Add to queue', icon: ICONS.queue, onClick: async () => {
+      for (const song of await fetchSongs()) addToQueue(song);
+    } },
+    { label: 'Download', icon: ICONS.download, onClick: async () => {
+      requestDownload({ kind: 'album', songs: await fetchSongs() });
+    } },
+  ];
+
   return (
-    <div className="group flex flex-col gap-2">
+    <div {...handlers(contextItems)} className="group flex flex-col gap-2">
       <div className="relative aspect-square">
         <Link to={`/albums/${album.id}`}>
           <CoverArt
@@ -61,6 +84,8 @@ export function AlbumCard({ album }: Props) {
         </div>
         <StarButton starred={!!album.starred} opts={{ albumId: album.id }} className="flex-shrink-0 mt-0.5" />
       </div>
+
+      <ContextMenu menu={menu} onClose={close} />
     </div>
   );
 }

@@ -4,16 +4,17 @@ import { streamUrl, coverArtUrl } from '../api/subsonic';
 import * as offlineDb from '../lib/offlineDb';
 import type { RetainTag } from '../lib/offlineDb';
 import type { Song, Playlist } from '../api/types';
+import { useToastStore } from './toast';
 
 export type DownloadTarget = 'ask' | 'app' | 'device';
 type ItemState = 'downloading' | 'downloaded';
 type ResolvedTarget = 'app' | 'device';
 
 export interface PendingDownloadRequest {
-  kind: 'track' | 'playlist';
+  kind: 'track' | 'playlist' | 'album';
   song?: Song;
   playlist?: Playlist;
-  songs?: Song[]; // for kind: 'playlist'
+  songs?: Song[]; // for kind: 'playlist' | 'album'
 }
 
 interface DownloadsState {
@@ -69,13 +70,24 @@ async function performRequest(
   target: ResolvedTarget,
 ): Promise<void> {
   if (target === 'device') {
-    if (req.kind === 'track' && req.song) await get().saveToDevice(req.song);
-    if (req.kind === 'playlist' && req.songs) {
-      for (const song of req.songs) await get().saveToDevice(song);
+    try {
+      if (req.kind === 'track' && req.song) await get().saveToDevice(req.song);
+      if ((req.kind === 'playlist' || req.kind === 'album') && req.songs) {
+        for (const song of req.songs) await get().saveToDevice(song);
+      }
+    } catch (e) {
+      useToastStore.getState().show(e instanceof Error ? e.message : 'Download failed');
     }
     return;
   }
   if (req.kind === 'track' && req.song) await get().downloadTrack(req.song);
+  if (req.kind === 'album' && req.songs) {
+    // Unlike kind: 'playlist', an album isn't its own offline entity (no
+    // savePlaylist-style record, no album-level "downloaded" badge) — this
+    // just downloads each track individually, same as clicking Download on
+    // every row, so it plugs into the exact same tested retain/dedup path.
+    for (const song of req.songs) await get().downloadTrack(song);
+  }
   if (req.kind === 'playlist' && req.playlist && req.songs) {
     await get().downloadPlaylist(req.playlist, req.songs);
   }
@@ -132,11 +144,13 @@ export const useDownloadsStore = create<DownloadsState>()(
           await fetchAndSaveTrack(song, tag);
           set((s) => ({ status: { ...s.status, [key]: 'downloaded' } }));
         } catch (e) {
+          const message = e instanceof Error ? e.message : 'Download failed';
           set((s) => {
             const status = { ...s.status };
             delete status[key];
-            return { status, errors: { ...s.errors, [key]: e instanceof Error ? e.message : 'Download failed' } };
+            return { status, errors: { ...s.errors, [key]: message } };
           });
+          useToastStore.getState().show(`Couldn't download "${song.title}": ${message}`);
         }
       },
 
@@ -173,11 +187,13 @@ export const useDownloadsStore = create<DownloadsState>()(
           });
           set((s) => ({ status: { ...s.status, [key]: 'downloaded' } }));
         } catch (e) {
+          const message = e instanceof Error ? e.message : 'Download failed';
           set((s) => {
             const status = { ...s.status };
             delete status[key];
-            return { status, errors: { ...s.errors, [key]: e instanceof Error ? e.message : 'Download failed' } };
+            return { status, errors: { ...s.errors, [key]: message } };
           });
+          useToastStore.getState().show(`Couldn't download "${playlist.name}": ${message}`);
         }
       },
 

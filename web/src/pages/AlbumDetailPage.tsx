@@ -2,9 +2,18 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getAlbum } from '../api/subsonic';
 import { usePlayerStore } from '../store/player';
+import { useDownloadsStore } from '../store/downloads';
 import { CoverArt } from '../components/CoverArt';
 import { SongRow } from '../components/SongRow';
 import { StarButton } from '../components/StarButton';
+import { ContextMenu, useContextMenu } from '../components/ContextMenu';
+
+const ICONS = {
+  playNext: 'M5.25 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.348a1.875 1.875 0 0 1 0 3.284l-11.54 6.347c-1.25.688-2.779-.215-2.779-1.643V5.653Z',
+  queue: 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5',
+  download: 'M12 3v13.5m0 0-4.5-4.5m4.5 4.5 4.5-4.5M4.5 19.5h15',
+  more: 'M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm0 6a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm0 6a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z',
+};
 
 function formatDuration(s: number) {
   const h = Math.floor(s / 3600);
@@ -14,7 +23,9 @@ function formatDuration(s: number) {
 
 export function AlbumDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { playQueue } = usePlayerStore();
+  const { playQueue, playNext, addToQueue } = usePlayerStore();
+  const requestDownload = useDownloadsStore((s) => s.requestDownload);
+  const { menu, openAt, close } = useContextMenu();
 
   const { data: album, isLoading, isError } = useQuery({
     queryKey: ['album', id],
@@ -39,6 +50,16 @@ export function AlbumDetailPage() {
   }
 
   const songs = album.song ?? [];
+
+  const menuItems = [
+    { label: 'Play next', icon: ICONS.playNext, onClick: () => {
+      for (const song of [...songs].reverse()) playNext(song);
+    } },
+    { label: 'Add to queue', icon: ICONS.queue, onClick: () => {
+      for (const song of songs) addToQueue(song);
+    } },
+    { label: 'Download', icon: ICONS.download, onClick: () => requestDownload({ kind: 'album', songs }) },
+  ];
 
   return (
     <div className="p-6">
@@ -65,6 +86,15 @@ export function AlbumDetailPage() {
               Play
             </button>
             <StarButton starred={!!album.starred} opts={{ albumId: album.id }} />
+            <button
+              onClick={(e) => openAt(e, menuItems)}
+              title="More options"
+              className="text-zinc-400 hover:text-white transition-colors"
+            >
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d={ICONS.more} />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
@@ -75,6 +105,8 @@ export function AlbumDetailPage() {
           <SongRow key={song.id} song={song} queue={songs} index={i + 1} />
         ))}
       </div>
+
+      <ContextMenu menu={menu} onClose={close} />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useDownloadsStore } from './downloads';
+import { useToastStore } from './toast';
 import { setCredentials } from '../api/subsonic';
 import * as offlineDb from '../lib/offlineDb';
 import type { Song, Playlist } from '../api/types';
@@ -37,6 +38,7 @@ beforeEach(async () => {
     req.onblocked = () => resolve();
   });
   useDownloadsStore.setState({ status: {}, errors: {}, defaultTarget: 'ask', pendingRequest: null });
+  useToastStore.setState({ message: null });
 });
 
 afterEach(() => {
@@ -89,6 +91,17 @@ describe('downloadTrack', () => {
     expect(useDownloadsStore.getState().trackState('1')).toBeUndefined();
     expect(useDownloadsStore.getState().errors['t:1']).toMatch(/failed/i);
     expect(await offlineDb.isTrackDownloaded('1')).toBe(false);
+  });
+
+  // #12: the `errors` record was already populated on failure, but nothing
+  // in the UI ever read it — a failed download reverted silently. Surfaced
+  // via a toast now.
+  it('surfaces a fetch failure via the toast store', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    await useDownloadsStore.getState().downloadTrack(song('1'));
+
+    expect(useToastStore.getState().message).toMatch(/track 1/i);
+    expect(useToastStore.getState().message).toMatch(/failed/i);
   });
 
   it('cover art fetch failure does not fail the track download', async () => {
@@ -232,6 +245,15 @@ describe('requestDownload / resolvePendingRequest / cancelPendingRequest', () =>
 
     expect(useDownloadsStore.getState().defaultTarget).toBe('ask');
     expect(await offlineDb.isTrackDownloaded('1')).toBe(false); // saved to device, not offline storage
+  });
+
+  it('surfaces a save-to-device failure via the toast store instead of an unhandled rejection', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+
+    useDownloadsStore.getState().requestDownload({ kind: 'track', song: song('1') });
+    await expect(useDownloadsStore.getState().resolvePendingRequest('device', false)).resolves.toBeUndefined();
+
+    expect(useToastStore.getState().message).toMatch(/failed/i);
   });
 
   it('resolvePendingRequest for a playlist request downloads all its tracks', async () => {
