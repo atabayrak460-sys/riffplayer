@@ -10,31 +10,12 @@ import { createHash } from 'crypto';
 import { getDb } from '../db/database.js';
 import { escapeLike } from '../db/likeEscape.js';
 import { TtlCache } from './ttlCache.js';
+import { SONG_SELECT_LIST, SONG_FROM } from '../routes/subsonic/endpoints/browse.js';
+import type { SongRow } from '../routes/subsonic/serialize.js';
 
 interface TopArtist {
   name: string;
   play_count: number;
-}
-
-interface LocalSong {
-  id: number;
-  title: string;
-  album_id: number;
-  album_name: string;
-  artist_id: number;
-  artist_name: string;
-  duration_s: number | null;
-  size: number | null;
-  bitrate: number | null;
-  format: string | null;
-  path: string;
-  added_at: number;
-  starred: number | null;
-  track_no: number | null;
-  disc_no: number | null;
-  year: number | null;
-  replaygain_track: number | null;
-  replaygain_album: number | null;
 }
 
 export function getUserTopArtists(userId: number, limitDays = 90, count = 5): TopArtist[] {
@@ -74,28 +55,24 @@ async function fetchSimilarArtistNames(
   return (data.similarartists?.artist ?? []).map((a) => a.name);
 }
 
-function findLocalTracksByArtistName(artistName: string, limit = 3): LocalSong[] {
+function findLocalTracksByArtistName(artistName: string, limit = 3): SongRow[] {
   return getDb()
     .prepare(`
-      SELECT t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
-             t.format, t.path, t.added_at, t.album_id, t.artist_id,
-             t.replaygain_track, t.replaygain_album,
-             ar.name AS artist_name, al.name AS album_name, al.year,
-             NULL AS starred
-      FROM tracks t
-      JOIN artists ar ON ar.id = t.artist_id
-      JOIN albums al ON al.id = t.album_id
+      SELECT ${SONG_SELECT_LIST}${SONG_FROM}
       WHERE ar.name LIKE ? ESCAPE '\\'
       ORDER BY RANDOM()
       LIMIT ?
     `)
-    .all(`%${escapeLike(artistName)}%`, limit) as LocalSong[];
+    // No signed-in user for a "starred" flag here — bound NULL never
+    // matches favorites.user_id, so f.created_at (and therefore starred)
+    // comes back NULL for every row, same as the old NULL-literal version.
+    .all(null, `%${escapeLike(artistName)}%`, limit) as SongRow[];
 }
 
 // Capped at 500 entries so it can never grow unboundedly on a long-running,
 // multi-user server — comfortably above any realistic self-hosted user
 // count, so eviction never kicks in during normal use.
-const _cache = new TtlCache<LocalSong[]>(6 * 60 * 60 * 1000, 500);
+const _cache = new TtlCache<SongRow[]>(6 * 60 * 60 * 1000, 500);
 
 /** Folds a fingerprint of the API key into the cache key (hashed, not
  * stored raw) so rotating it invalidates any stale cached recommendations
@@ -109,7 +86,7 @@ function cacheKeyFor(userId: number, apiKey: string): string {
 export async function getLastFmRecommendations(
   userId: number,
   apiKey: string,
-): Promise<LocalSong[]> {
+): Promise<SongRow[]> {
   const cacheKey = cacheKeyFor(userId, apiKey);
   const cached = _cache.get(cacheKey);
   if (cached) return cached;
@@ -130,7 +107,7 @@ export async function getLastFmRecommendations(
   );
 
   // Find local matches
-  const songs: LocalSong[] = [];
+  const songs: SongRow[] = [];
   const seen = new Set<number>();
   for (const name of candidates) {
     for (const song of findLocalTracksByArtistName(name, 3)) {

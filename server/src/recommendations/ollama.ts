@@ -12,6 +12,8 @@ import { getDb } from '../db/database.js';
 import { escapeLike } from '../db/likeEscape.js';
 import { getUserTopArtists } from './lastfm.js';
 import { TtlCache } from './ttlCache.js';
+import { SONG_SELECT_LIST, SONG_FROM } from '../routes/subsonic/endpoints/browse.js';
+import type { SongRow } from '../routes/subsonic/serialize.js';
 
 interface OllamaChatResponse {
   message?: { content: string };
@@ -52,21 +54,15 @@ export function parseNamePairs(text: string): Array<{ artist: string; track: str
     .filter((p) => p.artist && p.track);
 }
 
-function findLocalMatch(artist: string, track: string) {
+function findLocalMatch(artist: string, track: string): SongRow | undefined {
   return getDb()
     .prepare(`
-      SELECT t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
-             t.format, t.path, t.added_at, t.album_id, t.artist_id,
-             t.replaygain_track, t.replaygain_album,
-             ar.name AS artist_name, al.name AS album_name, al.year,
-             NULL AS starred
-      FROM tracks t
-      JOIN artists ar ON ar.id = t.artist_id
-      JOIN albums al ON al.id = t.album_id
+      SELECT ${SONG_SELECT_LIST}${SONG_FROM}
       WHERE ar.name LIKE ? ESCAPE '\\' AND t.title LIKE ? ESCAPE '\\'
       LIMIT 1
     `)
-    .get(`%${escapeLike(artist)}%`, `%${escapeLike(track)}%`);
+    // No signed-in user for a "starred" flag here — see the identical note in lastfm.ts.
+    .get(null, `%${escapeLike(artist)}%`, `%${escapeLike(track)}%`) as SongRow | undefined;
 }
 
 function getUserTopTracks(userId: number, limitDays = 90, count = 10) {
@@ -89,13 +85,13 @@ function getUserTopTracks(userId: number, limitDays = 90, count = 10) {
 // the key (unlike lastfm's API key, these aren't secret, so no need to
 // hash them) so changing either invalidates stale cached results
 // immediately instead of serving them for up to the full TTL.
-const _ollamaCache = new TtlCache<unknown[]>(24 * 60 * 60 * 1000, 500);
+const _ollamaCache = new TtlCache<SongRow[]>(24 * 60 * 60 * 1000, 500);
 
 export async function getOllamaRecommendations(
   userId: number,
   ollamaUrl: string,
   model: string,
-): Promise<unknown[]> {
+): Promise<SongRow[]> {
   const key = `ollama:${userId}:${ollamaUrl}:${model}`;
   const cached = _ollamaCache.get(key);
   if (cached) return cached;
@@ -120,10 +116,10 @@ Suggest 20 tracks to discover. IMPORTANT RULES:
   const raw = await callOllama(ollamaUrl, model, prompt);
   const pairs = parseNamePairs(raw);
 
-  const songs: unknown[] = [];
+  const songs: SongRow[] = [];
   const seen = new Set<number>();
   for (const { artist, track } of pairs) {
-    const match = findLocalMatch(artist, track) as { id: number } | undefined;
+    const match = findLocalMatch(artist, track);
     if (match && !seen.has(match.id)) {
       seen.add(match.id);
       songs.push(match);

@@ -3,6 +3,7 @@ import { getDb } from '../../../db/database.js';
 import { escapeLike } from '../../../db/likeEscape.js';
 import { sendOk } from '../response.js';
 import { xmlTag, artistAttrs, albumAttrs, songAttrs, toJson, type ArtistRow, type AlbumRow, type SongRow } from '../serialize.js';
+import { SONG_SELECT_LIST, SONG_FROM } from './browse.js';
 
 type Q = Record<string, string | undefined>;
 const p = (req: FastifyRequest) => ({ ...(req.query as Q), ...((req.body as Q) ?? {}) });
@@ -34,16 +35,7 @@ GROUP BY al.id
 ORDER BY al.name
 LIMIT ? OFFSET ?`;
 
-const SONG_COLS = `
-  t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
-  t.format, t.path, t.added_at, t.album_id, t.artist_id, t.genre,
-  t.replaygain_track, t.replaygain_album,
-  ar.name AS artist_name, al.name AS album_name, al.year,
-  f.created_at AS starred
-FROM tracks t
-JOIN artists ar ON ar.id = t.artist_id
-JOIN albums al ON al.id = t.album_id
-LEFT JOIN favorites f ON f.item_type = 'track' AND f.item_id = t.id AND f.user_id = ?
+const SONG_COLS = `${SONG_SELECT_LIST}${SONG_FROM}
 WHERE t.title LIKE ? ESCAPE '\\'
 ORDER BY t.title
 LIMIT ? OFFSET ?`;

@@ -32,7 +32,7 @@ export async function recommendationsPlugin(app: FastifyInstance): Promise<void>
     const songs = await getLastFmRecommendations(userId, apiKey);
 
     reply.send({
-      songs: songs.map((s) => toJson(songAttrs(s as unknown as SongRow))),
+      songs: songs.map((s) => toJson(songAttrs(s))),
       source: 'lastfm',
       note: 'All tracks are from your own library.',
     });
@@ -48,7 +48,7 @@ export async function recommendationsPlugin(app: FastifyInstance): Promise<void>
     const ollamaUrl = getSetting('ollama_url');
     const ollamaModel = getSetting('ollama_model') ?? 'llama3.2';
 
-    let songs: unknown[];
+    let songs: SongRow[];
     let source: string;
 
     if (ollamaUrl) {
@@ -63,7 +63,7 @@ export async function recommendationsPlugin(app: FastifyInstance): Promise<void>
     }
 
     reply.send({
-      songs: (songs as SongRow[]).map((s) => toJson(songAttrs(s))),
+      songs: songs.map((s) => toJson(songAttrs(s))),
       source,
       note: 'All tracks are from your own library. No external sources.',
     });
