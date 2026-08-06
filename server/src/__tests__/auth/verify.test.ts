@@ -48,6 +48,25 @@ describe('checkSubsonicToken', () => {
   it('rejects a wrong token', () => {
     expect(checkSubsonicToken('sesame', 'deadbeef'.repeat(4), 'salt')).toBe(false);
   });
+
+  // Regression for #30: timingSafeEqual throws a RangeError on mismatched
+  // buffer lengths, and `t=` is an unvalidated, attacker-controlled query
+  // param — a short/long/empty token must return false, never throw.
+  it('rejects a too-short token without throwing', () => {
+    expect(() => checkSubsonicToken('sesame', 'short', 'abc123')).not.toThrow();
+    expect(checkSubsonicToken('sesame', 'short', 'abc123')).toBe(false);
+  });
+
+  it('rejects a too-long token without throwing', () => {
+    const overlong = 'a'.repeat(200);
+    expect(() => checkSubsonicToken('sesame', overlong, 'abc123')).not.toThrow();
+    expect(checkSubsonicToken('sesame', overlong, 'abc123')).toBe(false);
+  });
+
+  it('rejects an empty token without throwing', () => {
+    expect(() => checkSubsonicToken('sesame', '', 'abc123')).not.toThrow();
+    expect(checkSubsonicToken('sesame', '', 'abc123')).toBe(false);
+  });
 });
 
 describe('hashPassword / verifyPasswordHash', () => {
@@ -104,6 +123,19 @@ describe('Subsonic auth preHandler', () => {
     const body = JSON.parse(res.body)['subsonic-response'];
     expect(body.status).toBe('failed');
     expect(body.error.code).toBe(40); // WRONG_CREDENTIALS
+  });
+
+  // Regression for #30: a malformed t= (not 32 hex chars) used to crash the
+  // request with a 500 instead of failing auth cleanly.
+  it('protected endpoint rejects a malformed (non-32-char) token without crashing', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/rest/getLicense.view?f=json&u=admin&t=notarealtoken&s=xyz`,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body)['subsonic-response'];
+    expect(body.status).toBe('failed');
+    expect(body.error.code).toBe(40); // WRONG_CREDENTIALS, not a 500
   });
 
   it('protected endpoint accepts correct token auth', async () => {

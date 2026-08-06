@@ -45,7 +45,11 @@ function getSetting(key: string): string | null {
 
 // ── Last.fm ───────────────────────────────────────────────────────────────────
 
-function lfmSign(params: Record<string, string>, secret: string): string {
+/** Exported for tests only — Last.fm's request-signing algorithm (sorted
+ * param concatenation + secret, md5'd) is the one piece of scrobbling logic
+ * that's pure and worth asserting on directly rather than only indirectly
+ * via a mocked fetch call. */
+export function lfmSign(params: Record<string, string>, secret: string): string {
   const sorted = Object.keys(params).sort();
   const str = sorted.map((k) => k + params[k]).join('') + secret;
   return createHash('md5').update(str, 'utf8').digest('hex');
