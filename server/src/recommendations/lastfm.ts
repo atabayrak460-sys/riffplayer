@@ -6,8 +6,10 @@
  * HARD RULE: only tracks already in the user's library are returned.
  * No external links or acquisition paths are ever provided.
  */
+import { createHash } from 'crypto';
 import { getDb } from '../db/database.js';
 import { escapeLike } from '../db/likeEscape.js';
+import { TtlCache } from './ttlCache.js';
 
 interface TopArtist {
   name: string;
@@ -90,27 +92,26 @@ function findLocalTracksByArtistName(artistName: string, limit = 3): LocalSong[]
     .all(`%${escapeLike(artistName)}%`, limit) as LocalSong[];
 }
 
-/** In-memory cache: key → { songs, timestamp } */
-const _cache = new Map<string, { songs: LocalSong[]; ts: number }>();
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+// Capped at 500 entries so it can never grow unboundedly on a long-running,
+// multi-user server — comfortably above any realistic self-hosted user
+// count, so eviction never kicks in during normal use.
+const _cache = new TtlCache<LocalSong[]>(6 * 60 * 60 * 1000, 500);
 
-function getCached(key: string): LocalSong[] | null {
-  const entry = _cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > CACHE_TTL_MS) { _cache.delete(key); return null; }
-  return entry.songs;
-}
-
-function setCached(key: string, songs: LocalSong[]): void {
-  _cache.set(key, { songs, ts: Date.now() });
+/** Folds a fingerprint of the API key into the cache key (hashed, not
+ * stored raw) so rotating it invalidates any stale cached recommendations
+ * immediately, instead of serving results computed under the old key for
+ * up to the full TTL. */
+function cacheKeyFor(userId: number, apiKey: string): string {
+  const fingerprint = createHash('sha256').update(apiKey).digest('hex').slice(0, 12);
+  return `lfm:${userId}:${fingerprint}`;
 }
 
 export async function getLastFmRecommendations(
   userId: number,
   apiKey: string,
 ): Promise<LocalSong[]> {
-  const cacheKey = `lfm:${userId}`;
-  const cached = getCached(cacheKey);
+  const cacheKey = cacheKeyFor(userId, apiKey);
+  const cached = _cache.get(cacheKey);
   if (cached) return cached;
 
   const topArtists = getUserTopArtists(userId, 90, 5);
@@ -144,6 +145,6 @@ export async function getLastFmRecommendations(
     [songs[i], songs[j]] = [songs[j], songs[i]];
   }
 
-  setCached(cacheKey, songs);
+  _cache.set(cacheKey, songs);
   return songs;
 }

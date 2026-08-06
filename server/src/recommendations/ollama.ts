@@ -11,6 +11,7 @@
 import { getDb } from '../db/database.js';
 import { escapeLike } from '../db/likeEscape.js';
 import { getUserTopArtists } from './lastfm.js';
+import { TtlCache } from './ttlCache.js';
 
 interface OllamaChatResponse {
   message?: { content: string };
@@ -84,17 +85,20 @@ function getUserTopTracks(userId: number, limitDays = 90, count = 10) {
     .all(userId, since, count) as { title: string; artist: string }[];
 }
 
-const _ollamaCache = new Map<string, { songs: unknown[]; ts: number }>();
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Capped at 500 entries — see ttlCache.ts. ollamaUrl/model are folded into
+// the key (unlike lastfm's API key, these aren't secret, so no need to
+// hash them) so changing either invalidates stale cached results
+// immediately instead of serving them for up to the full TTL.
+const _ollamaCache = new TtlCache<unknown[]>(24 * 60 * 60 * 1000, 500);
 
 export async function getOllamaRecommendations(
   userId: number,
   ollamaUrl: string,
   model: string,
 ): Promise<unknown[]> {
-  const key = `ollama:${userId}`;
+  const key = `ollama:${userId}:${ollamaUrl}:${model}`;
   const cached = _ollamaCache.get(key);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.songs;
+  if (cached) return cached;
 
   const topArtists = getUserTopArtists(userId, 90, 10).map((a) => a.name);
   const topTracks = getUserTopTracks(userId, 90, 10).map(
@@ -126,7 +130,7 @@ Suggest 20 tracks to discover. IMPORTANT RULES:
     }
   }
 
-  _ollamaCache.set(key, { songs, ts: Date.now() });
+  _ollamaCache.set(key, songs);
   return songs;
 }
 
