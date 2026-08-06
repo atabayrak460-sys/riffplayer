@@ -20,6 +20,21 @@ function writeWav(p: string): void {
   writeFileSync(p, b);
 }
 
+// Same header, but with a real (silent) PCM payload — ffmpeg refuses to
+// produce meaningful output from a zero-sample WAV, and the transcoding
+// tests below need to observe an actual successful ffmpeg run.
+function writeWavWithAudio(p: string, seconds = 1): void {
+  const dataBytes = 44100 * 2 * seconds; // mono, 16-bit
+  const b = Buffer.alloc(44 + dataBytes);
+  b.write('RIFF', 0, 'ascii'); b.writeUInt32LE(36 + dataBytes, 4);
+  b.write('WAVE', 8, 'ascii'); b.write('fmt ', 12, 'ascii');
+  b.writeUInt32LE(16, 16);  b.writeUInt16LE(1, 20);  b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(44100, 24); b.writeUInt32LE(88200, 28);
+  b.writeUInt16LE(2, 32);   b.writeUInt16LE(16, 34);
+  b.write('data', 36, 'ascii'); b.writeUInt32LE(dataBytes, 40);
+  writeFileSync(p, b); // silent PCM (Buffer.alloc zero-fills) is enough for ffmpeg
+}
+
 let app: FastifyInstance;
 let tmpDir: string;
 let trackId: number;
@@ -129,4 +144,95 @@ describe('download.view', () => {
     });
     expect(res.statusCode).toBe(206);
   });
+});
+
+// Exercises the real ffmpeg binary rather than mocking child_process — this
+// is the only way to actually verify the constructed -f/-b:a/-af arguments
+// are valid ffmpeg syntax, not just that stream.ts *tried* to build them.
+describe('stream.view — transcoding (needsTranscode)', () => {
+  let audioTrackId: number;
+
+  beforeEach(() => {
+    const wavPath = path.join(tmpDir, 'audio.wav');
+    writeWavWithAudio(wavPath);
+    audioTrackId = Number(
+      getDb().prepare(`
+        INSERT INTO tracks (title, album_id, artist_id, path, size, format, bitrate)
+        VALUES ('Audio Track', (SELECT album_id FROM tracks WHERE id = ?), (SELECT artist_id FROM tracks WHERE id = ?), ?, 176444, 'WAVE', 1411)
+      `).run(trackId, trackId, wavPath).lastInsertRowid,
+    );
+  });
+
+  it('transcodes when the requested format differs from the native format', async () => {
+    const res = await app.inject({
+      url: `/rest/stream.view?${auth}&id=${audioTrackId}&format=mp3`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('audio/mpeg');
+    expect(res.rawPayload.length).toBeGreaterThan(0);
+  }, 15000);
+
+  it('does not transcode when the requested format matches the native format and no bitrate cap applies', async () => {
+    const res = await app.inject({
+      url: `/rest/stream.view?${auth}&id=${audioTrackId}&format=wav`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/audio\/wav/);
+    // Only the direct-serve path sets Accept-Ranges — proof ffmpeg was never invoked.
+    expect(res.headers['accept-ranges']).toBe('bytes');
+  });
+
+  it('transcodes when the track bitrate exceeds the requested maxBitRate, even with no format specified', async () => {
+    const res = await app.inject({
+      url: `/rest/stream.view?${auth}&id=${audioTrackId}&maxBitRate=128`,
+    });
+    expect(res.statusCode).toBe(200);
+    // No format requested and native isn't 'raw', so serveTranscoded defaults to mp3.
+    expect(res.headers['content-type']).toBe('audio/mpeg');
+  }, 15000);
+
+  it('does not transcode when maxBitRate is above the track bitrate', async () => {
+    const res = await app.inject({
+      url: `/rest/stream.view?${auth}&id=${audioTrackId}&maxBitRate=1411`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['accept-ranges']).toBe('bytes'); // direct-serve, not transcoded
+  });
+
+  it('falls back to the user\'s saved transcode preference when the client sends no format', async () => {
+    const userId = (getDb().prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id: number }).id;
+    getDb().prepare('INSERT INTO user_preferences (user_id, transcode_format) VALUES (?, ?)').run(userId, 'mp3');
+
+    const res = await app.inject({ url: `/rest/stream.view?${auth}&id=${audioTrackId}` });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('audio/mpeg');
+  }, 15000);
+
+  it('succeeds when transcoding a track with a ReplayGain value (volume filter applied)', async () => {
+    getDb().prepare('UPDATE tracks SET replaygain_track = ? WHERE id = ?').run(-6.5, audioTrackId);
+
+    const res = await app.inject({
+      url: `/rest/stream.view?${auth}&id=${audioTrackId}&format=mp3`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload.length).toBeGreaterThan(0);
+  }, 15000);
+
+  it('returns a clean 500 rather than hanging or crashing when ffmpeg is not installed', async () => {
+    const realPath = process.env.PATH;
+    process.env.PATH = ''; // hide ffmpeg from spawn('ffmpeg', ...)'s lookup
+    try {
+      const res = await app.inject({
+        url: `/rest/stream.view?${auth}&id=${audioTrackId}&format=mp3`,
+      });
+      // spawn('ffmpeg', ...) fails with ENOENT; the ff.on('error', ...)
+      // handler in stream.ts catches it and replies 500 before Fastify has
+      // committed the streamed response, rather than hanging the request or
+      // crashing the server.
+      expect(res.statusCode).toBe(500);
+      expect(res.body).toContain('Transcoding unavailable');
+    } finally {
+      process.env.PATH = realPath;
+    }
+  }, 15000);
 });
