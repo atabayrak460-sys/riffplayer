@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, unlink, rename, utimes, chmod } from 'fs/promises';
 import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
@@ -292,5 +292,27 @@ describe('scanLibrary', () => {
 
     await scanLibrary(tmpDir);
     await expect(scanLibrary(tmpDir)).resolves.toMatchObject({ skipped: 1 });
+  });
+
+  it('batches multiple new-file inserts into a single transaction rather than one per file (#16)', async () => {
+    writeWav(path.join(tmpDir, 'a.wav'));
+    writeWav(path.join(tmpDir, 'b.wav'));
+    writeWav(path.join(tmpDir, 'c.wav'));
+
+    const txnSpy = vi.spyOn(db, 'transaction');
+    const result = await scanLibrary(tmpDir);
+
+    expect(result.added).toBe(3);
+    // Under BATCH_SIZE, so the whole scan's writes land in exactly one
+    // db.transaction() call — not three separate implicit-autocommit writes.
+    expect(txnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('still commits everything found so far, even for a library smaller than one batch', async () => {
+    writeWav(path.join(tmpDir, 'a.wav'));
+    await scanLibrary(tmpDir);
+
+    const count = (db.prepare('SELECT COUNT(*) as n FROM tracks').get() as { n: number }).n;
+    expect(count).toBe(1);
   });
 });

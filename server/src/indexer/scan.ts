@@ -36,6 +36,35 @@ interface UnresolvedTrack {
   duration_s: number | null;
 }
 
+// Deferred track insert/update, applied later in a batch transaction rather
+// than as its own implicit autocommit — see flushPending().
+type PendingWrite = () => void;
+
+// Flushed at this size (rather than once for the whole scan) so a single
+// very large library doesn't hold one write transaction open for the entire
+// walk, which would block other writers (scrobbles, stars) for the full
+// duration. WAL mode means readers are never blocked either way.
+const BATCH_SIZE = 500;
+
+function flushPending(db: Database.Database, pending: PendingWrite[], result: ScanResult): void {
+  if (!pending.length) return;
+  const batch = pending.splice(0, pending.length);
+  const txn = db.transaction((writes: PendingWrite[]) => {
+    // One write failing (unexpected — params are already validated by the
+    // time they're queued) must not roll back the rest of the batch, same
+    // as today's per-file isolation where each write was its own transaction.
+    for (const write of writes) {
+      try {
+        write();
+      } catch (err) {
+        console.error('[indexer] Error applying deferred write:', err);
+        result.errors++;
+      }
+    }
+  });
+  txn(batch);
+}
+
 /// Atomically claims the next id from the shared artists/albums/tracks
 /// counter (see migration 009) — new rows in any of those three tables draw
 /// from this instead of their own per-table AUTOINCREMENT, so a new album
@@ -88,7 +117,9 @@ async function runScan(libraryPath: string): Promise<ScanResult> {
     .all() as UnresolvedTrack[];
   const unresolved = new Map(rows.filter((t) => t.path.startsWith(libraryPath)).map((t) => [t.path, t]));
 
-  await walkDir(db, libraryPath, result, unresolved);
+  const pending: PendingWrite[] = [];
+  await walkDir(db, libraryPath, result, unresolved, pending);
+  flushPending(db, pending, result); // anything left under BATCH_SIZE from the last directory
 
   // walkDir silently skips a directory it can't read (permission hiccup,
   // flaky network mount, etc.) rather than failing the whole scan — which
@@ -114,6 +145,7 @@ async function walkDir(
   dir: string,
   result: ScanResult,
   unresolved: Map<string, UnresolvedTrack>,
+  pending: PendingWrite[],
 ): Promise<void> {
   let entries;
   try {
@@ -125,9 +157,10 @@ async function walkDir(
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      await walkDir(db, fullPath, result, unresolved);
+      await walkDir(db, fullPath, result, unresolved, pending);
     } else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-      await processFile(db, fullPath, result, unresolved);
+      await processFile(db, fullPath, result, unresolved, pending);
+      if (pending.length >= BATCH_SIZE) flushPending(db, pending, result);
     }
   }
 }
@@ -154,6 +187,7 @@ async function processFile(
   filePath: string,
   result: ScanResult,
   unresolved: Map<string, UnresolvedTrack>,
+  pending: PendingWrite[],
 ): Promise<void> {
   try {
     const fileStats = await stat(filePath);
@@ -201,16 +235,18 @@ async function processFile(
     };
 
     if (existing) {
-      db.prepare(`
-        UPDATE tracks SET
-          title = :title, album_id = :album_id, artist_id = :artist_id,
-          disc_no = :disc_no, track_no = :track_no, duration_s = :duration_s,
-          size = :size, mtime = :mtime, bitrate = :bitrate, format = :format,
-          sample_rate = :sample_rate, replaygain_track = :replaygain_track,
-          replaygain_album = :replaygain_album, mbid = :mbid
-        WHERE path = :path
-      `).run({ ...fields, path: filePath });
-      result.updated++;
+      pending.push(() => {
+        db.prepare(`
+          UPDATE tracks SET
+            title = :title, album_id = :album_id, artist_id = :artist_id,
+            disc_no = :disc_no, track_no = :track_no, duration_s = :duration_s,
+            size = :size, mtime = :mtime, bitrate = :bitrate, format = :format,
+            sample_rate = :sample_rate, replaygain_track = :replaygain_track,
+            replaygain_album = :replaygain_album, mbid = :mbid
+          WHERE path = :path
+        `).run({ ...fields, path: filePath });
+        result.updated++;
+      });
       return;
     }
 
@@ -221,31 +257,35 @@ async function processFile(
     const renameMatch = findRenameMatch(unresolved, fileStats.size, format.duration ?? null);
     if (renameMatch) {
       unresolved.delete(renameMatch.path);
-      db.prepare(`
-        UPDATE tracks SET
-          title = :title, album_id = :album_id, artist_id = :artist_id,
-          disc_no = :disc_no, track_no = :track_no, duration_s = :duration_s,
-          path = :path, size = :size, mtime = :mtime, bitrate = :bitrate,
-          format = :format, sample_rate = :sample_rate,
-          replaygain_track = :replaygain_track, replaygain_album = :replaygain_album,
-          mbid = :mbid
-        WHERE id = :id
-      `).run({ ...fields, path: filePath, id: renameMatch.id });
-      result.renamed++;
+      pending.push(() => {
+        db.prepare(`
+          UPDATE tracks SET
+            title = :title, album_id = :album_id, artist_id = :artist_id,
+            disc_no = :disc_no, track_no = :track_no, duration_s = :duration_s,
+            path = :path, size = :size, mtime = :mtime, bitrate = :bitrate,
+            format = :format, sample_rate = :sample_rate,
+            replaygain_track = :replaygain_track, replaygain_album = :replaygain_album,
+            mbid = :mbid
+          WHERE id = :id
+        `).run({ ...fields, path: filePath, id: renameMatch.id });
+        result.renamed++;
+      });
       return;
     }
 
-    db.prepare(`
-      INSERT INTO tracks
-        (id, title, album_id, artist_id, disc_no, track_no, duration_s,
-         path, size, mtime, bitrate, format, sample_rate,
-         replaygain_track, replaygain_album, mbid)
-      VALUES
-        (:id, :title, :album_id, :artist_id, :disc_no, :track_no, :duration_s,
-         :path, :size, :mtime, :bitrate, :format, :sample_rate,
-         :replaygain_track, :replaygain_album, :mbid)
-    `).run({ ...fields, id: nextSharedId(db), path: filePath });
-    result.added++;
+    pending.push(() => {
+      db.prepare(`
+        INSERT INTO tracks
+          (id, title, album_id, artist_id, disc_no, track_no, duration_s,
+           path, size, mtime, bitrate, format, sample_rate,
+           replaygain_track, replaygain_album, mbid)
+        VALUES
+          (:id, :title, :album_id, :artist_id, :disc_no, :track_no, :duration_s,
+           :path, :size, :mtime, :bitrate, :format, :sample_rate,
+           :replaygain_track, :replaygain_album, :mbid)
+      `).run({ ...fields, id: nextSharedId(db), path: filePath });
+      result.added++;
+    });
   } catch (err) {
     console.error(`[indexer] Error processing ${filePath}:`, err);
     result.errors++;
