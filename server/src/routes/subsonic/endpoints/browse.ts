@@ -10,6 +10,7 @@ import {
   songAttrs,
   toJson,
   isoDate,
+  escText,
   type ArtistRow,
   type AlbumRow,
   type SongRow,
@@ -45,7 +46,7 @@ LEFT JOIN favorites f ON f.item_type = 'album' AND f.item_id = al.id AND f.user_
 // (e.g. an aggregate like COUNT(...)) before the FROM/JOIN clause.
 export const SONG_SELECT_LIST = `
   t.id, t.title, t.track_no, t.disc_no, t.duration_s, t.size, t.bitrate,
-  t.format, t.path, t.added_at, t.album_id, t.artist_id,
+  t.format, t.path, t.added_at, t.album_id, t.artist_id, t.genre,
   t.replaygain_track, t.replaygain_album,
   ar.name AS artist_name, al.name AS album_name, al.year,
   f.created_at AS starred`;
@@ -66,6 +67,29 @@ function getLicense(req: FastifyRequest, reply: FastifyReply): void {
   sendOk(reply, f, {
     xml: xmlTag('license', attrs),
     json: { license: toJson(attrs) },
+  });
+}
+
+// Extensions this server actually implements, per
+// https://opensubsonic.netlify.app/docs/extensions/ — keep in sync with reality,
+// don't advertise something the routes below don't do.
+const OPEN_SUBSONIC_EXTENSIONS: { name: string; versions: number[] }[] = [
+  { name: 'apiKeyAuthentication', versions: [1] }, // subsonicAuth's apiKey branch
+  { name: 'songLyrics', versions: [1] }, // getLyricsBySongId.view
+];
+
+function getOpenSubsonicExtensions(req: FastifyRequest, reply: FastifyReply): void {
+  const { f } = p(req);
+  sendOk(reply, f, {
+    xml: OPEN_SUBSONIC_EXTENSIONS.map((e) =>
+      xmlTag('openSubsonicExtensions', { name: e.name, versions: e.versions.join(',') }),
+    ).join(''),
+    json: {
+      openSubsonicExtensions: OPEN_SUBSONIC_EXTENSIONS.map((e) => ({
+        name: e.name,
+        versions: e.versions,
+      })),
+    },
   });
 }
 
@@ -279,7 +303,7 @@ function getSong(req: FastifyRequest, reply: FastifyReply): void {
 }
 
 function getAlbumList2(req: FastifyRequest, reply: FastifyReply): void {
-  const { f, type = 'alphabeticalByName', size = '10', offset = '0', fromYear, toYear } = p(req);
+  const { f, type = 'alphabeticalByName', size = '10', offset = '0', fromYear, toYear, genre } = p(req);
   const db = getDb();
   const userId = req.subsonicUser!.id;
   const lim = Math.min(Number(size), 500);
@@ -291,7 +315,7 @@ function getAlbumList2(req: FastifyRequest, reply: FastifyReply): void {
   // Bound values for extraWhere's `?` placeholders (currently only used by
   // 'byYear') — kept separate from `params` below so they can be spliced in
   // at the right position regardless of which branch ran.
-  const extraParams: number[] = [];
+  const extraParams: (number | string)[] = [];
 
   switch (type) {
     case 'newest':          orderBy = 'al.created_at DESC'; break;
@@ -308,6 +332,16 @@ function getAlbumList2(req: FastifyRequest, reply: FastifyReply): void {
       } else {
         orderBy = 'al.year DESC, al.name';
       }
+      break;
+    case 'byGenre':
+      if (!genre) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'genre required' });
+      // Filter which albums qualify via a subquery rather than restricting
+      // the LEFT JOIN tracks t below directly — the latter would also
+      // exclude that album's non-matching-genre tracks from the
+      // songCount/duration aggregates, undercounting a mixed-genre album.
+      extraWhere = 'AND al.id IN (SELECT album_id FROM tracks WHERE genre = ?)';
+      extraParams.push(genre);
+      orderBy = 'al.name';
       break;
     case 'starred':
       extraWhere = 'AND f.created_at IS NOT NULL';
@@ -357,6 +391,143 @@ function getAlbumList2(req: FastifyRequest, reply: FastifyReply): void {
   });
 }
 
+function getRandomSongs(req: FastifyRequest, reply: FastifyReply): void {
+  const { f, size = '10', genre, fromYear, toYear } = p(req);
+  // `musicFolderId` is accepted-but-ignored: only ever one effective music
+  // folder today, so filtering on it would just silently return nothing for
+  // clients that pass it — no-op is the safer default over an error.
+  const db = getDb();
+  const userId = req.subsonicUser!.id;
+  const lim = Math.min(Number(size) || 10, 500);
+
+  const conditions: string[] = [];
+  const params: (number | string)[] = [userId];
+  if (fromYear && toYear) {
+    const fy = Number(fromYear);
+    const ty = Number(toYear);
+    conditions.push('al.year BETWEEN ? AND ?');
+    params.push(Math.min(fy, ty), Math.max(fy, ty));
+  }
+  if (genre) {
+    conditions.push('t.genre = ?');
+    params.push(genre);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const songs = db
+    .prepare(`SELECT ${SONG_COLS} ${where} ORDER BY RANDOM() LIMIT ?`)
+    .all(...params, lim) as SongRow[];
+
+  sendOk(reply, f, {
+    xml: xmlTag('randomSongs', {}, songs.map((s) => xmlTag('song', songAttrs(s))).join('')),
+    json: { randomSongs: { song: songs.map((s) => toJson(songAttrs(s))) } },
+  });
+}
+
+function getTopSongs(req: FastifyRequest, reply: FastifyReply): void {
+  const { f, artist, count = '50' } = p(req);
+  if (!artist) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'artist required' });
+
+  const db = getDb();
+  const userId = req.subsonicUser!.id;
+  const lim = Math.min(Number(count) || 50, 500);
+
+  // No external popularity/charting data (privacy-first, no phoning home) —
+  // "top" is this server's own play_history, same signal the rest of the
+  // app already uses for "frequent"/most-played.
+  const songs = db
+    .prepare(`
+      SELECT ${SONG_SELECT_LIST}${SONG_FROM}
+      LEFT JOIN play_history ph ON ph.track_id = t.id AND ph.user_id = ?
+      WHERE ar.name = ? COLLATE NOCASE
+      GROUP BY t.id
+      ORDER BY COUNT(ph.id) DESC, t.title
+      LIMIT ?
+    `)
+    .all(userId, userId, artist, lim) as SongRow[];
+
+  sendOk(reply, f, {
+    xml: xmlTag('topSongs', {}, songs.map((s) => xmlTag('song', songAttrs(s))).join('')),
+    json: { topSongs: { song: songs.map((s) => toJson(songAttrs(s))) } },
+  });
+}
+
+function getSimilarSongs2(req: FastifyRequest, reply: FastifyReply): void {
+  const { f, id, count = '50' } = p(req);
+  if (!id) return sendError(reply, f, { code: SubsonicErrorCode.MISSING_PARAM, message: 'id required' });
+
+  const db = getDb();
+  const userId = req.subsonicUser!.id;
+  const lim = Math.min(Number(count) || 50, 500);
+  const numId = Number(id);
+
+  // `id` can be a song, album, or artist id per the Subsonic spec — resolve
+  // whichever it is down to an artist, then (no external similarity data,
+  // same reasoning as getTopSongs above) fall back to that artist's other
+  // songs as the closest honest answer to "similar".
+  let artistId: number | undefined;
+  let excludeTrackId: number | undefined;
+
+  const track = db.prepare('SELECT artist_id FROM tracks WHERE id = ?').get(numId) as
+    | { artist_id: number }
+    | undefined;
+  if (track) {
+    artistId = track.artist_id;
+    excludeTrackId = numId;
+  } else {
+    const album = db.prepare('SELECT artist_id FROM albums WHERE id = ?').get(numId) as
+      | { artist_id: number }
+      | undefined;
+    if (album) {
+      artistId = album.artist_id;
+    } else {
+      const artistRow = db.prepare('SELECT id FROM artists WHERE id = ?').get(numId) as
+        | { id: number }
+        | undefined;
+      if (artistRow) artistId = artistRow.id;
+    }
+  }
+
+  if (artistId == null) {
+    return sendError(reply, f, { code: SubsonicErrorCode.DATA_NOT_FOUND, message: 'Unknown id' });
+  }
+
+  const songs = db
+    .prepare(`
+      SELECT ${SONG_COLS}
+      WHERE ar.id = ? ${excludeTrackId ? 'AND t.id != ?' : ''}
+      ORDER BY RANDOM() LIMIT ?
+    `)
+    .all(userId, artistId, ...(excludeTrackId ? [excludeTrackId] : []), lim) as SongRow[];
+
+  sendOk(reply, f, {
+    xml: xmlTag('similarSongs2', {}, songs.map((s) => xmlTag('song', songAttrs(s))).join('')),
+    json: { similarSongs2: { song: songs.map((s) => toJson(songAttrs(s))) } },
+  });
+}
+
+function getGenres(req: FastifyRequest, reply: FastifyReply): void {
+  const { f } = p(req);
+  const db = getDb();
+
+  const rows = db
+    .prepare(`
+      SELECT t.genre AS value,
+             COUNT(DISTINCT t.id) AS songCount,
+             COUNT(DISTINCT t.album_id) AS albumCount
+      FROM tracks t
+      WHERE t.genre IS NOT NULL AND t.genre != ''
+      GROUP BY t.genre
+      ORDER BY t.genre COLLATE NOCASE
+    `)
+    .all() as { value: string; songCount: number; albumCount: number }[];
+
+  sendOk(reply, f, {
+    xml: xmlTag('genres', {}, rows.map((r) => xmlTag('genre', { songCount: r.songCount, albumCount: r.albumCount }, escText(r.value))).join('')),
+    json: { genres: { genre: rows } },
+  });
+}
+
 // ── Plugin ────────────────────────────────────────────────────────────────────
 
 export async function browsePlugin(app: FastifyInstance): Promise<void> {
@@ -364,6 +535,7 @@ export async function browsePlugin(app: FastifyInstance): Promise<void> {
     app.route({ method: ['GET', 'POST'], url, handler });
 
   route('/getLicense.view', getLicense);
+  route('/getOpenSubsonicExtensions.view', getOpenSubsonicExtensions);
   route('/getMusicFolders.view', getMusicFolders);
   route('/getIndexes.view', getIndexes);
   route('/getMusicDirectory.view', getMusicDirectory);
@@ -372,4 +544,8 @@ export async function browsePlugin(app: FastifyInstance): Promise<void> {
   route('/getAlbum.view', getAlbum);
   route('/getSong.view', getSong);
   route('/getAlbumList2.view', getAlbumList2);
+  route('/getRandomSongs.view', getRandomSongs);
+  route('/getTopSongs.view', getTopSongs);
+  route('/getSimilarSongs2.view', getSimilarSongs2);
+  route('/getGenres.view', getGenres);
 }

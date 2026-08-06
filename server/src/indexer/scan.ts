@@ -87,6 +87,16 @@ export function isScanInProgress(libraryPath: string): boolean {
   return scansInProgress.has(libraryPath);
 }
 
+// Files seen so far in the current (or most recent) scan of each library —
+// reset to 0 when a scan starts, incremented as files are walked, and left
+// in place after completion so getScanStatus (Subsonic-native) can report a
+// final count without needing a DB column for it.
+const scanCounts = new Map<string, number>();
+
+export function getScanCount(libraryPath: string): number {
+  return scanCounts.get(libraryPath) ?? 0;
+}
+
 export class ScanInProgressError extends Error {
   constructor(libraryPath: string) {
     super(`A scan is already in progress for ${libraryPath}`);
@@ -105,6 +115,7 @@ export async function scanLibrary(libraryPath: string): Promise<ScanResult> {
 }
 
 async function runScan(libraryPath: string): Promise<ScanResult> {
+  scanCounts.set(libraryPath, 0);
   const db = getDb();
   const result: ScanResult = { added: 0, updated: 0, skipped: 0, removed: 0, renamed: 0, errors: 0 };
 
@@ -118,7 +129,7 @@ async function runScan(libraryPath: string): Promise<ScanResult> {
   const unresolved = new Map(rows.filter((t) => t.path.startsWith(libraryPath)).map((t) => [t.path, t]));
 
   const pending: PendingWrite[] = [];
-  await walkDir(db, libraryPath, result, unresolved, pending);
+  await walkDir(db, libraryPath, result, unresolved, pending, libraryPath);
   flushPending(db, pending, result); // anything left under BATCH_SIZE from the last directory
 
   // walkDir silently skips a directory it can't read (permission hiccup,
@@ -146,6 +157,7 @@ async function walkDir(
   result: ScanResult,
   unresolved: Map<string, UnresolvedTrack>,
   pending: PendingWrite[],
+  rootPath: string,
 ): Promise<void> {
   let entries;
   try {
@@ -157,9 +169,10 @@ async function walkDir(
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      await walkDir(db, fullPath, result, unresolved, pending);
+      await walkDir(db, fullPath, result, unresolved, pending, rootPath);
     } else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
       await processFile(db, fullPath, result, unresolved, pending);
+      scanCounts.set(rootPath, (scanCounts.get(rootPath) ?? 0) + 1);
       if (pending.length >= BATCH_SIZE) flushPending(db, pending, result);
     }
   }
@@ -232,6 +245,7 @@ async function processFile(
       replaygain_track: common.replaygain_track_gain?.dB ?? null,
       replaygain_album: common.replaygain_album_gain?.dB ?? null,
       mbid: common.musicbrainz_recordingid ?? null,
+      genre: common.genre?.[0] ?? null,
     };
 
     if (existing) {
@@ -242,7 +256,7 @@ async function processFile(
             disc_no = :disc_no, track_no = :track_no, duration_s = :duration_s,
             size = :size, mtime = :mtime, bitrate = :bitrate, format = :format,
             sample_rate = :sample_rate, replaygain_track = :replaygain_track,
-            replaygain_album = :replaygain_album, mbid = :mbid
+            replaygain_album = :replaygain_album, mbid = :mbid, genre = :genre
           WHERE path = :path
         `).run({ ...fields, path: filePath });
         result.updated++;
@@ -265,7 +279,7 @@ async function processFile(
             path = :path, size = :size, mtime = :mtime, bitrate = :bitrate,
             format = :format, sample_rate = :sample_rate,
             replaygain_track = :replaygain_track, replaygain_album = :replaygain_album,
-            mbid = :mbid
+            mbid = :mbid, genre = :genre
           WHERE id = :id
         `).run({ ...fields, path: filePath, id: renameMatch.id });
         result.renamed++;
@@ -278,11 +292,11 @@ async function processFile(
         INSERT INTO tracks
           (id, title, album_id, artist_id, disc_no, track_no, duration_s,
            path, size, mtime, bitrate, format, sample_rate,
-           replaygain_track, replaygain_album, mbid)
+           replaygain_track, replaygain_album, mbid, genre)
         VALUES
           (:id, :title, :album_id, :artist_id, :disc_no, :track_no, :duration_s,
            :path, :size, :mtime, :bitrate, :format, :sample_rate,
-           :replaygain_track, :replaygain_album, :mbid)
+           :replaygain_track, :replaygain_album, :mbid, :genre)
       `).run({ ...fields, id: nextSharedId(db), path: filePath });
       result.added++;
     });

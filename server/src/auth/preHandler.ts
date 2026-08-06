@@ -2,7 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../db/database.js';
 import { getOrCreateServerSecret } from './seed.js';
 import { checkSubsonicToken, decryptPassword, hashApiKey } from './crypto.js';
-import { sendError, SubsonicErrorCode } from '../routes/subsonic/response.js';
+import { sendError, SubsonicErrorCode, SUBSONIC_API_VERSION } from '../routes/subsonic/response.js';
 
 export interface SubsonicUser {
   id: number;
@@ -10,9 +10,29 @@ export interface SubsonicUser {
   role: string;
 }
 
+// Only reject a client whose requested protocol version is *newer* than what this
+// server speaks (code 30 — "server must upgrade"). Never reject an older `v`: the
+// Subsonic API is backward-compatible by design, and rejecting old clients would
+// violate this project's hard Subsonic-compatibility rule (see CLAUDE.md) for no
+// real benefit — every endpoint here already just implements the current version.
+function clientVersionTooNew(v: string | undefined): boolean {
+  if (!v) return false;
+  const [reqMajor = 0, reqMinor = 0] = v.split('.').map(Number);
+  const [srvMajor = 0, srvMinor = 0] = SUBSONIC_API_VERSION.split('.').map(Number);
+  if (Number.isNaN(reqMajor) || Number.isNaN(reqMinor)) return false;
+  return reqMajor > srvMajor || (reqMajor === srvMajor && reqMinor > srvMinor);
+}
+
 export async function subsonicAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const q = request.query as Record<string, string | undefined>;
-  const { u: username, t: token, s: salt, apiKey, f } = q;
+  const { u: username, t: token, s: salt, apiKey, f, v } = q;
+
+  if (clientVersionTooNew(v)) {
+    return sendError(reply, f, {
+      code: SubsonicErrorCode.BAD_API_VERSION_SERVER,
+      message: `Server supports Subsonic API up to ${SUBSONIC_API_VERSION}, client requested ${v}`,
+    });
+  }
 
   if (!username) {
     return sendError(reply, f, {

@@ -45,6 +45,11 @@ function escAttr(v: AttrVal): string {
   return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 }
 
+/** Escape arbitrary text used as an XML tag's text content (not an attribute). */
+export function escText(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+
 export function xmlTag(
   name: string,
   attrs: Record<string, AttrVal> = {},
@@ -112,6 +117,7 @@ export interface SongRow {
   starred: number | null;
   replaygain_track: number | null;
   replaygain_album: number | null;
+  genre?: string | null;
 }
 
 // ── Entity serializers ────────────────────────────────────────────────────────
@@ -164,6 +170,7 @@ export function songAttrs(row: SongRow): Record<string, AttrVal> {
     created: isoDate(row.added_at),
     isVideo: false,
     type: 'music',
+    genre: row.genre ?? undefined,
     // OpenSubsonic ReplayGain extension (flat fields; clients may ignore)
     replayGainTrackGain: row.replaygain_track ?? undefined,
     replayGainAlbumGain: row.replaygain_album ?? undefined,

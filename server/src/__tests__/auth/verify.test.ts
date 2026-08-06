@@ -174,4 +174,27 @@ describe('Subsonic auth preHandler', () => {
     const body = JSON.parse(res.body)['subsonic-response'];
     expect(body.status).toBe('ok'); // API key auth succeeded
   });
+
+  // #2: BAD_API_VERSION_* existed as dead code — the server never validated `v`.
+  it('rejects a client requesting a newer protocol version than the server supports', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/rest/getLicense.view?f=json&u=admin&t=x&s=y&v=99.0.0`,
+    });
+    const body = JSON.parse(res.body)['subsonic-response'];
+    expect(body.status).toBe('failed');
+    expect(body.error.code).toBe(30); // BAD_API_VERSION_SERVER
+  });
+
+  it('accepts an older protocol version from the client (backward compatible)', async () => {
+    const password = process.env.CADENCE_ADMIN_PASSWORD ?? 'admin';
+    const salt = 'testsalt';
+    const token = makeToken(password, salt);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/rest/getLicense.view?f=json&u=admin&t=${token}&s=${salt}&v=1.0.0`,
+    });
+    const body = JSON.parse(res.body)['subsonic-response'];
+    expect(body.status).toBe('ok');
+  });
 });
