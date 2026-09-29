@@ -1,3 +1,4 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:cadence_mobile/api/subsonic.dart';
 import 'package:cadence_mobile/api/types.dart';
 import 'package:cadence_mobile/audio/audio_handler.dart';
@@ -75,6 +76,24 @@ void main() {
       expect(extras['replayGainTrackGain'], -4.5);
       expect(extras['songId'], 't1');
     });
+
+    test('prefers a local cover path over the network coverArtUrl', () {
+      final song = _song('t1', coverArt: 'cover-1');
+
+      final item = songToMediaItem(song, client,
+          localCoverPath: '/downloads/covers/t1.jpg');
+
+      expect(item.artUri, Uri.file('/downloads/covers/t1.jpg'));
+    });
+
+    test('falls back to the network coverArtUrl with no local cover path', () {
+      final song = _song('t1', coverArt: 'cover-1');
+
+      final item = songToMediaItem(song, client);
+
+      expect(item.artUri!.scheme, 'http');
+      expect(item.artUri!.queryParameters['id'], 'cover-1');
+    });
   });
 
   group('buildAudioSource', () {
@@ -99,12 +118,43 @@ void main() {
     test('plays the local file when the song is downloaded', () async {
       when(() => downloads.localPath('t1'))
           .thenAnswer((_) async => '/downloads/t1.mp3');
+      when(() => downloads.localCoverPath('t1')).thenAnswer((_) async => null);
       final song = _song('t1');
 
       final source = await buildAudioSource(song, client, downloads);
 
       final uri = (source.sequence.single as UriAudioSource).uri;
       expect(uri, Uri.file('/downloads/t1.mp3'));
+    });
+
+    // Regression coverage for the offline lock-screen/notification artwork
+    // fix: a downloaded track's cached cover file should end up as the
+    // MediaItem's artUri, not a network coverArtUrl that would fail to load
+    // offline.
+    test(
+        'uses the downloaded cover file for lock-screen art when the song is downloaded',
+        () async {
+      when(() => downloads.localPath('t1'))
+          .thenAnswer((_) async => '/downloads/t1.mp3');
+      when(() => downloads.localCoverPath('t1'))
+          .thenAnswer((_) async => '/downloads/covers/t1.jpg');
+      final song = _song('t1', coverArt: 'cover-1');
+
+      final source = await buildAudioSource(song, client, downloads);
+
+      final tag = (source.sequence.single as UriAudioSource).tag as MediaItem;
+      expect(tag.artUri, Uri.file('/downloads/covers/t1.jpg'));
+    });
+
+    test(
+        'does not even check for a local cover when the song is not downloaded',
+        () async {
+      when(() => downloads.localPath('t1')).thenAnswer((_) async => null);
+      final song = _song('t1', coverArt: 'cover-1');
+
+      await buildAudioSource(song, client, downloads);
+
+      verifyNever(() => downloads.localCoverPath(any()));
     });
   });
 }

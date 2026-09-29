@@ -23,7 +23,7 @@ class DownloadService {
     final dbPath = p.join(await getDatabasesPath(), 'cadence_downloads.db');
     _db = await openDatabase(
       dbPath,
-      version: 1,
+      version: 2,
       onCreate: (db, _) => db.execute('''
         CREATE TABLE downloads (
           track_id   TEXT PRIMARY KEY,
@@ -32,10 +32,17 @@ class DownloadService {
           artist     TEXT NOT NULL,
           album      TEXT NOT NULL,
           cover_art_id TEXT,
+          cover_local_path TEXT,
           file_size  INTEGER,
           downloaded_at INTEGER NOT NULL
         )
       '''),
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+              'ALTER TABLE downloads ADD COLUMN cover_local_path TEXT');
+        }
+      },
     );
     return _db!;
   }
@@ -54,6 +61,21 @@ class DownloadService {
         columns: ['local_path'], where: 'track_id = ?', whereArgs: [trackId]);
     if (rows.isEmpty) return null;
     final path = rows.first['local_path'] as String;
+    return File(path).existsSync() ? path : null;
+  }
+
+  /// The locally-saved cover art for a downloaded track, if it has one and
+  /// the fetch succeeded — used for offline display (Downloads screen,
+  /// lock-screen/notification artwork) instead of a live network fetch.
+  Future<String?> localCoverPath(String trackId) async {
+    final db = await _database;
+    final rows = await db.query('downloads',
+        columns: ['cover_local_path'],
+        where: 'track_id = ?',
+        whereArgs: [trackId]);
+    if (rows.isEmpty) return null;
+    final path = rows.first['cover_local_path'] as String?;
+    if (path == null) return null;
     return File(path).existsSync() ? path : null;
   }
 
@@ -82,7 +104,8 @@ class DownloadService {
         cancelToken: cancelToken,
       );
       final fileSize = File(savePath).lengthSync();
-      await _saveRecord(song, savePath, fileSize);
+      final coverPath = await _downloadCoverArt(song, client, cancelToken);
+      await _saveRecord(song, savePath, fileSize, coverPath);
     } catch (e) {
       // Clean up partial file
       final f = File(savePath);
@@ -99,12 +122,21 @@ class DownloadService {
   }
 
   Future<void> deleteDownload(String trackId) async {
-    final path = await localPath(trackId);
-    if (path != null) {
+    final db = await _database;
+    final rows = await db.query('downloads',
+        columns: ['local_path', 'cover_local_path'],
+        where: 'track_id = ?',
+        whereArgs: [trackId]);
+    if (rows.isNotEmpty) {
+      final path = rows.first['local_path'] as String;
       final f = File(path);
       if (f.existsSync()) f.deleteSync();
+      final coverPath = rows.first['cover_local_path'] as String?;
+      if (coverPath != null) {
+        final cf = File(coverPath);
+        if (cf.existsSync()) cf.deleteSync();
+      }
     }
-    final db = await _database;
     await db.delete('downloads', where: 'track_id = ?', whereArgs: [trackId]);
   }
 
@@ -117,7 +149,43 @@ class DownloadService {
     return dir.path;
   }
 
-  Future<void> _saveRecord(Song song, String path, int fileSize) async {
+  Future<String> _coversDir() async {
+    final base = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(base.path, 'downloads', 'covers'));
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return dir.path;
+  }
+
+  /// Best-effort — a failed or missing cover shouldn't fail the track
+  /// download itself, so any error *other* than the download being
+  /// cancelled is swallowed here rather than propagated to [download]'s
+  /// `catch`. A genuine cancellation is rethrown so that handler still
+  /// cleans up the partial track file and reports the cancellation, instead
+  /// of this silently completing the download as "successful, no cover".
+  Future<String?> _downloadCoverArt(
+    Song song,
+    SubsonicClient client,
+    CancelToken cancelToken,
+  ) async {
+    if (song.coverArt == null) return null;
+    try {
+      final dir = await _coversDir();
+      final path = p.join(dir, '${song.id}.jpg');
+      await client.downloadCoverArt(song.coverArt!, path,
+          size: 600, cancelToken: cancelToken);
+      return path;
+    } catch (e) {
+      if (cancelToken.isCancelled) rethrow;
+      return null;
+    }
+  }
+
+  Future<void> _saveRecord(
+    Song song,
+    String path,
+    int fileSize,
+    String? coverPath,
+  ) async {
     final db = await _database;
     await db.insert(
       'downloads',
@@ -128,6 +196,7 @@ class DownloadService {
         'artist': song.artist,
         'album': song.album,
         'cover_art_id': song.coverArt,
+        'cover_local_path': coverPath,
         'file_size': fileSize,
         'downloaded_at': DateTime.now().millisecondsSinceEpoch,
       },
@@ -142,8 +211,9 @@ class DownloadService {
         artist: row['artist'] as String,
         album: row['album'] as String,
         coverArtId: row['cover_art_id'] as String?,
+        coverLocalPath: row['cover_local_path'] as String?,
         fileSize: row['file_size'] as int?,
-        downloadedAt: DateTime.fromMillisecondsSinceEpoch(
-            row['downloaded_at'] as int),
+        downloadedAt:
+            DateTime.fromMillisecondsSinceEpoch(row['downloaded_at'] as int),
       );
 }

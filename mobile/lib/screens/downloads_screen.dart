@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -130,12 +131,7 @@ class _DownloadTile extends ConsumerWidget {
 
     return ListTile(
       onTap: onTap,
-      leading: Icon(
-        isCurrent ? Icons.graphic_eq : Icons.music_note,
-        color: isCurrent
-            ? Theme.of(context).colorScheme.primary
-            : const Color(0xFF71717A),
-      ),
+      leading: _DownloadCover(track: track),
       title: Text(
         track.title,
         style: TextStyle(
@@ -151,28 +147,58 @@ class _DownloadTile extends ConsumerWidget {
         '${track.artist} · ${_fmtSize(track.fileSize)}',
         style: const TextStyle(color: Color(0xFF71717A), fontSize: 12),
       ),
-      trailing: IconButton(
-        icon: const Icon(Icons.delete_outline, color: Color(0xFF71717A)),
-        onPressed: () async {
-          final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (dialogContext) => AlertDialog(
-              title: const Text('Delete download?'),
-              content: Text('Remove "${track.title}" from device?'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, false),
-                    child: const Text('Cancel')),
-                TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, true),
-                    child: const Text('Delete',
-                        style: TextStyle(color: Colors.red))),
-              ],
-            ),
-          );
-          if (confirmed == true) onDelete();
-        },
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isCurrent) ...[
+            Icon(Icons.graphic_eq,
+                color: Theme.of(context).colorScheme.primary, size: 16),
+            const SizedBox(width: 8),
+          ],
+          IconButton(
+            icon: const Icon(Icons.delete_outline, color: Color(0xFF71717A)),
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: const Text('Delete download?'),
+                  content: Text('Remove "${track.title}" from device?'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('Cancel')),
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: const Text('Delete',
+                            style: TextStyle(color: Colors.red))),
+                  ],
+                ),
+              );
+              if (confirmed == true) onDelete();
+            },
+          ),
+        ],
       ),
+    );
+  }
+}
+
+/// The downloaded track's locally-cached cover art, if it has one — falls
+/// back to a generic note icon rather than a network fetch, since this
+/// screen is specifically the offline-availability one.
+class _DownloadCover extends StatelessWidget {
+  final DownloadedTrack track;
+  const _DownloadCover({required this.track});
+
+  @override
+  Widget build(BuildContext context) {
+    final path = track.coverLocalPath;
+    if (path == null || !File(path).existsSync()) {
+      return const Icon(Icons.music_note, color: Color(0xFF71717A));
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Image.file(File(path), width: 44, height: 44, fit: BoxFit.cover),
     );
   }
 }

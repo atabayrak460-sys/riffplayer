@@ -113,6 +113,7 @@ class Song {
   final String suffix;
   final String? starred;
   final double? replayGainTrackGain;
+
   /// When this track was indexed into the library — the Subsonic `created`
   /// field. Shown as a "date added" column wherever the surrounding screen
   /// (All Songs, playlists) chooses to pass it through.
@@ -156,9 +157,10 @@ class Song {
         coverArt: j['coverArt'] as String?,
         suffix: j['suffix'] as String? ?? 'mp3',
         starred: j['starred'] as String?,
-        replayGainTrackGain:
-            (j['replayGainTrackGain'] as num?)?.toDouble(),
-        created: j['created'] != null ? DateTime.tryParse(j['created'] as String) : null,
+        replayGainTrackGain: (j['replayGainTrackGain'] as num?)?.toDouble(),
+        created: j['created'] != null
+            ? DateTime.tryParse(j['created'] as String)
+            : null,
         bitRate: (j['bitRate'] as num?)?.toInt(),
         playCount: (j['playCount'] as num?)?.toInt(),
       );
@@ -194,6 +196,7 @@ class Playlist {
   final int songCount;
   final int duration;
   final String? coverArt;
+
   /// Playlist description — "comment" is the Subsonic API's field name for it.
   final String? comment;
   final List<Song>? entries;
@@ -242,6 +245,11 @@ class DownloadedTrack {
   final String artist;
   final String album;
   final String? coverArtId;
+
+  /// Where this track's cover art was saved on disk, if it had one and the
+  /// fetch succeeded — cover art is best-effort, so this can be null even
+  /// when [coverArtId] isn't.
+  final String? coverLocalPath;
   final int? fileSize;
   final DateTime downloadedAt;
 
@@ -252,6 +260,7 @@ class DownloadedTrack {
     required this.artist,
     required this.album,
     this.coverArtId,
+    this.coverLocalPath,
     this.fileSize,
     required this.downloadedAt,
   });
@@ -485,10 +494,14 @@ class LibrarySidebarItem {
     required this.lastInteractedAt,
   });
 
-  factory LibrarySidebarItem.fromJson(Map<String, dynamic> j) => LibrarySidebarItem(
+  factory LibrarySidebarItem.fromJson(Map<String, dynamic> j) =>
+      LibrarySidebarItem(
         itemType: j['itemType'] as String,
         itemKey: j['itemKey'] as String,
-        pinnedAt: j['pinnedAt'] != null ? DateTime.tryParse(j['pinnedAt'] as String) : null,
-        lastInteractedAt: DateTime.tryParse(j['lastInteractedAt'] as String) ?? DateTime.fromMillisecondsSinceEpoch(0),
+        pinnedAt: j['pinnedAt'] != null
+            ? DateTime.tryParse(j['pinnedAt'] as String)
+            : null,
+        lastInteractedAt: DateTime.tryParse(j['lastInteractedAt'] as String) ??
+            DateTime.fromMillisecondsSinceEpoch(0),
       );
 }

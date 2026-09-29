@@ -48,23 +48,24 @@ class SubsonicClient {
     };
   }
 
-  String _url(String endpoint) =>
-      '${credentials.serverUrl}/rest/$endpoint';
+  String _url(String endpoint) => '${credentials.serverUrl}/rest/$endpoint';
 
   // ── Media URL builders (used as audio/image src) ────────────────────────────
 
   String streamUrl(String trackId) {
     final params = {..._authParams(), 'id': trackId};
-    final query =
-        params.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&');
+    final query = params.entries
+        .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
+        .join('&');
     return '${_url('stream.view')}?$query';
   }
 
   String coverArtUrl(String id, {int? size}) {
     final params = {..._authParams(), 'id': id};
     if (size != null) params['size'] = size.toString();
-    final query =
-        params.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&');
+    final query = params.entries
+        .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
+        .join('&');
     return '${_url('getCoverArt.view')}?$query';
   }
 
@@ -125,7 +126,8 @@ class SubsonicClient {
     return Artist.fromJson({...a, 'albumCount': albums.length});
   }
 
-  Future<({Artist artist, List<Album> albums})> getArtistDetail(String id) async {
+  Future<({Artist artist, List<Album> albums})> getArtistDetail(
+      String id) async {
     final r = await _get('getArtist.view', {'id': id});
     final a = r['artist'] as Map<String, dynamic>;
     final albums = (a['album'] as List<dynamic>? ?? [])
@@ -134,7 +136,8 @@ class SubsonicClient {
     return (artist: Artist.fromJson(a), albums: albums);
   }
 
-  Future<List<Album>> getAlbumList(String type, {int size = 50, int offset = 0}) async {
+  Future<List<Album>> getAlbumList(String type,
+      {int size = 50, int offset = 0}) async {
     final r = await _get('getAlbumList2.view', {
       'type': type,
       'size': size.toString(),
@@ -226,13 +229,15 @@ class SubsonicClient {
     );
   }
 
-  Future<void> star({String? id, String? albumId, String? artistId}) => _get('star.view', {
+  Future<void> star({String? id, String? albumId, String? artistId}) =>
+      _get('star.view', {
         if (id != null) 'id': id,
         if (albumId != null) 'albumId': albumId,
         if (artistId != null) 'artistId': artistId,
       });
 
-  Future<void> unstar({String? id, String? albumId, String? artistId}) => _get('unstar.view', {
+  Future<void> unstar({String? id, String? albumId, String? artistId}) =>
+      _get('unstar.view', {
         if (id != null) 'id': id,
         if (albumId != null) 'albumId': albumId,
         if (artistId != null) 'artistId': artistId,
@@ -243,7 +248,9 @@ class SubsonicClient {
   Future<List<Playlist>> getPlaylists() async {
     final r = await _get('getPlaylists.view');
     final list = (r['playlists']?['playlist'] as List<dynamic>?) ?? [];
-    return list.map((p) => Playlist.fromJson(p as Map<String, dynamic>)).toList();
+    return list
+        .map((p) => Playlist.fromJson(p as Map<String, dynamic>))
+        .toList();
   }
 
   Future<Playlist> getPlaylist(String id) async {
@@ -263,7 +270,8 @@ class SubsonicClient {
       _get('updatePlaylist.view', {'playlistId': playlistId, 'name': name});
 
   Future<void> setPlaylistDescription(String playlistId, String comment) =>
-      _get('updatePlaylist.view', {'playlistId': playlistId, 'comment': comment});
+      _get('updatePlaylist.view',
+          {'playlistId': playlistId, 'comment': comment});
 
   Future<void> addSongToPlaylist(String playlistId, String songId) => _get(
         'updatePlaylist.view',
@@ -278,7 +286,8 @@ class SubsonicClient {
     Object? data,
   }) async {
     final headers = <String, String>{
-      if (credentials.token != null) 'Authorization': 'Bearer ${credentials.token}',
+      if (credentials.token != null)
+        'Authorization': 'Bearer ${credentials.token}',
     };
     final response = await _dio.request<Map<String, dynamic>>(
       '${credentials.serverUrl}/api/v1/$path',
@@ -288,8 +297,10 @@ class SubsonicClient {
     return response.data ?? {};
   }
 
-  Future<void> reorderPlaylistTracks(String playlistId, List<String> trackIds) =>
-      _apiCall('PUT', 'playlists/$playlistId/tracks', data: {'trackIds': trackIds});
+  Future<void> reorderPlaylistTracks(
+          String playlistId, List<String> trackIds) =>
+      _apiCall('PUT', 'playlists/$playlistId/tracks',
+          data: {'trackIds': trackIds});
 
   /// When each track was added to this playlist, keyed by track id.
   Future<Map<String, DateTime>> getPlaylistTrackDates(String playlistId) async {
@@ -350,11 +361,13 @@ class SubsonicClient {
       _apiCall('POST', 'library-sidebar/interact',
           data: {'itemType': itemType, 'itemKey': itemKey});
 
-  Future<void> pinLibraryItem(String itemType, String itemKey) => _apiCall(
-      'POST', 'library-sidebar/pin', data: {'itemType': itemType, 'itemKey': itemKey});
+  Future<void> pinLibraryItem(String itemType, String itemKey) =>
+      _apiCall('POST', 'library-sidebar/pin',
+          data: {'itemType': itemType, 'itemKey': itemKey});
 
-  Future<void> unpinLibraryItem(String itemType, String itemKey) => _apiCall(
-      'POST', 'library-sidebar/unpin', data: {'itemType': itemType, 'itemKey': itemKey});
+  Future<void> unpinLibraryItem(String itemType, String itemKey) =>
+      _apiCall('POST', 'library-sidebar/unpin',
+          data: {'itemType': itemType, 'itemKey': itemKey});
 
   // ── Recommendations & Wrapped ─────────────────────────────────────────────────
 
@@ -367,7 +380,9 @@ class SubsonicClient {
   }
 
   Future<WrappedStats> getWrapped({int? year}) async {
-    final path = year != null ? 'recommendations/wrapped?year=$year' : 'recommendations/wrapped';
+    final path = year != null
+        ? 'recommendations/wrapped?year=$year'
+        : 'recommendations/wrapped';
     final r = await _apiCall('GET', path);
     return WrappedStats.fromJson(r);
   }
@@ -423,9 +438,11 @@ class SubsonicClient {
   Future<void> adminAddLibrary(String name, String path) =>
       _apiCall('POST', 'admin/libraries', data: {'name': name, 'path': path});
 
-  Future<void> adminDeleteLibrary(int id) => _apiCall('DELETE', 'admin/libraries/$id');
+  Future<void> adminDeleteLibrary(int id) =>
+      _apiCall('DELETE', 'admin/libraries/$id');
 
-  Future<void> adminScanLibrary(int id) => _apiCall('POST', 'admin/libraries/$id/scan');
+  Future<void> adminScanLibrary(int id) =>
+      _apiCall('POST', 'admin/libraries/$id/scan');
 
   // ── Admin: server settings ─────────────────────────────────────────────────
 
@@ -439,7 +456,8 @@ class SubsonicClient {
 
   // ── Scrobble ─────────────────────────────────────────────────────────────────
 
-  Future<void> scrobble(String id, {bool submission = true}) => _get('scrobble.view', {
+  Future<void> scrobble(String id, {bool submission = true}) =>
+      _get('scrobble.view', {
         'id': id,
         'submission': submission.toString(),
       });
@@ -458,6 +476,25 @@ class SubsonicClient {
       savePath,
       queryParameters: params,
       onReceiveProgress: onProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Saves a track's cover art to disk — used by [DownloadService] so a
+  /// downloaded track's artwork is available offline too, instead of every
+  /// display of it needing a live [coverArtUrl] fetch.
+  Future<void> downloadCoverArt(
+    String coverArtId,
+    String savePath, {
+    int? size,
+    CancelToken? cancelToken,
+  }) async {
+    final params = {..._authParams(), 'id': coverArtId};
+    if (size != null) params['size'] = size.toString();
+    await _dio.download(
+      _url('getCoverArt.view'),
+      savePath,
+      queryParameters: params,
       cancelToken: cancelToken,
     );
   }

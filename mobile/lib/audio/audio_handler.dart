@@ -14,33 +14,54 @@ double _replayGainVolume(double? dbGain) {
   return pow(10, dbGain / 20).toDouble().clamp(0.0, 1.0);
 }
 
-/// Converts a [Song] into a [MediaItem] for lock-screen / notification display.
-MediaItem songToMediaItem(Song song, SubsonicClient client) => MediaItem(
+/// Converts a [Song] into a [MediaItem] for lock-screen / notification
+/// display. Prefers [localCoverPath] (a downloaded track's on-disk cover)
+/// over a live [SubsonicClient.coverArtUrl] fetch when one's available —
+/// keeps lock-screen/notification artwork working while offline instead of
+/// silently failing to load a network image.
+MediaItem songToMediaItem(
+  Song song,
+  SubsonicClient client, {
+  String? localCoverPath,
+}) =>
+    MediaItem(
       id: song.id,
       title: song.title,
       artist: song.artist,
       album: song.album,
-      duration: song.duration != null ? Duration(seconds: song.duration!) : null,
-      artUri: song.coverArt != null
-          ? Uri.parse(client.coverArtUrl(song.coverArt!, size: 300))
-          : null,
+      duration:
+          song.duration != null ? Duration(seconds: song.duration!) : null,
+      artUri: localCoverPath != null
+          ? Uri.file(localCoverPath)
+          : (song.coverArt != null
+              ? Uri.parse(client.coverArtUrl(song.coverArt!, size: 300))
+              : null),
       extras: {
         'replayGainTrackGain': song.replayGainTrackGain,
         'songId': song.id,
       },
     );
 
-/// Builds an [AudioSource] for a song, using a local file if downloaded.
+/// Builds an [AudioSource] for a song, using a local file if downloaded —
+/// and, when it is, that download's locally-cached cover art too, so
+/// lock-screen/notification artwork doesn't depend on a network fetch for
+/// a song that's otherwise playing entirely offline.
 Future<AudioSource> buildAudioSource(
   Song song,
   SubsonicClient client,
   DownloadService downloads,
 ) async {
   final localPath = await downloads.localPath(song.id);
-  final uri =
-      localPath != null ? Uri.file(localPath) : Uri.parse(client.streamUrl(song.id));
+  final localCoverPath =
+      localPath != null ? await downloads.localCoverPath(song.id) : null;
+  final uri = localPath != null
+      ? Uri.file(localPath)
+      : Uri.parse(client.streamUrl(song.id));
 
-  return AudioSource.uri(uri, tag: songToMediaItem(song, client));
+  return AudioSource.uri(
+    uri,
+    tag: songToMediaItem(song, client, localCoverPath: localCoverPath),
+  );
 }
 
 class CadenceAudioHandler extends BaseAudioHandler
@@ -58,7 +79,8 @@ class CadenceAudioHandler extends BaseAudioHandler
       final tag = state.currentSource?.tag;
       if (tag is MediaItem) {
         mediaItem.add(tag);
-        _player.setVolume(_replayGainVolume(tag.extras?['replayGainTrackGain'] as double?));
+        _player.setVolume(
+            _replayGainVolume(tag.extras?['replayGainTrackGain'] as double?));
       }
     });
 
@@ -66,10 +88,7 @@ class CadenceAudioHandler extends BaseAudioHandler
     _player.sequenceStateStream.listen((state) {
       if (state == null) return;
       queue.add(
-        state.sequence
-            .map((s) => s.tag)
-            .whereType<MediaItem>()
-            .toList(),
+        state.sequence.map((s) => s.tag).whereType<MediaItem>().toList(),
       );
     });
   }
@@ -169,7 +188,8 @@ class CadenceAudioHandler extends BaseAudioHandler
       setShuffleModeEnabled(shuffleMode != AudioServiceShuffleMode.none);
 
   @override
-  Future<void> setRepeatMode(AudioServiceRepeatMode repeatMode) => setLoopMode(const {
+  Future<void> setRepeatMode(AudioServiceRepeatMode repeatMode) =>
+      setLoopMode(const {
         AudioServiceRepeatMode.none: LoopMode.off,
         AudioServiceRepeatMode.one: LoopMode.one,
         AudioServiceRepeatMode.all: LoopMode.all,
