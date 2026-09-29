@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, mkdir, rm } from 'fs/promises';
 import { writeFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -143,6 +143,37 @@ describe('download.view', () => {
       headers: { range: 'bytes=0-3' },
     });
     expect(res.statusCode).toBe(206);
+  });
+
+  // Regression test: found live — downloading a playlist whose tracks live
+  // at a path containing Turkish characters 500'd with a raw Node
+  // `ERR_INVALID_CHAR` (Node's header setter only accepts Latin-1 bytes),
+  // aborting the whole playlist download over one track.
+  it('serves a file whose path contains non-ASCII characters instead of 500ing', async () => {
+    const unicodeDir = path.join(tmpDir, 'Müzik');
+    await mkdir(unicodeDir, { recursive: true });
+    const unicodePath = path.join(unicodeDir, 'şarkı adı.wav');
+    writeWav(unicodePath);
+    const unicodeTrackId = Number(
+      getDb().prepare(`
+        INSERT INTO tracks (title, album_id, artist_id, path, size, format)
+        VALUES ('şarkı adı', (SELECT album_id FROM tracks WHERE id = ?), (SELECT artist_id FROM tracks WHERE id = ?), ?, 44, 'WAVE')
+      `).run(trackId, trackId, unicodePath).lastInsertRowid,
+    );
+
+    const res = await app.inject({
+      url: `/rest/download.view?${auth}&id=${unicodeTrackId}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload.length).toBe(44);
+    // Sanitized ASCII fallback, plus the real name in the RFC 6266
+    // extended form — never the raw Unicode bytes as a literal header
+    // value (that's exactly what Node's setHeader rejects).
+    expect(res.headers['content-disposition']).toMatch(/^attachment; filename="/);
+    expect(res.headers['content-disposition']).toContain(
+      `filename*=UTF-8''${encodeURIComponent('şarkı adı.wav')}`,
+    );
   });
 });
 

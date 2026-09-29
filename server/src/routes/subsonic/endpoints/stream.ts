@@ -52,6 +52,20 @@ export function parseRange(
   return { start, end };
 }
 
+// ── Content-Disposition ─────────────────────────────────────────────────────
+
+// Node's raw HTTP header setter only accepts Latin-1 bytes — a filename
+// with any other character (e.g. Turkish ı/ş/ğ/ü/ö/ç, or anything outside
+// that range) throws ERR_INVALID_CHAR and 500s the whole request. RFC 6266
+// fixes this with two parameters: a sanitized ASCII `filename` for clients
+// that don't understand the extended form, and a UTF-8-percent-encoded
+// `filename*` for those that do (virtually everything modern, including
+// this app's own mobile/web clients).
+function contentDispositionHeader(filename: string): string {
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
 // ── Direct file serve ─────────────────────────────────────────────────────────
 
 async function serveFile(
@@ -66,10 +80,7 @@ async function serveFile(
   reply.header('Content-Type', contentType);
 
   if (forceDownload) {
-    reply.header(
-      'Content-Disposition',
-      `attachment; filename="${path.basename(filePath)}"`,
-    );
+    reply.header('Content-Disposition', contentDispositionHeader(path.basename(filePath)));
   }
 
   if (rangeHeader) {
