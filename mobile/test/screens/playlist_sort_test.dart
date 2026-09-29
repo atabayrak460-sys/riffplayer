@@ -1,0 +1,58 @@
+import 'package:cadence_mobile/api/types.dart';
+import 'package:cadence_mobile/screens/playlist_detail_screen.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+Song _song(String id) => Song(
+      id: id,
+      title: 'Title $id',
+      artist: 'Artist',
+      artistId: 'artist-1',
+      album: 'Album',
+      albumId: 'album-1',
+      suffix: 'mp3',
+    );
+
+List<String> _ids(List<Song> songs) => songs.map((s) => s.id).toList();
+
+void main() {
+  final a = _song('a');
+  final b = _song('b');
+  final c = _song('c');
+  final songs = [a, b, c];
+  final dates = {
+    'a': DateTime(2024, 3, 1),
+    'b': DateTime(2024, 1, 1),
+    'c': DateTime(2024, 2, 1),
+  };
+
+  group('sortPlaylistSongs', () {
+    test('custom mode keeps the playlist order', () {
+      expect(_ids(sortPlaylistSongs(songs, dates, PlaylistSortMode.custom)),
+          ['a', 'b', 'c']);
+    });
+
+    test('addedAsc sorts oldest first', () {
+      expect(_ids(sortPlaylistSongs(songs, dates, PlaylistSortMode.addedAsc)),
+          ['b', 'c', 'a']);
+    });
+
+    test('addedDesc sorts newest first', () {
+      expect(_ids(sortPlaylistSongs(songs, dates, PlaylistSortMode.addedDesc)),
+          ['a', 'c', 'b']);
+    });
+
+    test('keeps the original order while dates have not loaded yet', () {
+      expect(_ids(sortPlaylistSongs(songs, null, PlaylistSortMode.addedAsc)),
+          ['a', 'b', 'c']);
+    });
+
+    test('does not mutate the input list', () {
+      sortPlaylistSongs(songs, dates, PlaylistSortMode.addedAsc);
+      expect(_ids(songs), ['a', 'b', 'c']);
+    });
+
+    test('empty list stays empty', () {
+      expect(sortPlaylistSongs([], dates, PlaylistSortMode.addedDesc), isEmpty);
+    });
+  });
+}

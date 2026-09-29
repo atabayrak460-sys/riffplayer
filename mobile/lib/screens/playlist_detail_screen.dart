@@ -9,7 +9,7 @@ import '../widgets/cover_art.dart';
 import '../widgets/song_tile.dart';
 import '../widgets/stock_covers.dart' as stock;
 
-enum _SortMode { custom, addedAsc, addedDesc }
+enum PlaylistSortMode { custom, addedAsc, addedDesc }
 
 String _fmtDuration(int seconds) {
   final h = seconds ~/ 3600;
@@ -17,15 +17,18 @@ String _fmtDuration(int seconds) {
   return h > 0 ? '$h hr $m min' : '$m min';
 }
 
-List<Song> _sortSongs(
-    List<Song> songs, Map<String, DateTime>? dates, _SortMode mode) {
-  if (mode == _SortMode.custom || dates == null) return songs;
+@visibleForTesting
+List<Song> sortPlaylistSongs(
+    List<Song> songs, Map<String, DateTime>? dates, PlaylistSortMode mode) {
+  if (mode == PlaylistSortMode.custom || dates == null) return songs;
   final sorted = [...songs];
   sorted.sort((a, b) {
     final da = dates[a.id];
     final db = dates[b.id];
     if (da == null || db == null) return 0;
-    return mode == _SortMode.addedAsc ? da.compareTo(db) : db.compareTo(da);
+    return mode == PlaylistSortMode.addedAsc
+        ? da.compareTo(db)
+        : db.compareTo(da);
   });
   return sorted;
 }
@@ -40,7 +43,7 @@ class PlaylistDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
-  _SortMode _sortMode = _SortMode.custom;
+  PlaylistSortMode _sortMode = PlaylistSortMode.custom;
   bool _downloading = false;
   int _downloadedCount = 0;
   int _downloadTotal = 0;
@@ -58,7 +61,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
       data: (playlist) {
         final songs = playlist.entries ?? [];
         final dates = datesAsync.valueOrNull;
-        final displayed = _sortSongs(songs, dates, _sortMode);
+        final displayed = sortPlaylistSongs(songs, dates, _sortMode);
         final coverUrl = playlist.coverArt != null
             ? client?.coverArtUrl(playlist.coverArt!, size: 400)
             : null;
@@ -198,22 +201,23 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                   children: [
                     _SortChip(
                       label: 'Custom order',
-                      selected: _sortMode == _SortMode.custom,
-                      onTap: () => setState(() => _sortMode = _SortMode.custom),
+                      selected: _sortMode == PlaylistSortMode.custom,
+                      onTap: () =>
+                          setState(() => _sortMode = PlaylistSortMode.custom),
                     ),
                     const SizedBox(width: 6),
                     _SortChip(
                       label: 'Oldest first',
-                      selected: _sortMode == _SortMode.addedAsc,
+                      selected: _sortMode == PlaylistSortMode.addedAsc,
                       onTap: () =>
-                          setState(() => _sortMode = _SortMode.addedAsc),
+                          setState(() => _sortMode = PlaylistSortMode.addedAsc),
                     ),
                     const SizedBox(width: 6),
                     _SortChip(
                       label: 'Newest first',
-                      selected: _sortMode == _SortMode.addedDesc,
-                      onTap: () =>
-                          setState(() => _sortMode = _SortMode.addedDesc),
+                      selected: _sortMode == PlaylistSortMode.addedDesc,
+                      onTap: () => setState(
+                          () => _sortMode = PlaylistSortMode.addedDesc),
                     ),
                   ],
                 ),
@@ -227,7 +231,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                         style: TextStyle(color: Color(0xFF71717A))),
                   ),
                 )
-              else if (_sortMode == _SortMode.custom)
+              else if (_sortMode == PlaylistSortMode.custom)
                 ReorderableListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),

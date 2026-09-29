@@ -25,8 +25,7 @@ void main() {
         ),
         GoRoute(
           path: '/downloads',
-          builder: (_, __) =>
-              const Scaffold(body: Text('Downloads Screen')),
+          builder: (_, __) => const Scaffold(body: Text('Downloads Screen')),
         ),
       ],
     );
@@ -65,7 +64,8 @@ void main() {
     expect(find.textContaining('Error:'), findsNothing);
   });
 
-  testWidgets('tapping Downloaded navigates to the downloads route even '
+  testWidgets(
+      'tapping Downloaded navigates to the downloads route even '
       'when recordLibraryInteraction fails offline', (tester) async {
     when(() => client.getPlaylists()).thenThrow(Exception('Network error'));
     when(() => client.getLibrarySidebarState())

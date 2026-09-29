@@ -342,4 +342,88 @@ void main() {
       verify(() => handler.setLoopMode(LoopMode.off)).called(1);
     });
   });
+
+  group('submission scrobble threshold', () {
+    late StreamController<Duration> position;
+    late StreamController<Duration?> duration;
+
+    setUp(() async {
+      position = StreamController<Duration>();
+      duration = StreamController<Duration?>();
+      addTearDown(position.close);
+      addTearDown(duration.close);
+      when(() => handler.positionStream).thenAnswer((_) => position.stream);
+      when(() => handler.durationStream).thenAnswer((_) => duration.stream);
+      notifier = PlayerNotifier(handler);
+      await notifier.playSong(_song('a'), client, downloads);
+      clearInteractions(client);
+    });
+
+    Future<void> tick(Duration pos) async {
+      position.add(pos);
+      await pumpEventQueue();
+    }
+
+    Future<void> setDuration(Duration d) async {
+      duration.add(d);
+      await pumpEventQueue();
+    }
+
+    void verifySubmissions(int times) =>
+        verify(() => client.scrobble('a', submission: true)).called(times);
+
+    test('a long track scrobbles at 30s, not at 50%', () async {
+      await setDuration(const Duration(minutes: 10));
+
+      await tick(const Duration(seconds: 29));
+      verifyNever(() => client.scrobble(any(), submission: true));
+
+      await tick(const Duration(seconds: 30));
+      verifySubmissions(1);
+    });
+
+    test('a short track scrobbles at 50% of its length', () async {
+      await setDuration(const Duration(seconds: 40));
+
+      await tick(const Duration(seconds: 19));
+      verifyNever(() => client.scrobble(any(), submission: true));
+
+      await tick(const Duration(seconds: 20));
+      verifySubmissions(1);
+    });
+
+    test('unknown duration falls back to the 30s threshold', () async {
+      await tick(const Duration(seconds: 29));
+      verifyNever(() => client.scrobble(any(), submission: true));
+
+      await tick(const Duration(seconds: 30));
+      verifySubmissions(1);
+    });
+
+    test('submits only once per track however far playback continues',
+        () async {
+      await setDuration(const Duration(minutes: 3));
+
+      await tick(const Duration(seconds: 31));
+      await tick(const Duration(seconds: 45));
+      await tick(const Duration(seconds: 90));
+
+      verifySubmissions(1);
+    });
+
+    test('position ticks before any song is playing submit nothing', () async {
+      final idlePosition = StreamController<Duration>();
+      addTearDown(idlePosition.close);
+      when(() => handler.positionStream).thenAnswer((_) => idlePosition.stream);
+      when(() => handler.durationStream)
+          .thenAnswer((_) => const Stream.empty());
+      final idle = PlayerNotifier(handler);
+
+      idlePosition.add(const Duration(minutes: 1));
+      await pumpEventQueue();
+
+      expect(idle.state.currentSong, isNull);
+      verifyNever(() => client.scrobble(any(), submission: true));
+    });
+  });
 }
