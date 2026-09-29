@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../api/types.dart';
@@ -24,15 +25,18 @@ class SongTile extends ConsumerWidget {
   final int? index;
   final bool showAlbum;
   final bool showNumber;
+
   /// Shown as a right-aligned "date added" column when set — pass the
   /// track's own [Song.created] (library index date) in library-wide views
   /// like All Songs, or a playlist's per-track added-at date inside a
   /// playlist view.
   final DateTime? addedAt;
+
   /// Overrides the default "play this song, replacing the queue with
   /// [queue]" tap behavior — used by the Queue screen to jump to a song
   /// within the existing queue instead of replacing it.
   final VoidCallback? onTap;
+
   /// When set, adds a "Remove from queue" action to the overflow menu.
   final VoidCallback? onRemove;
 
@@ -54,10 +58,11 @@ class SongTile extends ConsumerWidget {
     // watching the whole PlayerState — otherwise every visible SongTile in
     // a list rebuilds on every position tick during playback (several
     // times a second), not just the one that's actually playing.
-    final currentSongId = ref.watch(playerProvider.select((s) => s.currentSong?.id));
+    final currentSongId =
+        ref.watch(playerProvider.select((s) => s.currentSong?.id));
     final isCurrent = currentSongId == song.id;
 
-    return ListTile(
+    final tile = ListTile(
       onTap: onTap ?? () => _play(ref),
       leading: showAlbum
           ? CoverArt(
@@ -82,9 +87,8 @@ class SongTile extends ConsumerWidget {
       title: Text(
         song.title,
         style: TextStyle(
-          color: isCurrent
-              ? Theme.of(context).colorScheme.primary
-              : Colors.white,
+          color:
+              isCurrent ? Theme.of(context).colorScheme.primary : Colors.white,
           fontWeight: isCurrent ? FontWeight.w600 : FontWeight.normal,
           fontSize: 14,
         ),
@@ -107,16 +111,26 @@ class SongTile extends ConsumerWidget {
             ),
             const SizedBox(width: 12),
           ],
+          // Currently-playing rows can't be swiped to queue (see startActionPane
+          // below) — this icon is the only surviving indicator of that once the
+          // row layout is otherwise identical to any other row.
+          if (isCurrent) ...[
+            Icon(Icons.graphic_eq,
+                color: Theme.of(context).colorScheme.primary, size: 16),
+            const SizedBox(width: 4),
+          ],
           Text(
             _fmtDuration(song.duration),
             style: const TextStyle(color: Color(0xFF71717A), fontSize: 12),
           ),
           const SizedBox(width: 4),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Color(0xFF71717A), size: 18),
+            icon:
+                const Icon(Icons.more_vert, color: Color(0xFF71717A), size: 18),
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'queue', child: Text('Add to queue')),
-              const PopupMenuItem(value: 'playlist', child: Text('Add to playlist')),
+              const PopupMenuItem(
+                  value: 'playlist', child: Text('Add to playlist')),
               const PopupMenuItem(value: 'download', child: Text('Download')),
               PopupMenuItem(
                 value: 'star',
@@ -126,13 +140,82 @@ class SongTile extends ConsumerWidget {
               const PopupMenuItem(value: 'artist', child: Text('Go to artist')),
               const PopupMenuItem(value: 'info', child: Text('Song info')),
               if (onRemove != null)
-                const PopupMenuItem(value: 'remove', child: Text('Remove from queue')),
+                const PopupMenuItem(
+                    value: 'remove', child: Text('Remove from queue')),
             ],
             onSelected: (v) => _onMenu(v, context, ref),
           ),
         ],
       ),
     );
+
+    return Slidable(
+      key: ValueKey('slidable-${song.id}-${index ?? identityHashCode(song)}'),
+      // Swipe right → add to queue. Disabled on the currently-playing row —
+      // queueing the song that's already playing doesn't make sense.
+      startActionPane: isCurrent
+          ? null
+          : ActionPane(
+              motion: const StretchMotion(),
+              extentRatio: 0.28,
+              dismissible: DismissiblePane(
+                // Low threshold — any real swipe-and-release fires this
+                // immediately, not just a drag all the way through. Never
+                // actually dismiss the row itself, though: this just lets the
+                // full swipe act as an instant trigger (Spotify-style)
+                // instead of requiring a follow-up tap on the action button.
+                // closeOnCancel defaults to false, which would otherwise
+                // leave the row sitting open (action button still showing)
+                // after confirmDismiss cancels the dismissal below.
+                dismissThreshold: 0.3,
+                closeOnCancel: true,
+                confirmDismiss: () async {
+                  _addToQueue(context, ref);
+                  return false;
+                },
+                onDismissed: () {},
+              ),
+              children: [
+                SlidableAction(
+                  onPressed: (_) => _addToQueue(context, ref),
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  icon: Icons.queue_music,
+                  label: 'Queue',
+                ),
+              ],
+            ),
+      // Swipe left → remove from queue — only wired up on the Queue screen,
+      // where onRemove is passed.
+      endActionPane: onRemove == null
+          ? null
+          : ActionPane(
+              motion: const StretchMotion(),
+              extentRatio: 0.28,
+              dismissible: DismissiblePane(
+                dismissThreshold: 0.3,
+                onDismissed: () => onRemove!(),
+              ),
+              children: [
+                SlidableAction(
+                  onPressed: (_) => onRemove!(),
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Colors.white,
+                  icon: Icons.remove_circle_outline,
+                  label: 'Remove',
+                ),
+              ],
+            ),
+      child: tile,
+    );
+  }
+
+  void _addToQueue(BuildContext context, WidgetRef ref) {
+    final client = ref.read(apiClientProvider);
+    if (client == null) return;
+    final downloads = ref.read(downloadServiceProvider);
+    ref.read(playerProvider.notifier).addToQueue(song, client, downloads);
+    showSnackBar(context, 'Added to queue');
   }
 
   String? _coverUrl(WidgetRef ref, String? coverArt) {
@@ -158,10 +241,11 @@ class SongTile extends ConsumerWidget {
     if (client == null) return;
     switch (action) {
       case 'queue':
-        final downloads = ref.read(downloadServiceProvider);
-        ref.read(playerProvider.notifier).addToQueue(song, client, downloads);
+        _addToQueue(context, ref);
       case 'playlist':
-        showDialog(context: context, builder: (_) => AddToPlaylistDialog(songId: song.id));
+        showDialog(
+            context: context,
+            builder: (_) => AddToPlaylistDialog(songId: song.id));
       case 'download':
         final downloads = ref.read(downloadServiceProvider);
         downloads.download(song, client).catchError((_) {
@@ -176,11 +260,15 @@ class SongTile extends ConsumerWidget {
             ? client.unstar(id: song.id)
             : client.star(id: song.id);
         future.then((_) {
-          ref.read(playerProvider.notifier).setStarredInQueue(song.id, newStarred);
+          ref
+              .read(playerProvider.notifier)
+              .setStarredInQueue(song.id, newStarred);
           ref.invalidate(starredProvider);
         }).catchError((_) {
-          // ignore: use_build_context_synchronously
-          showFailureSnackBar(context, song.isStarred ? 'Failed to unstar' : 'Failed to star');
+          showFailureSnackBar(
+              // ignore: use_build_context_synchronously
+              context,
+              song.isStarred ? 'Failed to unstar' : 'Failed to star');
         }).ignore();
       case 'album':
         // `.go()`, not `.push()`: this menu is reachable from a track's own
@@ -191,7 +279,8 @@ class SongTile extends ConsumerWidget {
       case 'artist':
         context.go('/artists/${song.artistId}');
       case 'info':
-        showDialog(context: context, builder: (_) => SongInfoDialog(song: song));
+        showDialog(
+            context: context, builder: (_) => SongInfoDialog(song: song));
       case 'remove':
         onRemove?.call();
     }

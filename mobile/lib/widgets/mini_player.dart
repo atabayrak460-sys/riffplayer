@@ -1,29 +1,118 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../api/subsonic.dart';
+import '../api/types.dart';
 import '../providers/providers.dart';
 import 'cover_art.dart';
 
-class MiniPlayer extends ConsumerWidget {
+// Swipe-left/right thresholds for skipping tracks — a swipe past either one
+// (distance OR flick velocity) fires; short/slow drags snap back to 0. Kept
+// low so a normal swipe-and-release reads as an instant skip, not a drag you
+// have to fully commit to.
+const _swipeDistanceThreshold = 45.0;
+const _swipeVelocityThreshold = 250.0;
+
+class MiniPlayer extends ConsumerStatefulWidget {
   const MiniPlayer({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MiniPlayer> createState() => _MiniPlayerState();
+}
+
+class _MiniPlayerState extends ConsumerState<MiniPlayer>
+    with SingleTickerProviderStateMixin {
+  // Built eagerly in initState(), not as a lazy `late final` field — build()
+  // returns early (SizedBox.shrink()) without ever touching this whenever
+  // nothing is playing, so a lazy initializer wouldn't run until dispose()
+  // called .dispose() on it for the first time, which tries to look up this
+  // element's TickerMode ancestor mid-unmount and crashes.
+  late final AnimationController _snapBackController;
+  Animation<double> _snapBack = const AlwaysStoppedAnimation(0);
+
+  bool _dragging = false;
+  double _dragDx = 0;
+
+  double get _offsetDx => _dragging ? _dragDx : _snapBack.value;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapBackController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    )..addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _snapBackController.dispose();
+    super.dispose();
+  }
+
+  void _onDragStart(DragStartDetails _) {
+    _snapBackController.stop();
+    setState(() {
+      _dragging = true;
+      _dragDx = 0;
+    });
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    setState(() => _dragDx += details.delta.dx);
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    final dx = _dragDx;
+    final velocity = details.velocity.pixelsPerSecond.dx;
+    final notifier = ref.read(playerProvider.notifier);
+    if (dx <= -_swipeDistanceThreshold ||
+        velocity <= -_swipeVelocityThreshold) {
+      notifier.next();
+    } else if (dx >= _swipeDistanceThreshold ||
+        velocity >= _swipeVelocityThreshold) {
+      notifier.previous();
+    }
+    _snapBack = Tween<double>(begin: dx, end: 0).animate(
+      CurvedAnimation(parent: _snapBackController, curve: Curves.easeOut),
+    );
+    setState(() => _dragging = false);
+    _snapBackController.forward(from: 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Scoped to just the fields this widget actually shows — otherwise it
-    // also rebuilds on unrelated state changes like queue/shuffle/repeat
-    // that have no visible effect on the mini player.
-    final (song, playing, position, duration) = ref.watch(playerProvider.select(
-      (s) => (s.currentSong, s.playing, s.position, s.duration),
+    // also rebuilds on unrelated state changes like shuffle/repeat that have
+    // no visible effect on the mini player. queue/currentIndex are needed
+    // now too, to peek at the next/previous track while dragging.
+    final (song, playing, position, duration, queue, currentIndex) =
+        ref.watch(playerProvider.select(
+      (s) => (
+        s.currentSong,
+        s.playing,
+        s.position,
+        s.duration,
+        s.queue,
+        s.currentIndex,
+      ),
     ));
     if (song == null) return const SizedBox.shrink();
 
     final client = ref.read(apiClientProvider);
+    final nextSong =
+        currentIndex + 1 < queue.length ? queue[currentIndex + 1] : null;
+    final prevSong = currentIndex > 0 ? queue[currentIndex - 1] : null;
     final progress = duration.inMilliseconds > 0
         ? position.inMilliseconds / duration.inMilliseconds
         : 0.0;
+    final dx = _offsetDx;
 
     return GestureDetector(
       onTap: () => context.push('/player'),
+      onHorizontalDragStart: _onDragStart,
+      onHorizontalDragUpdate: _onDragUpdate,
+      onHorizontalDragEnd: _onDragEnd,
       behavior: HitTestBehavior.opaque,
       child: Container(
         color: const Color(0xFF27272A),
@@ -43,47 +132,53 @@ class MiniPlayer extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
-                  CoverArt(
-                    // 100, not 56 — matches the ~2.3x ratio used for every
-                    // other 44px thumbnail elsewhere (song_tile.dart,
-                    // library_list_row.dart) for consistency on high-DPI.
-                    url: song.coverArt != null
-                        ? client?.coverArtUrl(song.coverArt!, size: 100)
-                        : null,
-                    size: 44,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  const SizedBox(width: 10),
+                  // Only this part (cover + title/artist) moves with the
+                  // swipe — the transport buttons stay put. Dragging past
+                  // the next/previous track's cover peeking in from the
+                  // opposite edge, like a card being swapped out.
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          song.title,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                    child: SizedBox(
+                      height: 44,
+                      child: ClipRect(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final pitch = constraints.maxWidth;
+                            return Stack(
+                              children: [
+                                if (dx < 0 && nextSong != null)
+                                  Positioned.fill(
+                                    child: Transform.translate(
+                                      offset: Offset(dx + pitch, 0),
+                                      child: _MiniSongInfo(
+                                          song: nextSong, client: client),
+                                    ),
+                                  ),
+                                if (dx > 0 && prevSong != null)
+                                  Positioned.fill(
+                                    child: Transform.translate(
+                                      offset: Offset(dx - pitch, 0),
+                                      child: _MiniSongInfo(
+                                          song: prevSong, client: client),
+                                    ),
+                                  ),
+                                Positioned.fill(
+                                  child: Transform.translate(
+                                    offset: Offset(dx, 0),
+                                    child: _MiniSongInfo(
+                                        song: song, client: client),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
-                        Text(
-                          song.artist,
-                          style: const TextStyle(
-                            color: Color(0xFF71717A),
-                            fontSize: 12,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.skip_previous, color: Colors.white),
-                    onPressed: () => ref.read(playerProvider.notifier).previous(),
+                    onPressed: () =>
+                        ref.read(playerProvider.notifier).previous(),
                   ),
                   IconButton(
                     icon: Icon(
@@ -106,6 +201,62 @@ class MiniPlayer extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Cover + title/artist block for a single track — used for the current
+/// track and for the next/previous track peeking in from the edge while the
+/// mini player is being dragged.
+class _MiniSongInfo extends StatelessWidget {
+  final Song song;
+  final SubsonicClient? client;
+
+  const _MiniSongInfo({required this.song, required this.client});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        CoverArt(
+          // 100, not 56 — matches the ~2.3x ratio used for every other 44px
+          // thumbnail elsewhere (song_tile.dart, library_list_row.dart) for
+          // consistency on high-DPI.
+          url: song.coverArt != null
+              ? client?.coverArtUrl(song.coverArt!, size: 100)
+              : null,
+          size: 44,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                song.title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                song.artist,
+                style: const TextStyle(
+                  color: Color(0xFF71717A),
+                  fontSize: 12,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
