@@ -2,7 +2,13 @@ import 'package:flutter/material.dart';
 
 const _brand = Color(0xFFA78BFA);
 const _brandDim = Color(0xFF7C3AED);
-const _bg = Color(0xFF18181B);
+
+/// The app's background color — exposed (not just `_bg`) so `main.dart` can
+/// match the Android system navigation/status bars to it. The app is always
+/// dark (no light-mode toggle), so this is also always correct there, not
+/// just a default.
+const appBackgroundColor = Color(0xFF18181B);
+const _bg = appBackgroundColor;
 const _surface = Color(0xFF27272A);
 const _surface2 = Color(0xFF3F3F46);
 
@@ -64,7 +70,8 @@ ThemeData buildTheme() => ThemeData(
           backgroundColor: _brand,
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
       ),

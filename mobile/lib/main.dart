@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'audio/audio_handler.dart';
 import 'app.dart';
 import 'providers/providers.dart';
+import 'theme.dart';
 
 void main() {
   // Catches anything FlutterError.onError doesn't (async errors outside a
@@ -14,6 +16,21 @@ void main() {
   // stance — this only ever logs locally.
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
+
+    // Without this, the Android system navigation bar (and status bar) are
+    // left at the platform/OEM default — on this device (MIUI) that's a
+    // light bar with dark icons, clashing hard against the app's
+    // permanently-dark theme and reading as "not a real app" rather than a
+    // rendering bug. The app has no light-mode variant, so this fixed style
+    // is always correct, not just a startup default.
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
+      systemNavigationBarColor: appBackgroundColor,
+      systemNavigationBarIconBrightness: Brightness.light,
+      systemNavigationBarDividerColor: Colors.transparent,
+    ));
 
     FlutterError.onError = (FlutterErrorDetails details) {
       FlutterError.presentError(details);
