@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:path/path.dart' as p;
 import '../providers/providers.dart';
 import '../api/types.dart';
+import '../utils/snackbar.dart';
+import '../widgets/add_to_playlist_dialog.dart';
 import '../widgets/stock_covers.dart' as stock;
 
 String _fmtSize(int? bytes) {
@@ -129,7 +132,7 @@ class _DownloadTile extends ConsumerWidget {
     final isCurrent = ref.watch(
         playerProvider.select((s) => s.currentSong?.id == track.trackId));
 
-    return ListTile(
+    final tile = ListTile(
       onTap: onTap,
       leading: _DownloadCover(track: track),
       title: Text(
@@ -155,31 +158,100 @@ class _DownloadTile extends ConsumerWidget {
                 color: Theme.of(context).colorScheme.primary, size: 16),
             const SizedBox(width: 8),
           ],
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: Color(0xFF71717A)),
-            onPressed: () async {
-              final confirmed = await showDialog<bool>(
-                context: context,
-                builder: (dialogContext) => AlertDialog(
-                  title: const Text('Delete download?'),
-                  content: Text('Remove "${track.title}" from device?'),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(dialogContext, false),
-                        child: const Text('Cancel')),
-                    TextButton(
-                        onPressed: () => Navigator.pop(dialogContext, true),
-                        child: const Text('Delete',
-                            style: TextStyle(color: Colors.red))),
-                  ],
-                ),
-              );
-              if (confirmed == true) onDelete();
-            },
+          PopupMenuButton<String>(
+            icon:
+                const Icon(Icons.more_vert, color: Color(0xFF71717A), size: 18),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'queue', child: Text('Add to queue')),
+              PopupMenuItem(value: 'playlist', child: Text('Add to playlist')),
+              PopupMenuItem(value: 'remove', child: Text('Remove download')),
+            ],
+            onSelected: (v) => _onMenu(v, context, ref),
           ),
         ],
       ),
     );
+
+    return Slidable(
+      key: ValueKey('download-slidable-${track.trackId}'),
+      // Swipe right → add to queue, same gesture/threshold as SongTile.
+      // Disabled on the currently-playing row — queueing the song that's
+      // already playing doesn't make sense.
+      startActionPane: isCurrent
+          ? null
+          : ActionPane(
+              motion: const StretchMotion(),
+              extentRatio: 0.28,
+              dismissible: DismissiblePane(
+                dismissThreshold: 0.3,
+                closeOnCancel: true,
+                confirmDismiss: () async {
+                  _addToQueue(context, ref);
+                  return false;
+                },
+                onDismissed: () {},
+              ),
+              children: [
+                SlidableAction(
+                  onPressed: (_) => _addToQueue(context, ref),
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  icon: Icons.queue_music,
+                  label: 'Queue',
+                ),
+              ],
+            ),
+      child: tile,
+    );
+  }
+
+  void _addToQueue(BuildContext context, WidgetRef ref) {
+    final client = ref.read(apiClientProvider);
+    if (client == null) return;
+    final downloads = ref.read(downloadServiceProvider);
+    ref
+        .read(playerProvider.notifier)
+        .addToQueue(_songFromDownload(track), client, downloads)
+        .then((_) {
+      // ignore: use_build_context_synchronously
+      showSnackBar(context, 'Added to queue');
+    }).catchError((_) {
+      // ignore: use_build_context_synchronously
+      showFailureSnackBar(context, 'Failed to add to queue');
+    }).ignore();
+  }
+
+  Future<void> _confirmAndDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete download?'),
+        content: Text('Remove "${track.title}" from device?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Delete', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirmed == true) onDelete();
+  }
+
+  void _onMenu(String action, BuildContext context, WidgetRef ref) {
+    switch (action) {
+      case 'queue':
+        _addToQueue(context, ref);
+      case 'playlist':
+        showDialog(
+          context: context,
+          builder: (_) => AddToPlaylistDialog(songId: track.trackId),
+        );
+      case 'remove':
+        _confirmAndDelete(context);
+    }
   }
 }
 

@@ -39,6 +39,7 @@ void main() {
         .thenAnswer((_) => const Stream.empty());
     when(() => handler.loopModeStream).thenAnswer((_) => const Stream.empty());
     when(() => handler.playQueue(any(), any())).thenAnswer((_) async {});
+    when(() => handler.insertAt(any(), any())).thenAnswer((_) async {});
 
     when(() => downloads.localPath(any())).thenAnswer((_) async => null);
     when(() => client.streamUrl(any())).thenReturn('http://test/stream');
@@ -94,17 +95,66 @@ void main() {
     expect(notifier.state.currentIndex, 1);
   });
 
-  testWidgets('the delete button still asks for confirmation and deletes',
+  // Regression test: the overflow menu used to be a bare delete IconButton
+  // with no "Add to queue"/"Add to playlist" options at all, unlike every
+  // other track row (SongTile) in the app.
+  group('overflow menu', () {
+    testWidgets('Remove download still asks for confirmation and deletes',
+        (tester) async {
+      final a = _download('a', title: 'Song A');
+      when(() => downloads.deleteDownload('a')).thenAnswer((_) async {});
+      await pumpDownloadsScreen(tester, [a]);
+
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove download'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      verify(() => downloads.deleteDownload('a')).called(1);
+    });
+
+    testWidgets('Add to queue adds the track to the player queue',
+        (tester) async {
+      final a = _download('a', title: 'Song A');
+      final notifier = await pumpDownloadsScreen(tester, [a]);
+
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add to queue'));
+      await tester.pump();
+
+      expect(notifier.state.queue.map((s) => s.id), ['a']);
+    });
+
+    testWidgets('Add to playlist opens the add-to-playlist dialog',
+        (tester) async {
+      when(() => client.getPlaylists()).thenAnswer((_) async => []);
+      final a = _download('a', title: 'Song A');
+      await pumpDownloadsScreen(tester, [a]);
+
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add to playlist'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+    });
+  });
+
+  testWidgets('swiping a row right adds it to the player queue',
       (tester) async {
     final a = _download('a', title: 'Song A');
-    when(() => downloads.deleteDownload('a')).thenAnswer((_) async {});
-    await pumpDownloadsScreen(tester, [a]);
+    final notifier = await pumpDownloadsScreen(tester, [a]);
 
-    await tester.tap(find.byIcon(Icons.delete_outline));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete'));
+    await tester.timedDrag(
+      find.byType(ListTile),
+      const Offset(400, 0),
+      const Duration(milliseconds: 300),
+    );
     await tester.pumpAndSettle();
 
-    verify(() => downloads.deleteDownload('a')).called(1);
+    expect(notifier.state.queue.map((s) => s.id), ['a']);
   });
 }
