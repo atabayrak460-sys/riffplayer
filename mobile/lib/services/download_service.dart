@@ -198,13 +198,21 @@ class DownloadService {
   /// the whole playlist download will pick up where it left off (`download`
   /// overwrites, it doesn't skip already-downloaded tracks — same cost as
   /// downloading them individually again).
+  ///
+  /// [onTrackProgress], if given, fires after each track finishes (not
+  /// per-byte — track-count granularity is enough for a playlist-level "X of
+  /// Y downloaded" indicator, and avoids wiring per-track byte progress
+  /// through a whole extra layer for something a progress bar wouldn't show
+  /// meaningfully anyway at N tracks).
   Future<void> downloadPlaylist(
     Playlist playlist,
     List<Song> songs,
-    SubsonicClient client,
-  ) async {
-    for (final song in songs) {
-      await download(song, client, standalone: false);
+    SubsonicClient client, {
+    void Function(int completed, int total)? onTrackProgress,
+  }) async {
+    for (var i = 0; i < songs.length; i++) {
+      await download(songs[i], client, standalone: false);
+      onTrackProgress?.call(i + 1, songs.length);
     }
 
     final cancelToken = CancelToken();

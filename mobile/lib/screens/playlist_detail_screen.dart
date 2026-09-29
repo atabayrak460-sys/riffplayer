@@ -41,6 +41,9 @@ class PlaylistDetailScreen extends ConsumerStatefulWidget {
 
 class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   _SortMode _sortMode = _SortMode.custom;
+  bool _downloading = false;
+  int _downloadedCount = 0;
+  int _downloadTotal = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -173,11 +176,19 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                   ),
                   const SizedBox(width: 8),
                   OutlinedButton.icon(
-                    onPressed: songs.isEmpty
+                    onPressed: songs.isEmpty || _downloading
                         ? null
                         : () => _downloadAll(context, ref, playlist, songs),
-                    icon: const Icon(Icons.download, size: 18),
-                    label: const Text('Download'),
+                    icon: _downloading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download, size: 18),
+                    label: Text(_downloading
+                        ? 'Downloading $_downloadedCount/$_downloadTotal…'
+                        : 'Download'),
                   ),
                 ],
               ),
@@ -273,14 +284,29 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     final client = ref.read(apiClientProvider);
     final downloads = ref.read(downloadServiceProvider);
     if (client == null) return;
+    setState(() {
+      _downloading = true;
+      _downloadedCount = 0;
+      _downloadTotal = songs.length;
+    });
     try {
-      await downloads.downloadPlaylist(playlist, songs, client);
+      await downloads.downloadPlaylist(
+        playlist,
+        songs,
+        client,
+        onTrackProgress: (completed, total) {
+          if (!mounted) return;
+          setState(() => _downloadedCount = completed);
+        },
+      );
       ref.invalidate(downloadedPlaylistsProvider);
       if (context.mounted) showSnackBar(context, 'Playlist downloaded');
     } catch (_) {
       if (context.mounted) {
         showFailureSnackBar(context, 'Failed to download playlist');
       }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
     }
   }
 
