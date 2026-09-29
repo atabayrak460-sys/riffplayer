@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import '../providers/providers.dart';
 import '../api/types.dart';
 import '../widgets/stock_covers.dart' as stock;
@@ -8,6 +9,27 @@ String _fmtSize(int? bytes) {
   if (bytes == null) return '';
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+/// Reconstructs a [Song] from a [DownloadedTrack] so it can be handed to
+/// [PlayerNotifier.playSong] — the Downloads screen is offline-first and has
+/// no live server data to draw on, so artist/album ids (only needed for
+/// "go to artist/album" navigation, which this screen doesn't offer) are
+/// left blank rather than guessed. `suffix` comes from the actual
+/// downloaded file's extension instead of defaulting to mp3.
+Song _songFromDownload(DownloadedTrack t) {
+  final ext = p.extension(t.localPath);
+  return Song(
+    id: t.trackId,
+    title: t.title,
+    artist: t.artist,
+    artistId: '',
+    album: t.album,
+    albumId: '',
+    coverArt: t.coverArtId,
+    suffix: ext.isNotEmpty ? ext.substring(1) : 'mp3',
+    size: t.fileSize,
+  );
 }
 
 class DownloadsScreen extends ConsumerWidget {
@@ -46,7 +68,8 @@ class DownloadsScreen extends ConsumerWidget {
                         const SizedBox(width: 14),
                         Text(
                           '${downloads.length} track${downloads.length == 1 ? '' : 's'} available offline',
-                          style: const TextStyle(color: Color(0xFF71717A), fontSize: 13),
+                          style: const TextStyle(
+                              color: Color(0xFF71717A), fontSize: 13),
                         ),
                       ],
                     ),
@@ -56,6 +79,21 @@ class DownloadsScreen extends ConsumerWidget {
                       itemCount: downloads.length,
                       itemBuilder: (_, i) => _DownloadTile(
                         track: downloads[i],
+                        onTap: () {
+                          final client = ref.read(apiClientProvider);
+                          if (client == null) return;
+                          final downloadService =
+                              ref.read(downloadServiceProvider);
+                          final queue =
+                              downloads.map(_songFromDownload).toList();
+                          ref.read(playerProvider.notifier).playSong(
+                                queue[i],
+                                client,
+                                downloadService,
+                                queue: queue,
+                                queueIndex: i,
+                              );
+                        },
                         onDelete: () async {
                           await ref
                               .read(downloadServiceProvider)
@@ -72,46 +110,69 @@ class DownloadsScreen extends ConsumerWidget {
   }
 }
 
-class _DownloadTile extends StatelessWidget {
+class _DownloadTile extends ConsumerWidget {
   final DownloadedTrack track;
+  final VoidCallback onTap;
   final VoidCallback onDelete;
 
-  const _DownloadTile({required this.track, required this.onDelete});
+  const _DownloadTile({
+    required this.track,
+    required this.onTap,
+    required this.onDelete,
+  });
 
   @override
-  Widget build(BuildContext context) => ListTile(
-        leading: const Icon(Icons.music_note, color: Color(0xFF71717A)),
-        title: Text(
-          track.title,
-          style: const TextStyle(color: Colors.white, fontSize: 14),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Scoped to just the current song's id, same as SongTile — avoids every
+    // row rebuilding on every playback position tick.
+    final isCurrent = ref.watch(
+        playerProvider.select((s) => s.currentSong?.id == track.trackId));
+
+    return ListTile(
+      onTap: onTap,
+      leading: Icon(
+        isCurrent ? Icons.graphic_eq : Icons.music_note,
+        color: isCurrent
+            ? Theme.of(context).colorScheme.primary
+            : const Color(0xFF71717A),
+      ),
+      title: Text(
+        track.title,
+        style: TextStyle(
+          color:
+              isCurrent ? Theme.of(context).colorScheme.primary : Colors.white,
+          fontWeight: isCurrent ? FontWeight.w600 : FontWeight.normal,
+          fontSize: 14,
         ),
-        subtitle: Text(
-          '${track.artist} · ${_fmtSize(track.fileSize)}',
-          style: const TextStyle(color: Color(0xFF71717A), fontSize: 12),
-        ),
-        trailing: IconButton(
-          icon: const Icon(Icons.delete_outline, color: Color(0xFF71717A)),
-          onPressed: () async {
-            final confirmed = await showDialog<bool>(
-              context: context,
-              builder: (dialogContext) => AlertDialog(
-                title: const Text('Delete download?'),
-                content: Text('Remove "${track.title}" from device?'),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(dialogContext, false),
-                      child: const Text('Cancel')),
-                  TextButton(
-                      onPressed: () => Navigator.pop(dialogContext, true),
-                      child: const Text('Delete',
-                          style: TextStyle(color: Colors.red))),
-                ],
-              ),
-            );
-            if (confirmed == true) onDelete();
-          },
-        ),
-      );
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        '${track.artist} · ${_fmtSize(track.fileSize)}',
+        style: const TextStyle(color: Color(0xFF71717A), fontSize: 12),
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.delete_outline, color: Color(0xFF71717A)),
+        onPressed: () async {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Delete download?'),
+              content: Text('Remove "${track.title}" from device?'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Cancel')),
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('Delete',
+                        style: TextStyle(color: Colors.red))),
+              ],
+            ),
+          );
+          if (confirmed == true) onDelete();
+        },
+      ),
+    );
+  }
 }
