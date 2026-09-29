@@ -130,6 +130,19 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   // fresh relative to whatever's now playing.
   int _queuedCount = 0;
 
+  // Chains every queue-mutating method below (addToQueue/removeFromQueue/
+  // reorderQueue/clearQueue/playFromQueueIndex) onto one another so they can
+  // never run concurrently — see the comment on addToQueue() for why that
+  // matters. setStarredInQueue() is excluded: it's a single synchronous
+  // state update with no `await` in it, so it can't race with anything.
+  Future<void> _queueOpChain = Future.value();
+
+  Future<T> _serializeQueueOp<T>(Future<T> Function() op) {
+    final result = _queueOpChain.then((_) => op());
+    _queueOpChain = result.then((_) {}, onError: (_) {});
+    return result;
+  }
+
   PlayerNotifier(this._handler) : super(const PlayerState()) {
     _handler.positionStream.listen((pos) {
       state = state.copyWith(position: pos);
@@ -214,7 +227,29 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
 
   /// Inserts [song] right after the current track, or after any songs
   /// already added this way — so adding A then B plays current → A → B.
+  ///
+  /// Unlike the file-header comment's stated invariant for this class, this
+  /// method (and its siblings below) *do* hold state across an `await`:
+  /// e.g. here, `insertAt` is derived from `state.currentIndex`/
+  /// `_queuedCount` before awaiting `_handler.insertAt()`, then combined
+  /// with a freshly-read `state.queue` afterward. Two calls started close
+  /// together — e.g. flutter_slidable's swipe-to-queue dispatching both its
+  /// `confirmDismiss` and `SlidableAction.onPressed` for one gesture, or a
+  /// queue-add racing a `clearQueue()`/`removeFromQueue()` — could race
+  /// there: the second call's pre-await index goes stale once the first
+  /// call's post-await state write lands, up to indexing past a
+  /// `state.queue` snapshot that's now shorter than expected and throwing a
+  /// RangeError, silently dropping the operation. `_serializeQueueOp` makes
+  /// every queue-mutating call below run strictly one at a time instead, so
+  /// each one's `state` reads are always current by the time it uses them.
   Future<void> addToQueue(
+    Song song,
+    SubsonicClient client,
+    DownloadService downloads,
+  ) =>
+      _serializeQueueOp(() => _addToQueueLocked(song, client, downloads));
+
+  Future<void> _addToQueueLocked(
     Song song,
     SubsonicClient client,
     DownloadService downloads,
@@ -238,35 +273,36 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     _queuedCount++;
   }
 
-  Future<void> removeFromQueue(int index) async {
-    await _handler.removeQueueItemAt(index);
-    final newSongs = [...state.queue]..removeAt(index);
-    int newIdx = state.currentIndex;
-    if (index < newIdx) newIdx--;
-    state = state.copyWith(queue: newSongs, currentIndex: newIdx);
-  }
+  Future<void> removeFromQueue(int index) => _serializeQueueOp(() async {
+        await _handler.removeQueueItemAt(index);
+        final newSongs = [...state.queue]..removeAt(index);
+        int newIdx = state.currentIndex;
+        if (index < newIdx) newIdx--;
+        state = state.copyWith(queue: newSongs, currentIndex: newIdx);
+      });
 
-  Future<void> reorderQueue(int from, int to) async {
-    await _handler.moveQueueItem(from, to);
-    final newSongs = [...state.queue];
-    final moved = newSongs.removeAt(from);
-    newSongs.insert(to, moved);
-    state = state.copyWith(queue: newSongs);
-  }
+  Future<void> reorderQueue(int from, int to) => _serializeQueueOp(() async {
+        await _handler.moveQueueItem(from, to);
+        final newSongs = [...state.queue];
+        final moved = newSongs.removeAt(from);
+        newSongs.insert(to, moved);
+        state = state.copyWith(queue: newSongs);
+      });
 
-  Future<void> clearQueue() async {
-    await _handler.clearQueue();
-    _queuedCount = 0;
-    state = state.copyWith(queue: [], currentIndex: -1, playing: false);
-  }
+  Future<void> clearQueue() => _serializeQueueOp(() async {
+        await _handler.clearQueue();
+        _queuedCount = 0;
+        state = state.copyWith(queue: [], currentIndex: -1, playing: false);
+      });
 
   /// Jumps playback to [index] within the queue and permanently drops
   /// everything before it — tapping a song further down "Up Next" plays it
   /// and discards the skipped-over tracks, matching Spotify's queue model.
-  Future<void> playFromQueueIndex(int index) async {
-    await _handler.playFromIndex(index);
-    state = state.copyWith(queue: state.queue.sublist(index), currentIndex: 0);
-  }
+  Future<void> playFromQueueIndex(int index) => _serializeQueueOp(() async {
+        await _handler.playFromIndex(index);
+        state =
+            state.copyWith(queue: state.queue.sublist(index), currentIndex: 0);
+      });
 
   /// Updates the starred status of every queue entry matching [songId] in
   /// place — the player screen's favorite icon reads `currentSong.isStarred`

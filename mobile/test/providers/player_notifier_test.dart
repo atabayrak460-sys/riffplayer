@@ -102,6 +102,56 @@ void main() {
       verify(() => handler.insertAt(1, any())).called(1);
       verify(() => handler.insertAt(2, any())).called(1);
     });
+
+    // Regression test for a real bug found on-device: flutter_slidable's
+    // swipe-to-queue gesture could dispatch two addToQueue() calls for one
+    // swipe (confirmDismiss + SlidableAction.onPressed both firing). Before
+    // the fix, addToQueue read `state.currentIndex`/`_queuedCount` before
+    // awaiting `_handler.insertAt()`, then combined that stale index with a
+    // freshly-read `state.queue` afterward — two overlapping calls raced on
+    // that gap, throwing a RangeError and silently dropping the add.
+    test(
+        'two calls fired back to back before either resolves do not race or throw',
+        () async {
+      final current = _song('current');
+      final a = _song('a');
+      final b = _song('b');
+      await notifier.playSong(current, client, downloads);
+
+      // Gate handler.insertAt so both addToQueue calls are genuinely
+      // in-flight at once before either's post-await state write lands.
+      final gate = Completer<void>();
+      when(() => handler.insertAt(any(), any())).thenAnswer((_) => gate.future);
+
+      final futureA = notifier.addToQueue(a, client, downloads);
+      final futureB = notifier.addToQueue(b, client, downloads);
+      gate.complete();
+
+      await expectLater(Future.wait([futureA, futureB]), completes);
+      expect(notifier.state.queue.map((s) => s.id), ['current', 'a', 'b']);
+    });
+
+    test(
+        'racing a clearQueue() mid-flight does not throw (regression — used to '
+        'crash with a RangeError when state.queue emptied out from under a '
+        'stale pre-await insert index)', () async {
+      final current = _song('current');
+      final a = _song('a');
+      await notifier.playSong(current, client, downloads);
+
+      final gate = Completer<void>();
+      when(() => handler.insertAt(any(), any())).thenAnswer((_) => gate.future);
+
+      final addFuture = notifier.addToQueue(a, client, downloads);
+      final clearFuture = notifier.clearQueue();
+      gate.complete();
+
+      await expectLater(Future.wait([addFuture, clearFuture]), completes);
+      // Serialized in call order: the add lands first (queue becomes
+      // [current, a]), then clearQueue empties it — never a crash either way.
+      expect(notifier.state.queue, isEmpty);
+      expect(notifier.state.currentIndex, -1);
+    });
   });
 
   group('playSong', () {

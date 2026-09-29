@@ -214,8 +214,13 @@ class SongTile extends ConsumerWidget {
     final client = ref.read(apiClientProvider);
     if (client == null) return;
     final downloads = ref.read(downloadServiceProvider);
-    ref.read(playerProvider.notifier).addToQueue(song, client, downloads);
-    showSnackBar(context, 'Added to queue');
+    ref.read(playerProvider.notifier).addToQueue(song, client, downloads).then((_) {
+      // ignore: use_build_context_synchronously
+      showSnackBar(context, 'Added to queue');
+    }).catchError((_) {
+      // ignore: use_build_context_synchronously
+      showFailureSnackBar(context, 'Failed to add to queue');
+    }).ignore();
   }
 
   String? _coverUrl(WidgetRef ref, String? coverArt) {
