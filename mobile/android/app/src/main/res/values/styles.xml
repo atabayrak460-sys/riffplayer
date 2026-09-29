@@ -5,6 +5,9 @@
         <!-- Show a splash screen on the activity. Automatically removed when
              the Flutter engine draws its first frame -->
         <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:colorBackground">#FF18181B</item>
+        <item name="android:navigationBarColor">#FF18181B</item>
+        <item name="android:statusBarColor">#FF18181B</item>
     </style>
     <!-- Theme applied to the Android Window as soon as the process has started.
          This theme determines the color of the Android Window while your
@@ -14,5 +17,16 @@
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- The app has no light-mode variant — Flutter's own theme
+             (theme.dart) is always dark — so this must stay dark too,
+             regardless of the device's system-wide light/dark setting
+             (which is what picks this file vs. values-night/styles.xml).
+             Without this, a phone in system light mode shows this parent
+             theme's default white colorBackground/navigationBarColor
+             behind/around the always-dark Flutter UI — most visible as a
+             white gesture-navigation bar at the bottom. -->
+        <item name="android:colorBackground">#FF18181B</item>
+        <item name="android:navigationBarColor">#FF18181B</item>
+        <item name="android:statusBarColor">#FF18181B</item>
     </style>
 </resources>
