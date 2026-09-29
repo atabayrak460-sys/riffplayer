@@ -13,6 +13,7 @@ import 'screens/artist_detail_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/favorites_screen.dart';
 import 'screens/downloads_screen.dart';
+import 'screens/downloaded_playlist_detail_screen.dart';
 import 'screens/library_screen.dart';
 import 'screens/playlist_detail_screen.dart';
 import 'screens/settings_screen.dart';
@@ -95,6 +96,11 @@ class _CadenceAppState extends ConsumerState<CadenceApp> {
             GoRoute(
                 path: '/downloads',
                 builder: (_, __) => const DownloadsScreen()),
+            GoRoute(
+              path: '/downloads/playlists/:id',
+              builder: (_, state) => DownloadedPlaylistDetailScreen(
+                  playlistId: state.pathParameters['id']!),
+            ),
             GoRoute(
                 path: '/library', builder: (_, __) => const LibraryScreen()),
             GoRoute(

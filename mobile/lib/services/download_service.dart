@@ -23,28 +23,65 @@ class DownloadService {
     final dbPath = p.join(await getDatabasesPath(), 'cadence_downloads.db');
     _db = await openDatabase(
       dbPath,
-      version: 2,
-      onCreate: (db, _) => db.execute('''
-        CREATE TABLE downloads (
-          track_id   TEXT PRIMARY KEY,
-          local_path TEXT NOT NULL,
-          title      TEXT NOT NULL,
-          artist     TEXT NOT NULL,
-          album      TEXT NOT NULL,
-          cover_art_id TEXT,
-          cover_local_path TEXT,
-          file_size  INTEGER,
-          downloaded_at INTEGER NOT NULL
-        )
-      '''),
+      version: 3,
+      onCreate: (db, _) async {
+        await db.execute('''
+          CREATE TABLE downloads (
+            track_id   TEXT PRIMARY KEY,
+            local_path TEXT NOT NULL,
+            title      TEXT NOT NULL,
+            artist     TEXT NOT NULL,
+            album      TEXT NOT NULL,
+            cover_art_id TEXT,
+            cover_local_path TEXT,
+            file_size  INTEGER,
+            downloaded_at INTEGER NOT NULL,
+            is_standalone INTEGER NOT NULL DEFAULT 1
+          )
+        ''');
+        await _createPlaylistTables(db);
+      },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute(
               'ALTER TABLE downloads ADD COLUMN cover_local_path TEXT');
         }
+        if (oldVersion < 3) {
+          await _createPlaylistTables(db);
+          // Every pre-existing download predates playlist grouping, so it
+          // was necessarily a standalone one — DEFAULT 1 covers both these
+          // existing rows and the column's default for future inserts.
+          await db.execute(
+              'ALTER TABLE downloads ADD COLUMN is_standalone INTEGER NOT NULL DEFAULT 1');
+        }
       },
     );
     return _db!;
+  }
+
+  Future<void> _createPlaylistTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE downloaded_playlists (
+        playlist_id TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        comment     TEXT,
+        cover_local_path TEXT,
+        downloaded_at INTEGER NOT NULL
+      )
+    ''');
+    // A track can belong to more than one downloaded playlist (or none, if
+    // downloaded individually) — hence a join table rather than a column on
+    // `downloads`. No foreign key to `downloads.track_id`: the track row and
+    // this membership row are written in the same downloadPlaylist() call,
+    // but sqflite's default pragma has foreign_keys off, so this is purely
+    // an app-level invariant, checked at query time instead.
+    await db.execute('''
+      CREATE TABLE playlist_download_tracks (
+        playlist_id TEXT NOT NULL,
+        track_id    TEXT NOT NULL,
+        PRIMARY KEY (playlist_id, track_id)
+      )
+    ''');
   }
 
   // ── Query ───────────────────────────────────────────────────────────────────
@@ -84,10 +121,20 @@ class DownloadService {
 
   // ── Download ─────────────────────────────────────────────────────────────────
 
+  /// [standalone] marks whether this call itself represents the user
+  /// explicitly wanting this *individual* track offline — true for every
+  /// normal call site (a song's own "Download" action). [downloadPlaylist]
+  /// passes false for the tracks it downloads as part of a playlist, so
+  /// that deleting the playlist later can tell "only ever wanted as part of
+  /// this playlist" apart from "also downloaded on its own" — see
+  /// [deleteDownloadedPlaylist]. Once true for a track, always true: a
+  /// track already downloaded standalone doesn't lose that status just
+  /// because it's later swept up into a playlist download too.
   Future<void> download(
     Song song,
     SubsonicClient client, {
     DownloadProgress? onProgress,
+    bool standalone = true,
   }) async {
     if (_activeDownloads.containsKey(song.id)) return; // already in progress
 
@@ -105,7 +152,8 @@ class DownloadService {
       );
       final fileSize = File(savePath).lengthSync();
       final coverPath = await _downloadCoverArt(song, client, cancelToken);
-      await _saveRecord(song, savePath, fileSize, coverPath);
+      await _saveRecord(song, savePath, fileSize, coverPath,
+          standalone: standalone);
     } catch (e) {
       // Clean up partial file
       final f = File(savePath);
@@ -138,6 +186,149 @@ class DownloadService {
       }
     }
     await db.delete('downloads', where: 'track_id = ?', whereArgs: [trackId]);
+  }
+
+  // ── Downloaded playlists ─────────────────────────────────────────────────────
+
+  /// Downloads every track in [songs] (same as calling [download] on each,
+  /// including their own cover art), then the playlist's own cover art and
+  /// description, and records the grouping. If any track fails, this throws
+  /// without recording the playlist — tracks that already finished stay
+  /// downloaded individually, just not grouped under this playlist; retrying
+  /// the whole playlist download will pick up where it left off (`download`
+  /// overwrites, it doesn't skip already-downloaded tracks — same cost as
+  /// downloading them individually again).
+  Future<void> downloadPlaylist(
+    Playlist playlist,
+    List<Song> songs,
+    SubsonicClient client,
+  ) async {
+    for (final song in songs) {
+      await download(song, client, standalone: false);
+    }
+
+    final cancelToken = CancelToken();
+    final coverPath =
+        await _downloadPlaylistCoverArt(playlist, client, cancelToken);
+
+    final db = await _database;
+    await db.transaction((txn) async {
+      await txn.insert(
+        'downloaded_playlists',
+        {
+          'playlist_id': playlist.id,
+          'name': playlist.name,
+          'comment': playlist.comment,
+          'cover_local_path': coverPath,
+          'downloaded_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      // Re-downloading a playlist (picking up new/changed tracks) should
+      // leave it with exactly today's track list, not the union of every
+      // download attempt ever made for it.
+      await txn.delete('playlist_download_tracks',
+          where: 'playlist_id = ?', whereArgs: [playlist.id]);
+      for (final song in songs) {
+        await txn.insert(
+          'playlist_download_tracks',
+          {'playlist_id': playlist.id, 'track_id': song.id},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  Future<List<DownloadedPlaylist>> getDownloadedPlaylists() async {
+    final db = await _database;
+    final rows = await db.rawQuery('''
+      SELECT p.*, COUNT(t.track_id) AS track_count
+      FROM downloaded_playlists p
+      LEFT JOIN playlist_download_tracks t ON t.playlist_id = p.playlist_id
+      GROUP BY p.playlist_id
+      ORDER BY p.downloaded_at DESC
+    ''');
+    return rows.map(_rowToPlaylist).toList();
+  }
+
+  Future<DownloadedPlaylist?> getDownloadedPlaylist(String playlistId) async {
+    final db = await _database;
+    final rows = await db.rawQuery('''
+      SELECT p.*, COUNT(t.track_id) AS track_count
+      FROM downloaded_playlists p
+      LEFT JOIN playlist_download_tracks t ON t.playlist_id = p.playlist_id
+      WHERE p.playlist_id = ?
+      GROUP BY p.playlist_id
+    ''', [playlistId]);
+    if (rows.isEmpty) return null;
+    return _rowToPlaylist(rows.first);
+  }
+
+  /// The tracks belonging to a downloaded playlist — same shape as
+  /// [getDownloads], just scoped to one playlist's membership instead of
+  /// every downloaded track.
+  Future<List<DownloadedTrack>> getDownloadedPlaylistTracks(
+      String playlistId) async {
+    final db = await _database;
+    final rows = await db.rawQuery('''
+      SELECT d.*
+      FROM downloads d
+      JOIN playlist_download_tracks t ON t.track_id = d.track_id
+      WHERE t.playlist_id = ?
+      ORDER BY d.downloaded_at DESC
+    ''', [playlistId]);
+    return rows.map(_rowToTrack).toList();
+  }
+
+  /// Removes the playlist grouping. A member track's file is also deleted,
+  /// unless it's still needed — either downloaded standalone (see
+  /// [download]'s `standalone` parameter), or a member of another
+  /// downloaded playlist too — in which case only its membership in *this*
+  /// playlist is dropped, the track itself is left alone.
+  Future<void> deleteDownloadedPlaylist(String playlistId) async {
+    final db = await _database;
+    final rows = await db.query('downloaded_playlists',
+        columns: ['cover_local_path'],
+        where: 'playlist_id = ?',
+        whereArgs: [playlistId]);
+
+    final memberRows = await db.query('playlist_download_tracks',
+        columns: ['track_id'],
+        where: 'playlist_id = ?',
+        whereArgs: [playlistId]);
+    final memberIds = memberRows.map((r) => r['track_id'] as String).toList();
+
+    await db.delete('playlist_download_tracks',
+        where: 'playlist_id = ?', whereArgs: [playlistId]);
+    await db.delete('downloaded_playlists',
+        where: 'playlist_id = ?', whereArgs: [playlistId]);
+
+    if (rows.isNotEmpty) {
+      final coverPath = rows.first['cover_local_path'] as String?;
+      if (coverPath != null) {
+        final cf = File(coverPath);
+        if (cf.existsSync()) cf.deleteSync();
+      }
+    }
+
+    for (final trackId in memberIds) {
+      final stillInAnotherPlaylist = Sqflite.firstIntValue(await db.rawQuery(
+            'SELECT COUNT(*) FROM playlist_download_tracks WHERE track_id = ?',
+            [trackId],
+          )) ??
+          0;
+      if (stillInAnotherPlaylist > 0) continue;
+
+      final trackRows = await db.query('downloads',
+          columns: ['is_standalone'],
+          where: 'track_id = ?',
+          whereArgs: [trackId]);
+      final isStandalone = trackRows.isNotEmpty &&
+          (trackRows.first['is_standalone'] as int) == 1;
+      if (!isStandalone) {
+        await deleteDownload(trackId);
+      }
+    }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -180,13 +371,41 @@ class DownloadService {
     }
   }
 
+  /// Same best-effort/cancellation handling as [_downloadCoverArt], for a
+  /// playlist's own cover instead of a track's.
+  Future<String?> _downloadPlaylistCoverArt(
+    Playlist playlist,
+    SubsonicClient client,
+    CancelToken cancelToken,
+  ) async {
+    if (playlist.coverArt == null) return null;
+    try {
+      final dir = await _coversDir();
+      final path = p.join(dir, 'playlist_${playlist.id}.jpg');
+      await client.downloadCoverArt(playlist.coverArt!, path,
+          size: 600, cancelToken: cancelToken);
+      return path;
+    } catch (e) {
+      if (cancelToken.isCancelled) rethrow;
+      return null;
+    }
+  }
+
   Future<void> _saveRecord(
     Song song,
     String path,
     int fileSize,
-    String? coverPath,
-  ) async {
+    String? coverPath, {
+    required bool standalone,
+  }) async {
     final db = await _database;
+    final existing = await db.query('downloads',
+        columns: ['is_standalone'],
+        where: 'track_id = ?',
+        whereArgs: [song.id]);
+    final wasStandalone =
+        existing.isNotEmpty && (existing.first['is_standalone'] as int) == 1;
+
     await db.insert(
       'downloads',
       {
@@ -199,6 +418,7 @@ class DownloadService {
         'cover_local_path': coverPath,
         'file_size': fileSize,
         'downloaded_at': DateTime.now().millisecondsSinceEpoch,
+        'is_standalone': (standalone || wasStandalone) ? 1 : 0,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -215,5 +435,16 @@ class DownloadService {
         fileSize: row['file_size'] as int?,
         downloadedAt:
             DateTime.fromMillisecondsSinceEpoch(row['downloaded_at'] as int),
+      );
+
+  DownloadedPlaylist _rowToPlaylist(Map<String, dynamic> row) =>
+      DownloadedPlaylist(
+        playlistId: row['playlist_id'] as String,
+        name: row['name'] as String,
+        comment: row['comment'] as String?,
+        coverLocalPath: row['cover_local_path'] as String?,
+        downloadedAt:
+            DateTime.fromMillisecondsSinceEpoch(row['downloaded_at'] as int),
+        trackCount: row['track_count'] as int,
       );
 }

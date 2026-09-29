@@ -266,6 +266,29 @@ class DownloadedTrack {
   });
 }
 
+/// A playlist downloaded as a unit (via [DownloadService.downloadPlaylist])
+/// — distinct from [DownloadedTrack]: this is the grouping, not a track.
+/// [trackCount] reflects how many tracks were part of the playlist at
+/// download time (`playlist_download_tracks` membership), not how many of
+/// those tracks' files still exist on disk right now.
+class DownloadedPlaylist {
+  final String playlistId;
+  final String name;
+  final String? comment;
+  final String? coverLocalPath;
+  final DateTime downloadedAt;
+  final int trackCount;
+
+  const DownloadedPlaylist({
+    required this.playlistId,
+    required this.name,
+    this.comment,
+    this.coverLocalPath,
+    required this.downloadedAt,
+    required this.trackCount,
+  });
+}
+
 class WrappedTopTrack {
   final String id;
   final String title;

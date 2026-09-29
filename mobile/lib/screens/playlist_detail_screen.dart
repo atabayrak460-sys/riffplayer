@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import '../api/types.dart';
 import '../providers/providers.dart';
+import '../utils/snackbar.dart';
 import '../widgets/cover_art.dart';
 import '../widgets/song_tile.dart';
 import '../widgets/stock_covers.dart' as stock;
@@ -16,7 +17,8 @@ String _fmtDuration(int seconds) {
   return h > 0 ? '$h hr $m min' : '$m min';
 }
 
-List<Song> _sortSongs(List<Song> songs, Map<String, DateTime>? dates, _SortMode mode) {
+List<Song> _sortSongs(
+    List<Song> songs, Map<String, DateTime>? dates, _SortMode mode) {
   if (mode == _SortMode.custom || dates == null) return songs;
   final sorted = [...songs];
   sorted.sort((a, b) {
@@ -33,7 +35,8 @@ class PlaylistDetailScreen extends ConsumerStatefulWidget {
   const PlaylistDetailScreen({super.key, required this.playlistId});
 
   @override
-  ConsumerState<PlaylistDetailScreen> createState() => _PlaylistDetailScreenState();
+  ConsumerState<PlaylistDetailScreen> createState() =>
+      _PlaylistDetailScreenState();
 }
 
 class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
@@ -46,7 +49,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     final client = ref.read(apiClientProvider);
 
     return playlistAsync.when(
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      loading: () =>
+          const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (e, _) => Scaffold(body: Center(child: Text('Error: $e'))),
       data: (playlist) {
         final songs = playlist.entries ?? [];
@@ -93,7 +97,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                             color: Colors.black54,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.edit, color: Colors.white, size: 16),
+                          child: const Icon(Icons.edit,
+                              color: Colors.white, size: 16),
                         ),
                       ),
                     ],
@@ -168,7 +173,9 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                   ),
                   const SizedBox(width: 8),
                   OutlinedButton.icon(
-                    onPressed: songs.isEmpty ? null : () => _downloadAll(ref, songs),
+                    onPressed: songs.isEmpty
+                        ? null
+                        : () => _downloadAll(context, ref, playlist, songs),
                     icon: const Icon(Icons.download, size: 18),
                     label: const Text('Download'),
                   ),
@@ -187,13 +194,15 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                     _SortChip(
                       label: 'Oldest first',
                       selected: _sortMode == _SortMode.addedAsc,
-                      onTap: () => setState(() => _sortMode = _SortMode.addedAsc),
+                      onTap: () =>
+                          setState(() => _sortMode = _SortMode.addedAsc),
                     ),
                     const SizedBox(width: 6),
                     _SortChip(
                       label: 'Newest first',
                       selected: _sortMode == _SortMode.addedDesc,
-                      onTap: () => setState(() => _sortMode = _SortMode.addedDesc),
+                      onTap: () =>
+                          setState(() => _sortMode = _SortMode.addedDesc),
                     ),
                   ],
                 ),
@@ -203,7 +212,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 32),
                   child: Center(
-                    child: Text('No tracks yet.', style: TextStyle(color: Color(0xFF71717A))),
+                    child: Text('No tracks yet.',
+                        style: TextStyle(color: Color(0xFF71717A))),
                   ),
                 )
               else if (_sortMode == _SortMode.custom)
@@ -242,27 +252,41 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     );
   }
 
-  Future<void> _reorder(WidgetRef ref, List<Song> songs, int oldIndex, int newIndex) async {
+  Future<void> _reorder(
+      WidgetRef ref, List<Song> songs, int oldIndex, int newIndex) async {
     final client = ref.read(apiClientProvider);
     if (client == null) return;
     final reordered = [...songs];
     final moved = reordered.removeAt(oldIndex);
     reordered.insert(newIndex, moved);
-    await client.reorderPlaylistTracks(widget.playlistId, reordered.map((s) => s.id).toList());
+    await client.reorderPlaylistTracks(
+        widget.playlistId, reordered.map((s) => s.id).toList());
     ref.invalidate(playlistDetailProvider(widget.playlistId));
   }
 
-  Future<void> _downloadAll(WidgetRef ref, List<Song> songs) async {
+  Future<void> _downloadAll(
+    BuildContext context,
+    WidgetRef ref,
+    Playlist playlist,
+    List<Song> songs,
+  ) async {
     final client = ref.read(apiClientProvider);
     final downloads = ref.read(downloadServiceProvider);
     if (client == null) return;
-    for (final song in songs) {
-      await downloads.download(song, client);
+    try {
+      await downloads.downloadPlaylist(playlist, songs, client);
+      ref.invalidate(downloadedPlaylistsProvider);
+      if (context.mounted) showSnackBar(context, 'Playlist downloaded');
+    } catch (_) {
+      if (context.mounted) {
+        showFailureSnackBar(context, 'Failed to download playlist');
+      }
     }
   }
 
   Future<void> _pickCover(BuildContext context, WidgetRef ref) async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 90);
+    final picked = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, imageQuality: 90);
     if (picked == null) return;
     final client = ref.read(apiClientProvider);
     if (client == null) return;
@@ -271,7 +295,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     ref.invalidate(playlistsProvider);
   }
 
-  Future<void> _editName(BuildContext context, WidgetRef ref, Playlist playlist) async {
+  Future<void> _editName(
+      BuildContext context, WidgetRef ref, Playlist playlist) async {
     final ctrl = TextEditingController(text: playlist.name);
     final name = await showDialog<String>(
       context: context,
@@ -280,7 +305,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         content: TextField(controller: ctrl, autofocus: true),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, ctrl.text.trim()),
             child: const Text('Save'),
@@ -311,7 +337,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, ctrl.text.trim()),
             child: const Text('Save'),
@@ -326,7 +353,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     ref.invalidate(playlistDetailProvider(widget.playlistId));
   }
 
-  Future<void> _confirmDelete(BuildContext context, WidgetRef ref, Playlist playlist) async {
+  Future<void> _confirmDelete(
+      BuildContext context, WidgetRef ref, Playlist playlist) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -356,7 +384,8 @@ class _SortChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _SortChip({required this.label, required this.selected, required this.onTap});
+  const _SortChip(
+      {required this.label, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) => GestureDetector(

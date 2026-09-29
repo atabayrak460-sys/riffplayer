@@ -1,40 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_slidable/flutter_slidable.dart';
-import 'package:path/path.dart' as p;
+import 'package:go_router/go_router.dart';
 import '../providers/providers.dart';
 import '../api/types.dart';
-import '../utils/snackbar.dart';
-import '../widgets/add_to_playlist_dialog.dart';
+import '../widgets/download_tile.dart';
 import '../widgets/stock_covers.dart' as stock;
-
-String _fmtSize(int? bytes) {
-  if (bytes == null) return '';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
-  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-}
-
-/// Reconstructs a [Song] from a [DownloadedTrack] so it can be handed to
-/// [PlayerNotifier.playSong] — the Downloads screen is offline-first and has
-/// no live server data to draw on, so artist/album ids (only needed for
-/// "go to artist/album" navigation, which this screen doesn't offer) are
-/// left blank rather than guessed. `suffix` comes from the actual
-/// downloaded file's extension instead of defaulting to mp3.
-Song _songFromDownload(DownloadedTrack t) {
-  final ext = p.extension(t.localPath);
-  return Song(
-    id: t.trackId,
-    title: t.title,
-    artist: t.artist,
-    artistId: '',
-    album: t.album,
-    albumId: '',
-    coverArt: t.coverArtId,
-    suffix: ext.isNotEmpty ? ext.substring(1) : 'mp3',
-    size: t.fileSize,
-  );
-}
 
 class DownloadsScreen extends ConsumerWidget {
   const DownloadsScreen({super.key});
@@ -42,13 +13,15 @@ class DownloadsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final downloadsAsync = ref.watch(downloadsProvider);
+    final playlistsAsync = ref.watch(downloadedPlaylistsProvider);
+    final downloadedPlaylists = playlistsAsync.valueOrNull ?? [];
 
     return Scaffold(
       appBar: AppBar(title: const Text('Downloads')),
       body: downloadsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
-        data: (downloads) => downloads.isEmpty
+        data: (downloads) => downloads.isEmpty && downloadedPlaylists.isEmpty
             ? const Center(
                 child: Padding(
                   padding: EdgeInsets.all(32),
@@ -59,54 +32,66 @@ class DownloadsScreen extends ConsumerWidget {
                   ),
                 ),
               )
-            : Column(
+            : ListView(
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Row(
-                      children: [
-                        const stock.DownloadedCover(
-                          size: 56,
-                          borderRadius: BorderRadius.all(Radius.circular(10)),
-                        ),
-                        const SizedBox(width: 14),
-                        Text(
-                          '${downloads.length} track${downloads.length == 1 ? '' : 's'} available offline',
-                          style: const TextStyle(
-                              color: Color(0xFF71717A), fontSize: 13),
-                        ),
-                      ],
+                  if (downloadedPlaylists.isNotEmpty) ...[
+                    const _SectionHeader('Downloaded Playlists'),
+                    ...downloadedPlaylists.map(
+                      (pl) => _DownloadedPlaylistRow(playlist: pl),
                     ),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: downloads.length,
-                      itemBuilder: (_, i) => _DownloadTile(
-                        track: downloads[i],
-                        onTap: () {
-                          final client = ref.read(apiClientProvider);
-                          if (client == null) return;
-                          final downloadService =
-                              ref.read(downloadServiceProvider);
-                          final queue =
-                              downloads.map(_songFromDownload).toList();
-                          ref.read(playerProvider.notifier).playSong(
-                                queue[i],
-                                client,
-                                downloadService,
-                                queue: queue,
-                                queueIndex: i,
-                              );
-                        },
-                        onDelete: () async {
-                          await ref
-                              .read(downloadServiceProvider)
-                              .deleteDownload(downloads[i].trackId);
-                          ref.invalidate(downloadsProvider);
-                        },
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(color: Color(0xFF27272A), height: 1),
+                    ),
+                  ],
+                  if (downloads.isNotEmpty) ...[
+                    const _SectionHeader('Downloaded Songs'),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Row(
+                        children: [
+                          const stock.DownloadedCover(
+                            size: 40,
+                            borderRadius: BorderRadius.all(Radius.circular(8)),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            '${downloads.length} track${downloads.length == 1 ? '' : 's'} available offline',
+                            style: const TextStyle(
+                                color: Color(0xFF71717A), fontSize: 13),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
+                    ...downloads.asMap().entries.map(
+                          (e) => DownloadTile(
+                            track: e.value,
+                            onTap: () {
+                              final client = ref.read(apiClientProvider);
+                              if (client == null) return;
+                              final downloadService =
+                                  ref.read(downloadServiceProvider);
+                              final queue = downloads
+                                  .map(songFromDownloadedTrack)
+                                  .toList();
+                              ref.read(playerProvider.notifier).playSong(
+                                    queue[e.key],
+                                    client,
+                                    downloadService,
+                                    queue: queue,
+                                    queueIndex: e.key,
+                                  );
+                            },
+                            onDelete: () async {
+                              await ref
+                                  .read(downloadServiceProvider)
+                                  .deleteDownload(e.value.trackId);
+                              ref.invalidate(downloadsProvider);
+                            },
+                          ),
+                        ),
+                  ],
+                  const SizedBox(height: 24),
                 ],
               ),
       ),
@@ -114,159 +99,57 @@ class DownloadsScreen extends ConsumerWidget {
   }
 }
 
-class _DownloadTile extends ConsumerWidget {
-  final DownloadedTrack track;
-  final VoidCallback onTap;
-  final VoidCallback onDelete;
-
-  const _DownloadTile({
-    required this.track,
-    required this.onTap,
-    required this.onDelete,
-  });
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  const _SectionHeader(this.title);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Scoped to just the current song's id, same as SongTile — avoids every
-    // row rebuilding on every playback position tick.
-    final isCurrent = ref.watch(
-        playerProvider.select((s) => s.currentSong?.id == track.trackId));
-
-    final tile = ListTile(
-      onTap: onTap,
-      leading: _DownloadCover(track: track),
-      title: Text(
-        track.title,
-        style: TextStyle(
-          color:
-              isCurrent ? Theme.of(context).colorScheme.primary : Colors.white,
-          fontWeight: isCurrent ? FontWeight.w600 : FontWeight.normal,
-          fontSize: 14,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        '${track.artist} · ${_fmtSize(track.fileSize)}',
-        style: const TextStyle(color: Color(0xFF71717A), fontSize: 12),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (isCurrent) ...[
-            Icon(Icons.graphic_eq,
-                color: Theme.of(context).colorScheme.primary, size: 16),
-            const SizedBox(width: 8),
-          ],
-          PopupMenuButton<String>(
-            icon:
-                const Icon(Icons.more_vert, color: Color(0xFF71717A), size: 18),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'queue', child: Text('Add to queue')),
-              PopupMenuItem(value: 'playlist', child: Text('Add to playlist')),
-              PopupMenuItem(value: 'remove', child: Text('Remove download')),
-            ],
-            onSelected: (v) => _onMenu(v, context, ref),
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        child: Text(
+          title.toUpperCase(),
+          style: const TextStyle(
+            color: Color(0xFF71717A),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.2,
           ),
-        ],
-      ),
-    );
-
-    return Slidable(
-      key: ValueKey('download-slidable-${track.trackId}'),
-      // Swipe right → add to queue, same gesture/threshold as SongTile.
-      // Disabled on the currently-playing row — queueing the song that's
-      // already playing doesn't make sense.
-      startActionPane: isCurrent
-          ? null
-          : ActionPane(
-              motion: const StretchMotion(),
-              extentRatio: 0.28,
-              dismissible: DismissiblePane(
-                dismissThreshold: 0.3,
-                closeOnCancel: true,
-                confirmDismiss: () async {
-                  _addToQueue(context, ref);
-                  return false;
-                },
-                onDismissed: () {},
-              ),
-              children: [
-                SlidableAction(
-                  onPressed: (_) => _addToQueue(context, ref),
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Colors.white,
-                  icon: Icons.queue_music,
-                  label: 'Queue',
-                ),
-              ],
-            ),
-      child: tile,
-    );
-  }
-
-  void _addToQueue(BuildContext context, WidgetRef ref) {
-    final client = ref.read(apiClientProvider);
-    if (client == null) return;
-    final downloads = ref.read(downloadServiceProvider);
-    ref
-        .read(playerProvider.notifier)
-        .addToQueue(_songFromDownload(track), client, downloads)
-        .then((_) {
-      // ignore: use_build_context_synchronously
-      showSnackBar(context, 'Added to queue');
-    }).catchError((_) {
-      // ignore: use_build_context_synchronously
-      showFailureSnackBar(context, 'Failed to add to queue');
-    }).ignore();
-  }
-
-  Future<void> _confirmAndDelete(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete download?'),
-        content: Text('Remove "${track.title}" from device?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Delete', style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
-    if (confirmed == true) onDelete();
-  }
-
-  void _onMenu(String action, BuildContext context, WidgetRef ref) {
-    switch (action) {
-      case 'queue':
-        _addToQueue(context, ref);
-      case 'playlist':
-        showDialog(
-          context: context,
-          builder: (_) => AddToPlaylistDialog(songId: track.trackId),
-        );
-      case 'remove':
-        _confirmAndDelete(context);
-    }
-  }
+        ),
+      );
 }
 
-/// The downloaded track's locally-cached cover art, if it has one — falls
-/// back to a generic note icon rather than a network fetch, since this
-/// screen is specifically the offline-availability one.
-class _DownloadCover extends StatelessWidget {
-  final DownloadedTrack track;
-  const _DownloadCover({required this.track});
+class _DownloadedPlaylistRow extends StatelessWidget {
+  final DownloadedPlaylist playlist;
+  const _DownloadedPlaylistRow({required this.playlist});
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+        onTap: () =>
+            context.push('/downloads/playlists/${playlist.playlistId}'),
+        leading: _PlaylistCoverThumb(playlist: playlist),
+        title: Text(
+          playlist.name,
+          style: const TextStyle(color: Colors.white, fontSize: 14),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          '${playlist.trackCount} track${playlist.trackCount == 1 ? '' : 's'}',
+          style: const TextStyle(color: Color(0xFF71717A), fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right, color: Color(0xFF52525B)),
+      );
+}
+
+class _PlaylistCoverThumb extends StatelessWidget {
+  final DownloadedPlaylist playlist;
+  const _PlaylistCoverThumb({required this.playlist});
 
   @override
   Widget build(BuildContext context) {
-    final path = track.coverLocalPath;
+    final path = playlist.coverLocalPath;
     if (path == null || !File(path).existsSync()) {
-      return const Icon(Icons.music_note, color: Color(0xFF71717A));
+      return const Icon(Icons.queue_music, color: Color(0xFF71717A));
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),

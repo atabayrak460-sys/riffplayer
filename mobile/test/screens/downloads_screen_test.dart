@@ -4,6 +4,7 @@ import 'package:cadence_mobile/screens/downloads_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:mocktail/mocktail.dart';
 
 import '../helpers/mocks.dart';
@@ -42,6 +43,7 @@ void main() {
     when(() => handler.insertAt(any(), any())).thenAnswer((_) async {});
 
     when(() => downloads.localPath(any())).thenAnswer((_) async => null);
+    when(() => downloads.getDownloadedPlaylists()).thenAnswer((_) async => []);
     when(() => client.streamUrl(any())).thenReturn('http://test/stream');
     when(() => client.scrobble(any(), submission: any(named: 'submission')))
         .thenAnswer((_) async {});
@@ -54,6 +56,19 @@ void main() {
     when(() => downloads.getDownloads()).thenAnswer((_) async => tracks);
     final notifier = PlayerNotifier(handler);
 
+    final router = GoRouter(
+      initialLocation: '/downloads',
+      routes: [
+        GoRoute(
+            path: '/downloads', builder: (_, __) => const DownloadsScreen()),
+        GoRoute(
+          path: '/downloads/playlists/:id',
+          builder: (_, state) => Scaffold(
+              body: Text('Playlist detail: ${state.pathParameters['id']}')),
+        ),
+      ],
+    );
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -61,9 +76,13 @@ void main() {
           apiClientProvider.overrideWithValue(client),
           downloadServiceProvider.overrideWithValue(downloads),
         ],
-        child: const MaterialApp(home: DownloadsScreen()),
+        child: MaterialApp.router(routerConfig: router),
       ),
     );
+    // Two FutureProviders now back this screen (downloads +
+    // downloadedPlaylists) — one pump isn't reliably enough for both to
+    // resolve, unlike when there was only one.
+    await tester.pump();
     await tester.pump();
     return notifier;
   }
@@ -156,5 +175,57 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(notifier.state.queue.map((s) => s.id), ['a']);
+  });
+
+  // Feature request: downloaded playlists should show up above the flat
+  // "downloaded songs" list, not just be indistinguishable from individual
+  // downloads.
+  group('Downloaded Playlists section', () {
+    testWidgets('shows downloaded playlists above a "Downloaded Songs" section',
+        (tester) async {
+      when(() => downloads.getDownloadedPlaylists()).thenAnswer((_) async => [
+            DownloadedPlaylist(
+              playlistId: 'p1',
+              name: 'My Mix',
+              downloadedAt: DateTime(2026),
+              trackCount: 3,
+            ),
+          ]);
+      final a = _download('a', title: 'Song A');
+      await pumpDownloadsScreen(tester, [a]);
+
+      // _SectionHeader renders its title uppercased.
+      expect(find.text('DOWNLOADED PLAYLISTS'), findsOneWidget);
+      expect(find.text('My Mix'), findsOneWidget);
+      expect(find.text('3 tracks'), findsOneWidget);
+      expect(find.text('DOWNLOADED SONGS'), findsOneWidget);
+      expect(find.text('Song A'), findsOneWidget);
+    });
+
+    testWidgets('is absent when nothing has been downloaded as a playlist',
+        (tester) async {
+      final a = _download('a', title: 'Song A');
+      await pumpDownloadsScreen(tester, [a]);
+
+      expect(find.text('DOWNLOADED PLAYLISTS'), findsNothing);
+    });
+
+    testWidgets('tapping a downloaded playlist opens its detail screen',
+        (tester) async {
+      when(() => downloads.getDownloadedPlaylists()).thenAnswer((_) async => [
+            DownloadedPlaylist(
+              playlistId: 'p1',
+              name: 'My Mix',
+              downloadedAt: DateTime(2026),
+              trackCount: 0,
+            ),
+          ]);
+      await pumpDownloadsScreen(tester, []);
+
+      await tester.tap(find.text('My Mix'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Playlist detail: p1'), findsOneWidget);
+    });
   });
 }

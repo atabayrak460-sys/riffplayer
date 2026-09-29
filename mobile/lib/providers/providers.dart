@@ -88,8 +88,9 @@ class PlayerState {
     this.repeatMode = LoopMode.off,
   });
 
-  Song? get currentSong =>
-      currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] : null;
+  Song? get currentSong => currentIndex >= 0 && currentIndex < queue.length
+      ? queue[currentIndex]
+      : null;
 
   PlayerState copyWith({
     List<Song>? queue,
@@ -209,7 +210,8 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     final client = _scrobbleClient;
     if (song == null || client == null || _scrobbledSongId == song.id) return;
     final durationMs = state.duration.inMilliseconds;
-    final thresholdMs = durationMs > 0 ? (durationMs * 0.5).clamp(0, 30000).round() : 30000;
+    final thresholdMs =
+        durationMs > 0 ? (durationMs * 0.5).clamp(0, 30000).round() : 30000;
     if (pos.inMilliseconds >= thresholdMs) {
       _scrobbledSongId = song.id;
       client.scrobble(song.id, submission: true).ignore();
@@ -268,7 +270,11 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     await _handler.insertAt(insertAt, source);
     final current = state.queue;
     state = state.copyWith(
-      queue: [...current.sublist(0, insertAt), song, ...current.sublist(insertAt)],
+      queue: [
+        ...current.sublist(0, insertAt),
+        song,
+        ...current.sublist(insertAt)
+      ],
     );
     _queuedCount++;
   }
@@ -310,8 +316,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   /// there needs to patch this state directly to show up immediately.
   void setStarredInQueue(String songId, String? starred) {
     final newQueue = [
-      for (final s in state.queue)
-        s.id == songId ? s.withStarred(starred) : s,
+      for (final s in state.queue) s.id == songId ? s.withStarred(starred) : s,
     ];
     state = state.copyWith(queue: newQueue);
   }
@@ -332,8 +337,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   }
 }
 
-final playerProvider =
-    StateNotifierProvider<PlayerNotifier, PlayerState>(
+final playerProvider = StateNotifierProvider<PlayerNotifier, PlayerState>(
   (ref) => PlayerNotifier(ref.read(audioHandlerProvider)),
 );
 
@@ -353,9 +357,8 @@ final artistsProvider =
   return client.getArtists();
 });
 
-final artistDetailProvider =
-    FutureProvider.autoDispose.family<({Artist artist, List<Album> albums}), String>(
-        (ref, id) async {
+final artistDetailProvider = FutureProvider.autoDispose
+    .family<({Artist artist, List<Album> albums}), String>((ref, id) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.getArtistDetail(id);
@@ -363,8 +366,8 @@ final artistDetailProvider =
 
 /// All songs across every album by this artist, flattened — backs the
 /// artist detail screen's "Songs" tab.
-final artistSongsProvider =
-    FutureProvider.autoDispose.family<List<Song>, String>((ref, artistId) async {
+final artistSongsProvider = FutureProvider.autoDispose
+    .family<List<Song>, String>((ref, artistId) async {
   // Without this the provider tears down and refetches from scratch every
   // time the tab is re-entered (autoDispose's default). Keeping it alive
   // for a few minutes after the last listener unsubscribes means quickly
@@ -390,9 +393,8 @@ final artistSongsProvider =
   return results.expand((r) => r.songs).toList();
 });
 
-final albumDetailProvider =
-    FutureProvider.autoDispose.family<({Album album, List<Song> songs}), String>(
-        (ref, id) async {
+final albumDetailProvider = FutureProvider.autoDispose
+    .family<({Album album, List<Song> songs}), String>((ref, id) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.getAlbum(id);
@@ -400,14 +402,20 @@ final albumDetailProvider =
 
 final searchProvider =
     FutureProvider.autoDispose.family<SearchResult, String>((ref, query) async {
-  if (query.isEmpty) return const SearchResult(artists: [], albums: [], songs: []);
+  if (query.isEmpty) {
+    return const SearchResult(artists: [], albums: [], songs: []);
+  }
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.search(query);
 });
 
 final starredProvider = FutureProvider.autoDispose<
-    ({List<Artist> artists, List<Album> albums, List<Song> songs})>((ref) async {
+    ({
+      List<Artist> artists,
+      List<Album> albums,
+      List<Song> songs
+    })>((ref) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.getStarred();
@@ -429,8 +437,8 @@ final playlistDetailProvider =
 
 /// When each track was added to this playlist — drives the "date added"
 /// column and the "sort by date added" view on the playlist detail screen.
-final playlistTrackDatesProvider =
-    FutureProvider.autoDispose.family<Map<String, DateTime>, String>((ref, id) async {
+final playlistTrackDatesProvider = FutureProvider.autoDispose
+    .family<Map<String, DateTime>, String>((ref, id) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.getPlaylistTrackDates(id);
@@ -439,6 +447,23 @@ final playlistTrackDatesProvider =
 final downloadsProvider =
     FutureProvider.autoDispose<List<DownloadedTrack>>((ref) async {
   return ref.read(downloadServiceProvider).getDownloads();
+});
+
+final downloadedPlaylistsProvider =
+    FutureProvider.autoDispose<List<DownloadedPlaylist>>((ref) async {
+  return ref.read(downloadServiceProvider).getDownloadedPlaylists();
+});
+
+final downloadedPlaylistProvider = FutureProvider.autoDispose
+    .family<DownloadedPlaylist?, String>((ref, playlistId) async {
+  return ref.read(downloadServiceProvider).getDownloadedPlaylist(playlistId);
+});
+
+final downloadedPlaylistTracksProvider = FutureProvider.autoDispose
+    .family<List<DownloadedTrack>, String>((ref, playlistId) async {
+  return ref
+      .read(downloadServiceProvider)
+      .getDownloadedPlaylistTracks(playlistId);
 });
 
 final lyricsProvider =
@@ -475,7 +500,8 @@ final mostPlayedProvider = FutureProvider.autoDispose<List<Song>>((ref) async {
   return client.getMostPlayed();
 });
 
-final recentlyPlayedProvider = FutureProvider.autoDispose<List<Song>>((ref) async {
+final recentlyPlayedProvider =
+    FutureProvider.autoDispose<List<Song>>((ref) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.getRecentlyPlayed();
@@ -497,8 +523,8 @@ final wrappedProvider =
 });
 
 /// 'similar' or 'discover'.
-final recommendationsProvider =
-    FutureProvider.autoDispose.family<RecommendationsResult, String>((ref, type) async {
+final recommendationsProvider = FutureProvider.autoDispose
+    .family<RecommendationsResult, String>((ref, type) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.getRecommendations(type);
@@ -512,19 +538,22 @@ final meProvider = FutureProvider.autoDispose<MeInfo>((ref) async {
   return client.getMe();
 });
 
-final adminUsersProvider = FutureProvider.autoDispose<List<AdminUser>>((ref) async {
+final adminUsersProvider =
+    FutureProvider.autoDispose<List<AdminUser>>((ref) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.adminGetUsers();
 });
 
-final adminLibrariesProvider = FutureProvider.autoDispose<List<Library>>((ref) async {
+final adminLibrariesProvider =
+    FutureProvider.autoDispose<List<Library>>((ref) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.adminGetLibraries();
 });
 
-final adminSettingsProvider = FutureProvider.autoDispose<Map<String, String>>((ref) async {
+final adminSettingsProvider =
+    FutureProvider.autoDispose<Map<String, String>>((ref) async {
   final client = ref.read(apiClientProvider);
   if (client == null) throw Exception('Not authenticated');
   return client.adminGetSettings();
