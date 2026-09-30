@@ -213,7 +213,7 @@ docker-compose.yml Example deployment
 
 Point any Subsonic client at `http://your-server:4533` and sign in with your RiffPlayer credentials. RiffPlayer implements the OpenSubsonic extensions (`songLyrics` via `getLyricsBySongId`, `replayGain` fields on songs).
 
-**Tested clients:** Amperfy (iOS), Symfonium (Android), DSub (Android), Feishin (desktop).
+**Compatibility:** RiffPlayer implements the Subsonic API, so clients such as Amperfy (iOS), Symfonium (Android), DSub (Android) and Feishin (desktop) are expected to work. The maintainer has not verified each of them yet — reports of what works and what doesn't are very welcome.
 
 ## Scrobbling
 
