@@ -50,6 +50,8 @@ export function SettingsPage() {
   const [ollamaUrl, setOllamaUrl] = useState('');
   const [ollamaModel, setOllamaModel] = useState('llama3.2');
   const [donationEnabled, setDonationEnabled] = useState(true);
+  const [lyricsLookup, setLyricsLookup] = useState(true);
+  const [coverLookup, setCoverLookup] = useState(true);
 
   useEffect(() => {
     if (!settings) return;
@@ -60,6 +62,8 @@ export function SettingsPage() {
     setOllamaUrl(settings.ollama_url ?? '');
     setOllamaModel(settings.ollama_model ?? 'llama3.2');
     setDonationEnabled(settings.donation_prompt_enabled !== 'false');
+    setLyricsLookup(settings.lyrics_lookup_enabled !== 'false');
+    setCoverLookup(settings.cover_lookup_enabled !== 'false');
   }, [settings]);
 
   const save = (patch: Record<string, string | null>) => patchMut.mutate(patch);
@@ -99,6 +103,16 @@ export function SettingsPage() {
           (requires Last.fm API key above). All suggestions come from your own library —
           no acquisition links are ever shown.
         </p>
+      </section>
+
+      <section className="mb-8">
+        <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">External metadata lookups</h3>
+        <Field label="Look up lyrics online (LRCLIB)" description="When a track has no .lrc file next to it, sends its title, artist, album and duration to lrclib.net to find synced lyrics.">
+          <Toggle checked={lyricsLookup} onChange={(v) => { setLyricsLookup(v); save({ lyrics_lookup_enabled: v ? 'true' : 'false' }); }} />
+        </Field>
+        <Field label="Look up album covers online (Cover Art Archive)" description="When an album has no embedded artwork, sends its MusicBrainz ID to coverartarchive.org. Your audio and listening history are never sent.">
+          <Toggle checked={coverLookup} onChange={(v) => { setCoverLookup(v); save({ cover_lookup_enabled: v ? 'true' : 'false' }); }} />
+        </Field>
       </section>
 
       <section>

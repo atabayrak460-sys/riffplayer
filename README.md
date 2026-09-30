@@ -261,6 +261,7 @@ The Flutter app (Android and iOS, one codebase) lives in [`mobile/`](mobile/READ
 - **Private by default.** No telemetry, no analytics, no accounts with us. Your audio and your listening history stay on your server. The server does make a few outside requests, so you should know exactly what they are:
   - **LRCLIB** (synced lyrics) — only when a track has no lyrics file next to it. Sends the track's title, artist, album and duration.
   - **Cover Art Archive** (album covers) — only when an album has no embedded artwork. Sends the album's MusicBrainz ID.
+  - Both are on by default and can be switched off separately under **Admin → Settings → External metadata lookups**.
   - **Last.fm / ListenBrainz** scrobbling and **Last.fm recommendations** — off until you configure them.
   - AI features run locally through Ollama; nothing is sent anywhere.
 - **Subsonic compatible.** Existing Subsonic and OpenSubsonic clients keep working; RiffPlayer's own extras live on a separate API.

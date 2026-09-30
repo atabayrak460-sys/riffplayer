@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../../db/database.js';
 import { sendOk, sendError, SubsonicErrorCode } from '../response.js';
 import { xmlTag } from '../serialize.js';
+import { isSettingEnabled, LYRICS_LOOKUP_SETTING } from '../../../settings.js';
 
 type Q = Record<string, string | undefined>;
 const p = (req: FastifyRequest) => ({ ...(req.query as Q), ...((req.body as Q) ?? {}) });
@@ -112,8 +113,9 @@ async function getLyricsBySongIdHandler(req: FastifyRequest, reply: FastifyReply
     return sendLyrics(reply, f, track, lrcContent, null);
   }
 
-  // 3. Fetch from LRCLIB
-  if (track.duration_s) {
+  // 3. Fetch from LRCLIB (sends title/artist/album/duration to an outside
+  //    service — the admin can switch this off in Settings)
+  if (track.duration_s && isSettingEnabled(LYRICS_LOOKUP_SETTING)) {
     const result = await fetchLrcLib(
       track.title,
       track.artist_name,

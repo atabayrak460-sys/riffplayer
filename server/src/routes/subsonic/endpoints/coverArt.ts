@@ -6,6 +6,7 @@ import sharp from 'sharp';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../../db/database.js';
 import { sendError, SubsonicErrorCode } from '../response.js';
+import { isSettingEnabled, COVER_LOOKUP_SETTING } from '../../../settings.js';
 
 // Subsonic clients pass arbitrary size= values (thumbnail grids commonly ask
 // for 64-300px); without an upper bound a malicious or buggy client could
@@ -157,6 +158,8 @@ async function fetchFromCoverArtArchive(
     .prepare('SELECT mbid FROM albums WHERE id = ?')
     .get(albumId) as { mbid: string | null } | undefined;
   if (!album?.mbid) return null;
+  // Sends the album's MusicBrainz ID to an outside service — admin can switch off.
+  if (!isSettingEnabled(COVER_LOOKUP_SETTING)) return null;
 
   // CAA returns a redirect to the actual image; follow it
   const url = `https://coverartarchive.org/release/${album.mbid}/front-500`;
