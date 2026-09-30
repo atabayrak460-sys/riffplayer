@@ -54,5 +54,28 @@ void main() {
     test('empty list stays empty', () {
       expect(sortPlaylistSongs([], dates, PlaylistSortMode.addedDesc), isEmpty);
     });
+
+    group('songs with a missing date', () {
+      final d = _song('d');
+      final e = _song('e');
+      final mixed = [a, d, b, e, c];
+      final partial = {
+        'a': DateTime(2024, 3, 1),
+        'b': DateTime(2024, 1, 1),
+        'c': DateTime(2024, 2, 1),
+      };
+
+      test('addedAsc sorts the dated songs and puts undated ones last', () {
+        expect(
+            _ids(sortPlaylistSongs(mixed, partial, PlaylistSortMode.addedAsc)),
+            ['b', 'c', 'a', 'd', 'e']);
+      });
+
+      test('addedDesc sorts the dated songs and puts undated ones last', () {
+        expect(
+            _ids(sortPlaylistSongs(mixed, partial, PlaylistSortMode.addedDesc)),
+            ['a', 'c', 'b', 'd', 'e']);
+      });
+    });
   });
 }

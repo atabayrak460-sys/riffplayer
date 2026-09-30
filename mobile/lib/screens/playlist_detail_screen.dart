@@ -21,16 +21,20 @@ String _fmtDuration(int seconds) {
 List<Song> sortPlaylistSongs(
     List<Song> songs, Map<String, DateTime>? dates, PlaylistSortMode mode) {
   if (mode == PlaylistSortMode.custom || dates == null) return songs;
-  final sorted = [...songs];
-  sorted.sort((a, b) {
-    final da = dates[a.id];
-    final db = dates[b.id];
-    if (da == null || db == null) return 0;
+  // Songs without a known date can't be ordered against the rest — treating
+  // them as "equal" to everything would make the comparator inconsistent and
+  // scramble the dated songs too. Sort only the dated ones and keep the
+  // undated ones last, in their original relative order.
+  final dated = songs.where((s) => dates[s.id] != null).toList();
+  final undated = songs.where((s) => dates[s.id] == null);
+  dated.sort((a, b) {
+    final da = dates[a.id]!;
+    final db = dates[b.id]!;
     return mode == PlaylistSortMode.addedAsc
         ? da.compareTo(db)
         : db.compareTo(da);
   });
-  return sorted;
+  return [...dated, ...undated];
 }
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
