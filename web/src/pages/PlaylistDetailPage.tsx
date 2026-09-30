@@ -179,11 +179,11 @@ export function PlaylistDetailPage() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="flex gap-6 mb-6">
+      <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 mb-6">
         <CoverUploadControl
           coverId={playlist.coverArt}
           coverSize={440}
-          coverClassName="w-56 h-56 rounded-lg object-cover shadow-xl"
+          coverClassName="w-40 h-40 sm:w-56 sm:h-56 rounded-lg object-cover shadow-xl"
           alt={playlist.name}
           fallback={<PlaylistCover className="w-full h-full" />}
           shape="square"
@@ -195,7 +195,7 @@ export function PlaylistDetailPage() {
           error={coverError}
         />
 
-        <div className="flex flex-col flex-1 min-w-0 h-56">
+        <div className="flex flex-col flex-1 min-w-0 sm:h-56">
           <p className="text-xs uppercase tracking-widest text-zinc-400">Playlist</p>
           {editingName ? (
             <form
@@ -248,7 +248,7 @@ export function PlaylistDetailPage() {
               onClick={() => { setDescriptionValue(playlist.comment ?? ''); setEditingDescription(true); }}
               title="Click to edit description"
             >
-              <p className="text-sm text-zinc-400 whitespace-pre-wrap">
+              <p className="text-sm text-zinc-400 whitespace-pre-wrap break-words">
                 {playlist.comment || <span className="italic text-zinc-600">No description</span>}
               </p>
             </div>
@@ -256,7 +256,7 @@ export function PlaylistDetailPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 mb-8">
+      <div className="flex flex-wrap items-center gap-3 mb-8">
         <button
           onClick={() => playQueue(displayedSongs)}
           disabled={!songs.length}

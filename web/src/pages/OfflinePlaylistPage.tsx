@@ -37,20 +37,20 @@ export function OfflinePlaylistPage() {
 
   return (
     <div className="p-6">
-      <div className="flex gap-5 mb-8">
+      <div className="flex flex-col sm:flex-row gap-4 sm:gap-5 mb-8">
         <CoverArt
           id={playlist.coverArtId}
           size={160}
-          className="w-36 h-36 rounded-lg object-cover shadow-xl flex-shrink-0"
+          className="w-32 h-32 sm:w-36 sm:h-36 rounded-lg object-cover shadow-xl flex-shrink-0"
           alt={playlist.name}
           fallback={<PlaylistCover className="w-full h-full" />}
         />
-        <div className="flex flex-col justify-end gap-2">
+        <div className="flex flex-col justify-end gap-2 min-w-0">
           <p className="text-xs uppercase tracking-widest text-zinc-400">Downloaded Playlist</p>
-          <h1 className="text-3xl font-bold text-white">{playlist.name}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white break-words">{playlist.name}</h1>
           <p className="text-sm text-zinc-400">{songs.length} tracks</p>
           {playlist.comment && <p className="text-sm text-zinc-400 max-w-md">{playlist.comment}</p>}
-          <div className="flex items-center gap-3 mt-1">
+          <div className="flex flex-wrap items-center gap-3 mt-1">
             <button
               onClick={() => playQueue(songs)}
               disabled={!songs.length}
