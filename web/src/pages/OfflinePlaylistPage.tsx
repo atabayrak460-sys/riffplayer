@@ -49,7 +49,7 @@ export function OfflinePlaylistPage() {
           <p className="text-xs uppercase tracking-widest text-zinc-400">Downloaded Playlist</p>
           <h1 className="text-2xl sm:text-3xl font-bold text-white break-words">{playlist.name}</h1>
           <p className="text-sm text-zinc-400">{songs.length} tracks</p>
-          {playlist.comment && <p className="text-sm text-zinc-400 max-w-md">{playlist.comment}</p>}
+          {playlist.comment && <p className="text-sm text-zinc-400 max-w-md break-words">{playlist.comment}</p>}
           <div className="flex flex-wrap items-center gap-3 mt-1">
             <button
               onClick={() => playQueue(songs)}
