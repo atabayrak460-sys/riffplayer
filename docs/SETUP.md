@@ -1,6 +1,6 @@
-# Developer Setup — Cadence
+# Developer Setup — RiffPlayer
 
-Environment setup for building Cadence. Tailored for an **Arch-based Linux** machine (CachyOS). Phase numbers refer to `docs/ROADMAP.md`.
+Environment setup for building RiffPlayer. Tailored for an **Arch-based Linux** machine (CachyOS). Phase numbers refer to `docs/ROADMAP.md`.
 
 ---
 

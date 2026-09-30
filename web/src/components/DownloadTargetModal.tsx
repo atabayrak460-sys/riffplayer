@@ -46,13 +46,13 @@ export function DownloadTargetModal() {
               onClick={() => choose('app')}
               className="w-full text-left bg-zinc-900 hover:bg-zinc-700 border border-zinc-700 rounded-lg p-3 transition-colors"
             >
-              <p className="text-sm font-medium text-white">In Cadence</p>
+              <p className="text-sm font-medium text-white">In RiffPlayer</p>
               <p className="text-xs text-zinc-400 mt-0.5">
                 Play offline inside the app, from the Downloaded tab.
               </p>
               {isIOS() && (
                 <p className="text-xs text-amber-400 mt-1.5">
-                  On iOS, Safari may clear downloads if you don't open Cadence for a while. The
+                  On iOS, Safari may clear downloads if you don't open RiffPlayer for a while. The
                   native app (coming later) won't have this limit.
                 </p>
               )}

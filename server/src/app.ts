@@ -32,7 +32,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
       : true,
   });
 
-  const dbPath = options.dbPath ?? process.env.DB_PATH ?? path.join(process.cwd(), 'cadence.db');
+  const dbPath = options.dbPath ?? process.env.DB_PATH ?? path.join(process.cwd(), 'riffplayer.db');
   const db = initDb(dbPath);
   await runMigrations(db, MIGRATIONS_DIR);
   ensureAdminUser(db);

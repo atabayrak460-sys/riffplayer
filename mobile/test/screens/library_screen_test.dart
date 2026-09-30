@@ -1,5 +1,5 @@
-import 'package:cadence_mobile/providers/providers.dart';
-import 'package:cadence_mobile/screens/library_screen.dart';
+import 'package:riffplayer_mobile/providers/providers.dart';
+import 'package:riffplayer_mobile/screens/library_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

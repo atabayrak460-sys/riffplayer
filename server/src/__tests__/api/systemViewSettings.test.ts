@@ -17,7 +17,7 @@ const TINY_PNG = Buffer.from(
 );
 
 function multipart(filename: string, mimeType: string, data: Buffer): { body: Buffer; contentType: string } {
-  const boundary = '----cadenceTestBoundary';
+  const boundary = '----riffplayerTestBoundary';
   const preamble = Buffer.from(
     `--${boundary}\r\n` +
     `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
@@ -31,7 +31,7 @@ let app: FastifyInstance;
 let tmpDir: string;
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cadence-system-view-'));
+  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'riffplayer-system-view-'));
   process.env.COVERS_DIR = path.join(tmpDir, 'covers');
   app = await buildApp({ dbPath: ':memory:' });
   await app.ready();

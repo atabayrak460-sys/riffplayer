@@ -1,6 +1,6 @@
-import 'package:cadence_mobile/api/types.dart';
-import 'package:cadence_mobile/providers/providers.dart';
-import 'package:cadence_mobile/widgets/song_tile.dart';
+import 'package:riffplayer_mobile/api/types.dart';
+import 'package:riffplayer_mobile/providers/providers.dart';
+import 'package:riffplayer_mobile/widgets/song_tile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

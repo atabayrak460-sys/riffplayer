@@ -42,7 +42,7 @@ let tmpDir: string;
 beforeEach(async () => {
   db = initDb(':memory:');
   await runMigrations(db, MIGRATIONS_DIR);
-  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cadence-test-'));
+  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'riffplayer-test-'));
 });
 
 afterEach(async () => {

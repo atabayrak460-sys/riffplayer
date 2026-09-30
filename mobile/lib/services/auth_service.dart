@@ -2,10 +2,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/types.dart';
 
 class AuthService {
-  static const _keyUrl = 'cadence_server_url';
-  static const _keyUsername = 'cadence_username';
-  static const _keyPassword = 'cadence_password';
-  static const _keyToken = 'cadence_jwt';
+  static const _keyUrl = 'riffplayer_server_url';
+  static const _keyUsername = 'riffplayer_username';
+  static const _keyPassword = 'riffplayer_password';
+  static const _keyToken = 'riffplayer_jwt';
 
   Future<Credentials?> load() async {
     final prefs = await SharedPreferences.getInstance();

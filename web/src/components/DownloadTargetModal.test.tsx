@@ -17,7 +17,7 @@ describe('DownloadTargetModal', () => {
   it('renders as an accessible dialog when a download request is pending', () => {
     render(<DownloadTargetModal />);
     expect(screen.getByRole('dialog', { name: 'Download to…' })).toBeInTheDocument();
-    expect(screen.getByText('In Cadence')).toBeInTheDocument();
+    expect(screen.getByText('In RiffPlayer')).toBeInTheDocument();
     expect(screen.getByText('To this device')).toBeInTheDocument();
   });
 

@@ -13,7 +13,7 @@ let app: FastifyInstance;
 let tmpDir: string;
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cadence-subsonic-scan-'));
+  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'riffplayer-subsonic-scan-'));
   app = await buildApp({ dbPath: ':memory:' });
   await app.ready();
   getDb().prepare("INSERT INTO libraries (name, fs_path) VALUES ('Test', ?)").run(tmpDir);

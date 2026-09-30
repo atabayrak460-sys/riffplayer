@@ -1,17 +1,19 @@
+name: riffplayer
+
 services:
-  cadence:
+  riffplayer:
     build: .
-    image: cadence:latest
+    image: riffplayer:latest
     ports:
       - "4533:4533"
     environment:
-      DB_PATH: /data/cadence.db
+      DB_PATH: /data/riffplayer.db
       COVERS_DIR: /data/covers
       # Override defaults before first run:
-      # CADENCE_ADMIN_USER: admin
-      # CADENCE_ADMIN_PASSWORD: changeme
+      # RIFFPLAYER_ADMIN_USER: admin
+      # RIFFPLAYER_ADMIN_PASSWORD: changeme
     volumes:
-      - cadence_data:/data
+      - riffplayer_data:/data
       # Mount your music library here (read-only is fine):
       - ./test-music:/music:ro
     restart: unless-stopped
@@ -27,4 +29,4 @@ services:
       retries: 3
 
 volumes:
-  cadence_data:
+  riffplayer_data:

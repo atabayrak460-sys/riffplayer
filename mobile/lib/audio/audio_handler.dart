@@ -64,12 +64,12 @@ Future<AudioSource> buildAudioSource(
   );
 }
 
-class CadenceAudioHandler extends BaseAudioHandler
+class RiffPlayerAudioHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
   final AudioPlayer _player = AudioPlayer();
   ConcatenatingAudioSource? _queue;
 
-  CadenceAudioHandler() {
+  RiffPlayerAudioHandler() {
     // Forward playback state to audio_service
     _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
 

@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Claude Code
 
-**Working title:** Cadence _(placeholder — rename freely across the repo)_
+**Name:** RiffPlayer
 
 **What it is:** An open-source, self-hosted music server with first-party **web** and **native mobile** clients. A Navidrome alternative that competes on UX and on a polished, cohesive first-party app experience — especially on **iOS**, which the self-hosted ecosystem underserves.
 

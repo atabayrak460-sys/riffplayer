@@ -31,7 +31,7 @@ let tmpDir: string;
 let trackId: number;
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cadence-scrobble-'));
+  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'riffplayer-scrobble-'));
   app = await buildApp({ dbPath: ':memory:' });
   await app.ready();
 

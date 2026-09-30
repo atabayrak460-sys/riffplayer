@@ -1,5 +1,5 @@
-import 'package:cadence_mobile/api/types.dart';
-import 'package:cadence_mobile/screens/playlist_detail_screen.dart';
+import 'package:riffplayer_mobile/api/types.dart';
+import 'package:riffplayer_mobile/screens/playlist_detail_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Song _song(String id) => Song(

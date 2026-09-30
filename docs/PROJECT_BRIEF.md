@@ -1,4 +1,4 @@
-# Project Brief — Cadence
+# Project Brief — RiffPlayer
 
 ## One-liner
 A self-hosted music server you fully own, with a beautiful first-party app on **web, iOS, and Android** — the polished client experience the open-source music stack has been missing.

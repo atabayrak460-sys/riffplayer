@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:cadence_mobile/api/types.dart';
-import 'package:cadence_mobile/providers/providers.dart';
+import 'package:riffplayer_mobile/api/types.dart';
+import 'package:riffplayer_mobile/providers/providers.dart';
 
 Song _song(String id) => Song(
       id: id,

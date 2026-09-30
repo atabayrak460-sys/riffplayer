@@ -44,7 +44,7 @@ COPY package.json        ./
 ENV NODE_ENV=production \
     PORT=4533 \
     HOST=0.0.0.0 \
-    DB_PATH=/data/cadence.db \
+    DB_PATH=/data/riffplayer.db \
     COVERS_DIR=/data/covers
 
 EXPOSE 4533

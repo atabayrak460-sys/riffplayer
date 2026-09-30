@@ -14,7 +14,7 @@ final downloadServiceProvider = Provider((_) => DownloadService());
 
 // ── Audio handler (overridden in main with the initialized singleton) ─────────
 
-final audioHandlerProvider = Provider<CadenceAudioHandler>(
+final audioHandlerProvider = Provider<RiffPlayerAudioHandler>(
   (_) => throw UnimplementedError('Override in ProviderScope'),
 );
 
@@ -113,7 +113,7 @@ class PlayerState {
 }
 
 class PlayerNotifier extends StateNotifier<PlayerState> {
-  final CadenceAudioHandler _handler;
+  final RiffPlayerAudioHandler _handler;
 
   // "Now playing" scrobbles fire immediately in playSong(); this tracks the
   // one-time "submission" scrobble (counts as a real play) sent once a track

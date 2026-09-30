@@ -1,4 +1,4 @@
-# Features — Cadence
+# Features — RiffPlayer
 
 Priority tiers. "Phase" maps to `ROADMAP.md`. Build MVP (Phases 0–3) first; tiers below MVP are added afterward.
 

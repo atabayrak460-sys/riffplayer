@@ -139,7 +139,7 @@ describe('Subsonic auth preHandler', () => {
   });
 
   it('protected endpoint accepts correct token auth', async () => {
-    const password = process.env.CADENCE_ADMIN_PASSWORD ?? 'admin';
+    const password = process.env.RIFFPLAYER_ADMIN_PASSWORD ?? 'admin';
     const salt = 'testsalt';
     const token = makeToken(password, salt);
     const res = await app.inject({
@@ -187,7 +187,7 @@ describe('Subsonic auth preHandler', () => {
   });
 
   it('accepts an older protocol version from the client (backward compatible)', async () => {
-    const password = process.env.CADENCE_ADMIN_PASSWORD ?? 'admin';
+    const password = process.env.RIFFPLAYER_ADMIN_PASSWORD ?? 'admin';
     const salt = 'testsalt';
     const token = makeToken(password, salt);
     const res = await app.inject({

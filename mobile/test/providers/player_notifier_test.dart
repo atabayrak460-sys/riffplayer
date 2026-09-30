@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:cadence_mobile/api/types.dart';
-import 'package:cadence_mobile/providers/providers.dart';
+import 'package:riffplayer_mobile/api/types.dart';
+import 'package:riffplayer_mobile/providers/providers.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';

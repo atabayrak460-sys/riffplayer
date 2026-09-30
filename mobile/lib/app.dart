@@ -31,14 +31,14 @@ class _AuthRefreshNotifier extends ChangeNotifier {
   void notify() => notifyListeners();
 }
 
-class CadenceApp extends ConsumerStatefulWidget {
-  const CadenceApp({super.key});
+class RiffPlayerApp extends ConsumerStatefulWidget {
+  const RiffPlayerApp({super.key});
 
   @override
-  ConsumerState<CadenceApp> createState() => _CadenceAppState();
+  ConsumerState<RiffPlayerApp> createState() => _RiffPlayerAppState();
 }
 
-class _CadenceAppState extends ConsumerState<CadenceApp> {
+class _RiffPlayerAppState extends ConsumerState<RiffPlayerApp> {
   final _authRefresh = _AuthRefreshNotifier();
   late final GoRouter _router;
 
@@ -136,7 +136,7 @@ class _CadenceAppState extends ConsumerState<CadenceApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'Cadence',
+      title: 'RiffPlayer',
       theme: buildTheme(),
       routerConfig: _router,
       debugShowCheckedModeBanner: false,

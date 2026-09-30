@@ -42,7 +42,7 @@ export function DownloadedPage() {
 
       {isIOS() && (
         <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2 mb-6">
-          On iOS, Safari may clear downloads if you don't open Cadence for a while — reopening the
+          On iOS, Safari may clear downloads if you don't open RiffPlayer for a while — reopening the
           app periodically keeps them alive. The native app (coming later) won't have this limit.
         </p>
       )}

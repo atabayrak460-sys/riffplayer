@@ -29,7 +29,7 @@ export function LoginPage() {
     <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <h1 className="text-3xl font-bold text-white text-center mb-8 tracking-tight">
-          <span className="text-brand">Cadence</span>
+          <span className="text-brand">RiffPlayer</span>
         </h1>
 
         <form onSubmit={submit} className="bg-zinc-800/60 rounded-xl p-6 space-y-4 border border-zinc-700/50">

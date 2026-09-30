@@ -1,4 +1,4 @@
-import 'package:cadence_mobile/api/types.dart';
+import 'package:riffplayer_mobile/api/types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

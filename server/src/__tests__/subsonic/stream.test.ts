@@ -43,7 +43,7 @@ beforeEach(async () => {
   app = await buildApp({ dbPath: ':memory:' });
   await app.ready();
 
-  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cadence-stream-'));
+  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'riffplayer-stream-'));
   const wavPath = path.join(tmpDir, 'test.wav');
   writeWav(wavPath);
 

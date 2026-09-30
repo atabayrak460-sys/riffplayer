@@ -97,7 +97,7 @@ export function RecommendationsPage() {
       {songs.length > 0 && (
         <p className="text-xs text-zinc-600 mt-6">
           Suggestions are based on your listening history and come exclusively from your own library.
-          Cadence never provides links or sources to acquire music.
+          RiffPlayer never provides links or sources to acquire music.
         </p>
       )}
     </div>

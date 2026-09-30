@@ -1,5 +1,5 @@
 {
-  "name": "@cadence/web",
+  "name": "@riffplayer/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",

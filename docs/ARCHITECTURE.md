@@ -1,4 +1,4 @@
-# Architecture — Cadence
+# Architecture — RiffPlayer
 
 ## Components
 
@@ -29,7 +29,7 @@
 Two namespaces sharing one database, one auth source, one set of files:
 
 - **`/rest/*` — Subsonic / OpenSubsonic API.** Implement the core endpoints so existing clients work. Target the OpenSubsonic extensions where reasonable (e.g. transcoding negotiation, songLyrics).
-- **`/api/v1/*` — Cadence's own REST API.** Everything Subsonic can't express: custom playlist cover upload, advanced queue operations, recommendations, Wrapped, admin/config, multi-user management. The first-party web + Flutter clients use this *plus* the Subsonic endpoints.
+- **`/api/v1/*` — RiffPlayer's own REST API.** Everything Subsonic can't express: custom playlist cover upload, advanced queue operations, recommendations, Wrapped, admin/config, multi-user management. The first-party web + Flutter clients use this *plus* the Subsonic endpoints.
 
 Rule: a feature missing from Subsonic goes on `/api/v1`. Never fork/break Subsonic semantics.
 

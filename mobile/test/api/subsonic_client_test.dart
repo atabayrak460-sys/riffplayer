@@ -1,5 +1,5 @@
-import 'package:cadence_mobile/api/subsonic.dart';
-import 'package:cadence_mobile/api/types.dart';
+import 'package:riffplayer_mobile/api/subsonic.dart';
+import 'package:riffplayer_mobile/api/types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _creds = Credentials(
@@ -25,7 +25,7 @@ void main() {
       expect(params['id'], 'track-1');
       expect(params['u'], 'alice');
       expect(params['v'], '1.16.1');
-      expect(params['c'], 'cadence-flutter');
+      expect(params['c'], 'riffplayer-flutter');
       expect(params['f'], 'json');
       // Token/salt are randomly salted per client instance (see the class's
       // own doc comment on why) — just assert they're present, not a value.

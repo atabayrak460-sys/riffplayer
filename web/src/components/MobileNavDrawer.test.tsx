@@ -46,10 +46,10 @@ describe('MobileNavDrawer', () => {
     expect(drawer.className).toContain('pointer-events-none');
   });
 
-  it('shows Cadence sidebar content and is interactable when open', () => {
+  it('shows RiffPlayer sidebar content and is interactable when open', () => {
     useMobileNavStore.setState({ isOpen: true });
     renderAt('/home');
-    expect(screen.getByText('Cadence')).toBeInTheDocument();
+    expect(screen.getByText('RiffPlayer')).toBeInTheDocument();
     const drawer = document.querySelector('.md\\:hidden.fixed') as HTMLElement;
     expect(drawer).toHaveAttribute('aria-hidden', 'false');
   });

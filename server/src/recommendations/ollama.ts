@@ -5,7 +5,7 @@
  *   1. The LLM prompt explicitly forbids outputting URLs or acquisition paths.
  *   2. Only tracks already in the local library are returned to clients.
  *   3. Unmatched suggestions are silently dropped — the user cannot obtain them
- *      through Cadence.
+ *      through RiffPlayer.
  *   4. No data leaves the user's server; Ollama runs locally.
  */
 import { getDb } from '../db/database.js';

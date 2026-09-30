@@ -1,6 +1,6 @@
-# Cadence — Flutter mobile app
+# RiffPlayer — Flutter mobile app
 
-Native iOS + Android client for the Cadence music server.
+Native iOS + Android client for the RiffPlayer music server.
 
 ## Features
 
@@ -14,14 +14,14 @@ Native iOS + Android client for the Cadence music server.
 ## Prerequisites
 
 - Flutter SDK ≥ 3.22 — https://flutter.dev/docs/get-started/install
-- Cadence server running (Phase 1+)
+- RiffPlayer server running (Phase 1+)
 
 ## Setup
 
 ```bash
 # 1. From the repo root, generate the platform directories
 cd mobile
-flutter create . --org com.cadence --project-name cadence_mobile
+flutter create . --org com.riffplayer --project-name riffplayer_mobile
 
 # 2. Install packages
 flutter pub get

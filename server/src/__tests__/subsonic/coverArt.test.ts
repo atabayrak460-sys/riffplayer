@@ -77,7 +77,7 @@ let app: FastifyInstance;
 let tmpDir: string;
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cadence-covers-'));
+  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'riffplayer-covers-'));
   process.env.COVERS_DIR = path.join(tmpDir, 'cache');
   app = await buildApp({ dbPath: ':memory:' });
   await app.ready();

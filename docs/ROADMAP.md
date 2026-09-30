@@ -1,4 +1,4 @@
-# Roadmap — Cadence
+# Roadmap — RiffPlayer
 
 Build **phase by phase**. Do not start a phase until the previous phase's *Done when* criteria are met. Each task is a checkbox; commit per task.
 

@@ -33,8 +33,8 @@ function adminRow() {
 }
 
 describe('ensureAdminUser', () => {
-  it('uses CADENCE_ADMIN_PASSWORD when set and does not log a password', () => {
-    process.env.CADENCE_ADMIN_PASSWORD = 'chosen-by-admin';
+  it('uses RIFFPLAYER_ADMIN_PASSWORD when set and does not log a password', () => {
+    process.env.RIFFPLAYER_ADMIN_PASSWORD = 'chosen-by-admin';
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     ensureAdminUser(db);
@@ -44,7 +44,7 @@ describe('ensureAdminUser', () => {
   });
 
   it('generates a random password (never "admin") when none is configured, and prints it once', () => {
-    delete process.env.CADENCE_ADMIN_PASSWORD;
+    delete process.env.RIFFPLAYER_ADMIN_PASSWORD;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     ensureAdminUser(db);
@@ -59,7 +59,7 @@ describe('ensureAdminUser', () => {
   });
 
   it('generates a different password for each fresh install', () => {
-    delete process.env.CADENCE_ADMIN_PASSWORD;
+    delete process.env.RIFFPLAYER_ADMIN_PASSWORD;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     ensureAdminUser(db);
@@ -72,7 +72,7 @@ describe('ensureAdminUser', () => {
   });
 
   it('does nothing when a user already exists (existing installs are untouched)', () => {
-    delete process.env.CADENCE_ADMIN_PASSWORD;
+    delete process.env.RIFFPLAYER_ADMIN_PASSWORD;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     db.prepare("INSERT INTO users (username, password_hash, role) VALUES ('old', 'x', 'admin')").run();
 

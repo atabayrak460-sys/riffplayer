@@ -1,6 +1,6 @@
-# Cadence
+# RiffPlayer
 
-A self-hosted music server with a polished first-party web client, native mobile apps, and full Subsonic API compatibility. Stream your own music library from anywhere — use Cadence's built-in web app, the Flutter iOS/Android app, or any Subsonic-compatible client (Amperfy, Symfonium, DSub, Feishin, …).
+A self-hosted music server with a polished first-party web client, native mobile apps, and full Subsonic API compatibility. Stream your own music library from anywhere — use RiffPlayer's built-in web app, the Flutter iOS/Android app, or any Subsonic-compatible client (Amperfy, Symfonium, DSub, Feishin, …).
 
 ## Screenshots
 
@@ -56,7 +56,7 @@ A self-hosted music server with a polished first-party web client, native mobile
 
 ### Infrastructure
 - **Multi-user** — each user has their own play history, favourites, playlists, and scrobbling config; admin manages everything
-- **Docker** — three-stage build (web → server → runtime); `CADENCE_ADMIN_PASSWORD` configurable before first boot; serves web app statically from the same port
+- **Docker** — three-stage build (web → server → runtime); `RIFFPLAYER_ADMIN_PASSWORD` configurable before first boot; serves web app statically from the same port
 - **SQLite** — single-file database, zero external dependencies; WAL mode; full migration history
 
 ## Quick start
@@ -65,8 +65,8 @@ A self-hosted music server with a polished first-party web client, native mobile
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/your-username/cadence.git
-cd cadence
+git clone https://github.com/your-username/riffplayer.git
+cd riffplayer
 
 # 2. Point it at your music — edit docker-compose.yml:
 #    volumes:
@@ -84,15 +84,15 @@ Set a secure admin password before first boot:
 ```yaml
 # docker-compose.yml
 environment:
-  CADENCE_ADMIN_USER: admin
-  CADENCE_ADMIN_PASSWORD: changeme   # ← set this
+  RIFFPLAYER_ADMIN_USER: admin
+  RIFFPLAYER_ADMIN_PASSWORD: changeme   # ← set this
 ```
 
 ### Index your library
 
 1. Sign in as admin.
 2. Go to **Admin → Libraries**, add the path to your music (e.g. `/music`).
-3. Click **⟳ Scan** — Cadence walks the directory, reads tags, and populates the database.
+3. Click **⟳ Scan** — RiffPlayer walks the directory, reads tags, and populates the database.
 4. Refresh the Albums page.
 
 Re-scanning is safe and fast: unchanged files (same mtime) are skipped.
@@ -105,10 +105,10 @@ All runtime configuration is via environment variables. Everything else is in th
 |---|---|---|
 | `PORT` | `4533` | HTTP port |
 | `HOST` | `0.0.0.0` | Listen address |
-| `DB_PATH` | `./cadence.db` | SQLite database path |
+| `DB_PATH` | `./riffplayer.db` | SQLite database path |
 | `COVERS_DIR` | `./covers` | Cover art cache directory |
-| `CADENCE_ADMIN_USER` | `admin` | Username for the auto-created admin account |
-| `CADENCE_ADMIN_PASSWORD` | _random_ | Password for the auto-created admin account. If unset, a random one is generated on first boot and printed once in the server log (`docker compose logs cadence`) |
+| `RIFFPLAYER_ADMIN_USER` | `admin` | Username for the auto-created admin account |
+| `RIFFPLAYER_ADMIN_PASSWORD` | _random_ | Password for the auto-created admin account. If unset, a random one is generated on first boot and printed once in the server log (`docker compose logs riffplayer`) |
 | `NODE_ENV` | `development` | Set to `production` in Docker |
 
 ## Development
@@ -176,7 +176,7 @@ docker-compose.yml Example deployment
 
 ## Subsonic client setup
 
-Point any Subsonic client at `http://your-server:4533` and sign in with your Cadence credentials. Cadence implements the OpenSubsonic extensions (`songLyrics` via `getLyricsBySongId`, `replayGain` fields on songs).
+Point any Subsonic client at `http://your-server:4533` and sign in with your RiffPlayer credentials. RiffPlayer implements the OpenSubsonic extensions (`songLyrics` via `getLyricsBySongId`, `replayGain` fields on songs).
 
 **Tested clients:** Amperfy (iOS), Symfonium (Android), DSub (Android), Feishin (desktop).
 
@@ -200,7 +200,7 @@ Recommendations are opt-in and default off. Enable in **Admin → Settings → R
 | **Last.fm** (default) | Last.fm API key in Admin → Settings | Artist names sent to Last.fm |
 | **Ollama** (advanced) | `ollama_url` + `ollama_model` in Admin → Settings | Nothing — fully local |
 
-All suggestions are tracks already in your library. Cadence never shows external links or sources to acquire music.
+All suggestions are tracks already in your library. RiffPlayer never shows external links or sources to acquire music.
 
 ### Ollama setup
 
@@ -218,10 +218,10 @@ ollama pull llama3.2
 
 ## Mobile app
 
-See [`mobile/README.md`](mobile/README.md) for setup instructions. Flutter SDK ≥ 3.22 required; run `flutter create . --org com.cadence` in the `mobile/` directory to generate the platform directories before building.
+See [`mobile/README.md`](mobile/README.md) for setup instructions. Flutter SDK ≥ 3.22 required; run `flutter create . --org com.riffplayer` in the `mobile/` directory to generate the platform directories before building.
 
 ## License
 
 [AGPL-3.0](LICENSE)
 
-Cadence is free software. You may run it privately, share it with family, or fork and redistribute it — as long as the source of any derivative stays open under the same licence.
+RiffPlayer is free software. You may run it privately, share it with family, or fork and redistribute it — as long as the source of any derivative stays open under the same licence.

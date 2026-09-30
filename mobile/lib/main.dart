@@ -40,10 +40,10 @@ void main() {
     // Initialise the audio handler — this registers the background service
     // on Android and enables background audio on iOS.
     final audioHandler = await AudioService.init(
-      builder: CadenceAudioHandler.new,
+      builder: RiffPlayerAudioHandler.new,
       config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.cadence.audio',
-        androidNotificationChannelName: 'Cadence',
+        androidNotificationChannelId: 'com.riffplayer.audio',
+        androidNotificationChannelName: 'RiffPlayer',
         androidNotificationIcon: 'mipmap/ic_launcher',
         androidNotificationOngoing: true,
         androidStopForegroundOnPause: true,
@@ -56,7 +56,7 @@ void main() {
         overrides: [
           audioHandlerProvider.overrideWithValue(audioHandler),
         ],
-        child: const CadenceApp(),
+        child: const RiffPlayerApp(),
       ),
     );
   }, (error, stack) {

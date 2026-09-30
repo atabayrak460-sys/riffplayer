@@ -24,7 +24,7 @@ describe('GET /rest/ping.view', () => {
     expect(res.headers['content-type']).toMatch(/text\/xml/);
     expect(res.body).toContain('status="ok"');
     expect(res.body).toContain(`version="${SUBSONIC_API_VERSION}"`);
-    expect(res.body).toContain('type="cadence"');
+    expect(res.body).toContain('type="riffplayer"');
   });
 
   it('returns JSON with status ok when f=json', async () => {
@@ -36,7 +36,7 @@ describe('GET /rest/ping.view', () => {
     const sr = body['subsonic-response'];
     expect(sr.status).toBe('ok');
     expect(sr.version).toBe(SUBSONIC_API_VERSION);
-    expect(sr.type).toBe('cadence');
+    expect(sr.type).toBe('riffplayer');
   });
 
   it('also works via POST', async () => {

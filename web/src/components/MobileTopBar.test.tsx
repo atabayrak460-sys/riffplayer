@@ -10,9 +10,9 @@ beforeEach(() => {
 });
 
 describe('MobileTopBar', () => {
-  it('renders the Cadence logo', () => {
+  it('renders the RiffPlayer logo', () => {
     render(<MobileTopBar />);
-    expect(screen.getByText('Cadence')).toBeInTheDocument();
+    expect(screen.getByText('RiffPlayer')).toBeInTheDocument();
   });
 
   it('opens the mobile nav drawer when the hamburger button is clicked', async () => {

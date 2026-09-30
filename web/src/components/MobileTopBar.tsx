@@ -12,7 +12,7 @@ export function MobileTopBar() {
           <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
         </svg>
       </button>
-      <span className="text-base font-bold text-brand tracking-tight">Cadence</span>
+      <span className="text-base font-bold text-brand tracking-tight">RiffPlayer</span>
     </header>
   );
 }

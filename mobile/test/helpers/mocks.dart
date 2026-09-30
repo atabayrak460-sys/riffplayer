@@ -2,13 +2,13 @@
 // (audio_service/just_audio, network, sqflite) — reused across test files so
 // each one only has to stub the handful of methods/streams it actually
 // exercises.
-import 'package:cadence_mobile/api/subsonic.dart';
-import 'package:cadence_mobile/audio/audio_handler.dart';
-import 'package:cadence_mobile/services/download_service.dart';
+import 'package:riffplayer_mobile/api/subsonic.dart';
+import 'package:riffplayer_mobile/audio/audio_handler.dart';
+import 'package:riffplayer_mobile/services/download_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';
 
-class MockAudioHandler extends Mock implements CadenceAudioHandler {}
+class MockAudioHandler extends Mock implements RiffPlayerAudioHandler {}
 
 class MockSubsonicClient extends Mock implements SubsonicClient {}
 

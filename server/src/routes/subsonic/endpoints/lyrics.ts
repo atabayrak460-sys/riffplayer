@@ -46,7 +46,7 @@ async function fetchLrcLib(
   });
   try {
     const res = await fetch(`https://lrclib.net/api/get?${params}`, {
-      headers: { 'User-Agent': 'Cadence/0.1.0 (https://github.com/cadence-music)' },
+      headers: { 'User-Agent': 'RiffPlayer/0.1.0' },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;

@@ -138,7 +138,7 @@ export function AccountSettingsPanel() {
           className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
         >
           <option value="ask">Always ask</option>
-          <option value="app">In Cadence (offline playback)</option>
+          <option value="app">In RiffPlayer (offline playback)</option>
           <option value="device">This device's Downloads folder</option>
         </select>
       </section>

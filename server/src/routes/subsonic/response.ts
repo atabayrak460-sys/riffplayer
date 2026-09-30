@@ -1,7 +1,7 @@
 import type { FastifyReply } from 'fastify';
 
 export const SUBSONIC_API_VERSION = '1.16.1';
-const SERVER_TYPE = 'cadence';
+const SERVER_TYPE = 'riffplayer';
 const SERVER_VERSION = '0.1.0';
 
 export interface SubsonicError {

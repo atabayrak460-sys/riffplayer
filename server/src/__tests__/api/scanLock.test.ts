@@ -12,7 +12,7 @@ let tmpDir: string;
 let libId: number;
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cadence-scan-lock-'));
+  tmpDir = await mkdtemp(path.join(os.tmpdir(), 'riffplayer-scan-lock-'));
   app = await buildApp({ dbPath: ':memory:' });
   await app.ready();
   libId = Number(

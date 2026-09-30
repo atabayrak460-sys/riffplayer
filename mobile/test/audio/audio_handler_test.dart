@@ -1,7 +1,7 @@
 import 'package:audio_service/audio_service.dart';
-import 'package:cadence_mobile/api/subsonic.dart';
-import 'package:cadence_mobile/api/types.dart';
-import 'package:cadence_mobile/audio/audio_handler.dart';
+import 'package:riffplayer_mobile/api/subsonic.dart';
+import 'package:riffplayer_mobile/api/types.dart';
+import 'package:riffplayer_mobile/audio/audio_handler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';

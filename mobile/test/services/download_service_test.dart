@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:cadence_mobile/services/download_service.dart';
+import 'package:riffplayer_mobile/services/download_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -93,7 +93,7 @@ void main() {
     final dbPath = p.join(await getDatabasesPath(), 'cadence_downloads.db');
     await databaseFactory.deleteDatabase(dbPath);
     service = DownloadService();
-    tempDir = await Directory.systemTemp.createTemp('cadence_dl_test_');
+    tempDir = await Directory.systemTemp.createTemp('riffplayer_dl_test_');
   });
 
   tearDown(() {

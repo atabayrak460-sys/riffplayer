@@ -58,7 +58,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'Cadence',
+                      'RiffPlayer',
                       style: TextStyle(
                         fontSize: 34,
                         fontWeight: FontWeight.bold,

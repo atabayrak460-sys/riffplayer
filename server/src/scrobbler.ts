@@ -105,7 +105,7 @@ async function scrobbleListenBrainz(
           release_name: meta.album,
           additional_info: {
             duration_ms: meta.duration_s ? Math.round(meta.duration_s * 1000) : undefined,
-            media_player: 'Cadence',
+            media_player: 'RiffPlayer',
           },
         },
       }],

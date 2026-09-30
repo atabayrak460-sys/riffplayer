@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Cadence</string>
+	<string>RiffPlayer</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Cadence</string>
+	<string>RiffPlayer</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -83,6 +83,6 @@
 
 	<!-- Privacy strings shown on first access -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Cadence connects to your self-hosted music server.</string>
+	<string>RiffPlayer connects to your self-hosted music server.</string>
 </dict>
 </plist>

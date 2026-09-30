@@ -9,8 +9,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icons/*.png'],
       manifest: {
-        name: 'Cadence',
-        short_name: 'Cadence',
+        name: 'RiffPlayer',
+        short_name: 'RiffPlayer',
         description: 'Self-hosted music server',
         theme_color: '#18181b',
         background_color: '#18181b',

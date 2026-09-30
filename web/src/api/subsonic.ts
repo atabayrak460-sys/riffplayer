@@ -9,7 +9,7 @@ import type {
   Song,
 } from './types';
 
-const CLIENT = 'cadence-web';
+const CLIENT = 'riffplayer-web';
 const VERSION = '1.16.1';
 
 let _creds: Credentials | null = null;

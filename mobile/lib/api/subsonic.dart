@@ -43,7 +43,7 @@ class SubsonicClient {
       't': _token,
       's': _salt,
       'v': '1.16.1',
-      'c': 'cadence-flutter',
+      'c': 'riffplayer-flutter',
       'f': 'json',
     };
   }

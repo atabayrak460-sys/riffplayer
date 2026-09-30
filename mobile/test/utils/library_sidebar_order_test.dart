@@ -1,5 +1,5 @@
-import 'package:cadence_mobile/api/types.dart';
-import 'package:cadence_mobile/utils/library_sidebar_order.dart';
+import 'package:riffplayer_mobile/api/types.dart';
+import 'package:riffplayer_mobile/utils/library_sidebar_order.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 LibraryRow _row(String key) => LibraryRow(

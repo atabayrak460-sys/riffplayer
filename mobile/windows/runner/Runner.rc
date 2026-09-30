@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.cadence" "\0"
-            VALUE "FileDescription", "cadence_mobile" "\0"
+            VALUE "CompanyName", "com.riffplayer" "\0"
+            VALUE "FileDescription", "riffplayer_mobile" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "cadence_mobile" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.cadence. All rights reserved." "\0"
-            VALUE "OriginalFilename", "cadence_mobile.exe" "\0"
-            VALUE "ProductName", "cadence_mobile" "\0"
+            VALUE "InternalName", "riffplayer_mobile" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.riffplayer. All rights reserved." "\0"
+            VALUE "OriginalFilename", "riffplayer_mobile.exe" "\0"
+            VALUE "ProductName", "riffplayer_mobile" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
