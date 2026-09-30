@@ -2,7 +2,7 @@
 
 # RiffPlayer
 
-A self-hosted music server with a polished first-party web client, native mobile apps, and full Subsonic API compatibility. Stream your own music library from anywhere — use RiffPlayer's built-in web app, the Flutter iOS/Android app, or any Subsonic-compatible client (Amperfy, Symfonium, DSub, Feishin, …).
+A self-hosted music server with a polished first-party web client, an Android app, and full Subsonic API compatibility. Stream your own music library from anywhere — use RiffPlayer's built-in web app, the Flutter Android app, or any Subsonic-compatible client (Amperfy, Symfonium, DSub, Feishin, …).
 
 ## Screenshots
 
@@ -49,7 +49,7 @@ A self-hosted music server with a polished first-party web client, native mobile
 - **Media Session API** — lock-screen metadata and transport controls in supported browsers
 - **Workbox service worker** — cover art cached for offline browsing
 
-### Mobile (Flutter — iOS + Android)
+### Mobile (Flutter — Android)
 - **Background playback** with lock-screen controls and skip shortcuts (`audio_service` + `just_audio`)
 - **Offline downloads** — stores originals on device (Dio + SQLite); played from local file when available
 - **Full parity** with web: browse, search, queue, playlists, favourites
@@ -107,7 +107,6 @@ Open **http://localhost:4533** and sign in as `admin`. Change the password under
 |---|---|
 | **Android** | Download the APK from the [latest release](https://github.com/atabayrak460-sys/riffplayer/releases/latest). Pick **`arm64-v8a`** for nearly every phone made since ~2017; `armeabi-v7a` is for older 32-bit devices, `x86_64` for emulators and Chromebooks. Android will ask you to allow installing from your browser or file manager. Open the app, enter your server address (for example `http://192.168.1.10:4533`) and sign in. |
 | **Computer (Windows, macOS, Linux)** | Open your server address in any browser. To install it like an app, use the install icon in the address bar (Chrome, Edge) or **Share → Add to Dock** (Safari). There is no separate native desktop app yet. |
-| **iPhone / iPad** | No RiffPlayer app is published yet. Any Subsonic-compatible iOS client can connect to the server (Amperfy is a popular one), or you can [build the Flutter app yourself](mobile/README.md) — iOS builds have not been verified on hardware by the maintainer. |
 | **Other Subsonic clients** | Point them at your server address. See [Subsonic client setup](#subsonic-client-setup). |
 
 Release APKs are signed with the project's release key, so updates install over each other. They are not on the Play Store or F-Droid yet.
@@ -195,7 +194,7 @@ cd web && npx tsc --noEmit
     pages/         Route-level views
     store/         Zustand stores (auth, player)
 
-/mobile            Flutter app (iOS + Android)
+/mobile            Flutter app (Android)
   lib/
     api/           Subsonic Dart client
     audio/         audio_service AudioHandler
@@ -213,7 +212,7 @@ docker-compose.yml Example deployment
 
 Point any Subsonic client at `http://your-server:4533` and sign in with your RiffPlayer credentials. RiffPlayer implements the OpenSubsonic extensions (`songLyrics` via `getLyricsBySongId`, `replayGain` fields on songs).
 
-**Compatibility:** RiffPlayer implements the Subsonic API, so clients such as Amperfy (iOS), Symfonium (Android), DSub (Android) and Feishin (desktop) are expected to work. The maintainer has not verified each of them yet — reports of what works and what doesn't are very welcome.
+**Compatibility:** RiffPlayer implements the Subsonic API, so clients such as Amperfy, Symfonium (Android), DSub (Android) and Feishin (desktop) are expected to work. The maintainer has not verified each of them yet — reports of what works and what doesn't are very welcome.
 
 ## Scrobbling
 
@@ -253,7 +252,7 @@ ollama pull llama3.2
 
 ## Mobile app
 
-The Flutter app (Android and iOS, one codebase) lives in [`mobile/`](mobile/README.md). It supports background playback with lock-screen controls, offline downloads (single tracks and whole playlists), and everything the web app does. For development: install Flutter ≥ 3.22, then `cd mobile && flutter pub get && flutter run`.
+The Flutter app (Android) lives in [`mobile/`](mobile/README.md). It supports background playback with lock-screen controls, offline downloads (single tracks and whole playlists), and everything the web app does. For development: install Flutter ≥ 3.22, then `cd mobile && flutter pub get && flutter run`.
 
 ## Principles
 
