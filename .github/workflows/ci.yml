@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Server — typecheck, lint, test
+        working-directory: server
+        run: |
+          npx tsc --noEmit
+          npm run lint
+          npx vitest run
+      - name: Web — typecheck, lint, test, build
+        working-directory: web
+        run: |
+          npx tsc --noEmit
+          npm run lint
+          npx vitest run
+          npm run build
+
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - working-directory: mobile
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
