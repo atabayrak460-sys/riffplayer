@@ -1,8 +1,9 @@
 import type { FastifyReply } from 'fastify';
+import { APP_VERSION } from '../../version.js';
 
 export const SUBSONIC_API_VERSION = '1.16.1';
 const SERVER_TYPE = 'riffplayer';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = APP_VERSION;
 
 export interface SubsonicError {
   code: number;

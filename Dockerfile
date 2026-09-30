@@ -52,6 +52,10 @@ ENV NODE_ENV=production \
     DB_PATH=/data/riffplayer.db \
     COVERS_DIR=/data/covers
 
+# Set by the release workflow from the git tag; empty falls back to package.json.
+ARG RIFFPLAYER_VERSION=
+ENV RIFFPLAYER_VERSION=${RIFFPLAYER_VERSION}
+
 EXPOSE 4533
 
 VOLUME ["/data", "/music"]

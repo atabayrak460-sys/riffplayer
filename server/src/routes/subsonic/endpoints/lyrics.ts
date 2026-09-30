@@ -4,6 +4,7 @@ import { getDb } from '../../../db/database.js';
 import { sendOk, sendError, SubsonicErrorCode } from '../response.js';
 import { xmlTag } from '../serialize.js';
 import { isSettingEnabled, LYRICS_LOOKUP_SETTING } from '../../../settings.js';
+import { APP_VERSION } from '../../../version.js';
 
 type Q = Record<string, string | undefined>;
 const p = (req: FastifyRequest) => ({ ...(req.query as Q), ...((req.body as Q) ?? {}) });
@@ -47,7 +48,7 @@ async function fetchLrcLib(
   });
   try {
     const res = await fetch(`https://lrclib.net/api/get?${params}`, {
-      headers: { 'User-Agent': 'RiffPlayer/0.1.0' },
+      headers: { 'User-Agent': `RiffPlayer/${APP_VERSION}` },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
