@@ -121,21 +121,21 @@ export function AlbumDetailPage() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="flex gap-6 mb-8">
+      <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 mb-8">
         <CoverArt
           id={album.coverArt}
           size={300}
-          className="w-48 h-48 rounded-lg shadow-xl flex-shrink-0 object-cover"
+          className="w-40 h-40 sm:w-48 sm:h-48 rounded-lg shadow-xl flex-shrink-0 object-cover"
           alt={album.name}
         />
-        <div className="flex flex-col justify-end gap-2">
+        <div className="flex flex-col justify-end gap-2 min-w-0">
           <p className="text-xs uppercase tracking-widest text-zinc-400">Album</p>
-          <h1 className="text-3xl font-bold text-white">{album.name}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white break-words">{album.name}</h1>
           <p className="text-zinc-300">{album.artist}</p>
           <p className="text-sm text-zinc-500">
             {album.year && `${album.year} · `}{songs.length} tracks · {formatDuration(album.duration)}
           </p>
-          <div className="flex items-center gap-3 mt-2">
+          <div className="flex flex-wrap items-center gap-3 mt-2">
             <button
               onClick={() => playQueue(songs)}
               className="bg-brand hover:bg-brand-dim text-white text-sm font-medium px-5 py-2 rounded-full transition-colors"
