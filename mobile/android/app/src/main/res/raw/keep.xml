@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The media-notification small icon is looked up by name at runtime
+     (audio_service: androidNotificationIcon), so the resource shrinker can't
+     see that it's used and strips it from release builds — which makes
+     Android drop the media notification and the lock-screen controls. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_riff" />
