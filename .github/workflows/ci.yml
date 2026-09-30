@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Install ffmpeg (transcoding tests spawn it)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm ci
       - name: Server — typecheck, lint, test
         working-directory: server
