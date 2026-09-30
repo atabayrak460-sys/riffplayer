@@ -21,18 +21,73 @@ function formatDuration(s: number) {
   return h > 0 ? `${h} hr ${m} min` : `${m} min`;
 }
 
+interface AlbumDownloadButtonProps {
+  state: 'none' | 'downloading' | 'downloaded';
+  disabled: boolean;
+  onDownload: () => void;
+  onRemove: () => void;
+}
+
+/** Labeled so it reads as an action next to Play, unlike the icon-only per-row buttons. */
+function AlbumDownloadButton({ state, disabled, onDownload, onRemove }: AlbumDownloadButtonProps) {
+  const base =
+    'flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-full border transition-colors disabled:opacity-50';
+  if (state === 'downloading') {
+    return (
+      <button disabled className={`${base} border-zinc-600 text-zinc-300`}>
+        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        Downloading…
+      </button>
+    );
+  }
+  const downloaded = state === 'downloaded';
+  return (
+    <button
+      onClick={downloaded ? onRemove : onDownload}
+      disabled={disabled}
+      title={downloaded ? 'Remove downloaded tracks' : 'Download album'}
+      className={`${base} ${
+        downloaded
+          ? 'border-brand text-brand hover:border-red-400 hover:text-red-400'
+          : 'border-zinc-600 text-zinc-200 hover:border-white hover:text-white'
+      }`}
+    >
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d={ICONS.download} />
+      </svg>
+      {downloaded ? 'Downloaded' : 'Download'}
+    </button>
+  );
+}
+
 export function AlbumDetailPage() {
   const { id } = useParams<{ id: string }>();
   const playQueue = usePlayerStore((s) => s.playQueue);
   const playNext = usePlayerStore((s) => s.playNext);
   const addToQueue = usePlayerStore((s) => s.addToQueue);
   const requestDownload = useDownloadsStore((s) => s.requestDownload);
+  const removeTrackDownload = useDownloadsStore((s) => s.removeTrackDownload);
   const { menu, openAt, close } = useContextMenu();
 
   const { data: album, isLoading, isError } = useQuery({
     queryKey: ['album', id],
     queryFn: () => getAlbum(id!),
     enabled: !!id,
+  });
+
+  // An album isn't its own offline entity — derive its state from its tracks.
+  // Selecting a primitive keeps the subscription from re-rendering on every
+  // unrelated status change.
+  const albumTrackIds = (album?.song ?? []).map((t) => t.id);
+  const downloadState = useDownloadsStore((s) => {
+    if (!albumTrackIds.length) return 'none';
+    const states = albumTrackIds.map((tid) => s.status[`t:${tid}`]);
+    if (states.some((st) => st === 'downloading')) return 'downloading';
+    if (states.every((st) => st === 'downloaded')) return 'downloaded';
+    return 'none';
   });
 
   if (isLoading) {
@@ -87,6 +142,14 @@ export function AlbumDetailPage() {
             >
               Play
             </button>
+            <AlbumDownloadButton
+              state={downloadState}
+              disabled={!songs.length}
+              onDownload={() => requestDownload({ kind: 'album', songs })}
+              onRemove={() => {
+                for (const song of songs) void removeTrackDownload(song.id);
+              }}
+            />
             <StarButton starred={!!album.starred} opts={{ albumId: album.id }} />
             <button
               onClick={(e) => openAt(e, menuItems)}
