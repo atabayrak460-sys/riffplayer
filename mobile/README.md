@@ -18,23 +18,21 @@ Native iOS + Android client for the RiffPlayer music server.
 
 ## Setup
 
-```bash
-# 1. From the repo root, generate the platform directories
-cd mobile
-flutter create . --org com.riffplayer --project-name riffplayer_mobile
+The Android and iOS project files are already in the repo.
 
-# 2. Install packages
+```bash
+cd mobile
 flutter pub get
 
-# 3. Merge the background-audio platform config:
-#    Android: copy <uses-permission> and <service>/<receiver> blocks from
-#             android/app/src/main/AndroidManifest.xml into the generated file.
-#    iOS:     add UIBackgroundModes (audio, fetch) and NSAppTransportSecurity
-#             to ios/Runner/Info.plist.
-
-# 4. Run on a connected device or emulator
+# Run on a connected device or emulator
 flutter run
+
+# Tests and static analysis
+flutter analyze
+flutter test
 ```
+
+In the app, enter your server address (for example `http://192.168.1.10:4533`) and sign in.
 
 ## Platform notes
 
@@ -53,14 +51,20 @@ flutter run
 
 ## Building for release
 
+Tagged releases (`v*`) are built and signed automatically by
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) and attached to the
+GitHub Release. To build locally:
+
 ```bash
-# Android APK
-flutter build apk --release
+# Debug-signed unless android/key.properties exists — never publish such a build
+flutter build apk --release --split-per-abi
 
-# Android App Bundle (Play Store)
-flutter build appbundle --release
+# Signed: create mobile/android/key.properties (gitignored) with
+#   storeFile=/path/to/release.jks
+#   storePassword=…   keyAlias=…   keyPassword=…
+# then run the same command.
 
-# iOS (requires Xcode + provisioning profile)
+# iOS (requires Xcode + an Apple Developer account for a provisioning profile)
 flutter build ios --release
 ```
 

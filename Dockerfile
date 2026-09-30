@@ -31,6 +31,11 @@ RUN npm prune --workspace=server --omit=dev
 # ── runtime ───────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
 
+# ffmpeg is required for on-the-fly transcoding (format / maxBitRate requests).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY --from=server-build /app/node_modules   ./node_modules

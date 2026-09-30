@@ -61,34 +61,67 @@ A self-hosted music server with a polished first-party web client, native mobile
 - **Docker** — three-stage build (web → server → runtime); `RIFFPLAYER_ADMIN_PASSWORD` configurable before first boot; serves web app statically from the same port
 - **SQLite** — single-file database, zero external dependencies; WAL mode; full migration history
 
-## Quick start
+## Install
 
-### Docker (recommended)
+RiffPlayer has two parts: a **server** you run on your own machine (it serves your music files and the web app), and **apps** that connect to it.
 
-```bash
-# 1. Clone the repo
-git clone https://github.com/your-username/riffplayer.git
-cd riffplayer
+### 1. Run the server (Docker)
 
-# 2. Point it at your music — edit docker-compose.yml:
-#    volumes:
-#      - /path/to/your/music:/music:ro
-
-# 3. Start
-docker compose up -d
-
-# 4. Open http://localhost:4533 — sign in with admin / admin
-#    IMPORTANT: change the password immediately via Admin → Users.
-```
-
-Set a secure admin password before first boot:
+Create a `docker-compose.yml`:
 
 ```yaml
-# docker-compose.yml
-environment:
-  RIFFPLAYER_ADMIN_USER: admin
-  RIFFPLAYER_ADMIN_PASSWORD: changeme   # ← set this
+services:
+  riffplayer:
+    image: ghcr.io/atabayrak460-sys/riffplayer:latest
+    ports:
+      - "4533:4533"
+    environment:
+      # Optional: choose your own admin password. If you leave this out, a random
+      # one is generated on first boot and printed once in the log.
+      # RIFFPLAYER_ADMIN_PASSWORD: change-me
+    volumes:
+      - riffplayer_data:/data          # database + cover-art cache
+      - /path/to/your/music:/music:ro  # ← your music folder (read-only is fine)
+    restart: unless-stopped
+
+volumes:
+  riffplayer_data:
 ```
+
+Then:
+
+```bash
+docker compose up -d
+
+# Find the generated admin password (skip this if you set RIFFPLAYER_ADMIN_PASSWORD):
+docker compose logs riffplayer | grep "generated password"
+```
+
+Open **http://localhost:4533** and sign in as `admin`. Change the password under **Admin → Users**, then [index your library](#index-your-library). The image is built for `amd64` and `arm64` and includes ffmpeg for transcoding.
+
+> **Exposing it to the internet?** Put it behind a reverse proxy with HTTPS. Don't publish port 4533 directly.
+
+### 2. Get an app
+
+| Where | How |
+|---|---|
+| **Android** | Download the APK from the [latest release](https://github.com/atabayrak460-sys/riffplayer/releases/latest). Pick **`arm64-v8a`** for nearly every phone made since ~2017; `armeabi-v7a` is for older 32-bit devices, `x86_64` for emulators and Chromebooks. Android will ask you to allow installing from your browser or file manager. Open the app, enter your server address (for example `http://192.168.1.10:4533`) and sign in. |
+| **Computer (Windows, macOS, Linux)** | Open your server address in any browser. To install it like an app, use the install icon in the address bar (Chrome, Edge) or **Share → Add to Dock** (Safari). There is no separate native desktop app yet. |
+| **iPhone / iPad** | No RiffPlayer app is published yet. Any Subsonic-compatible iOS client can connect to the server (Amperfy is a popular one), or you can [build the Flutter app yourself](mobile/README.md) — iOS builds have not been verified on hardware by the maintainer. |
+| **Other Subsonic clients** | Point them at your server address. See [Subsonic client setup](#subsonic-client-setup). |
+
+Release APKs are signed with the project's release key, so updates install over each other. They are not on the Play Store or F-Droid yet.
+
+### Build from source
+
+```bash
+git clone https://github.com/atabayrak460-sys/riffplayer.git
+cd riffplayer
+# Edit docker-compose.yml so the /music volume points at your library, then:
+docker compose up -d --build
+```
+
+For a development setup (hot reload, tests), see [Development](#development).
 
 ### Index your library
 
@@ -131,7 +164,7 @@ npm run server
 # Start the web dev server (port 5173, proxies /rest and /api to 4533)
 npm run web
 
-# Run server tests (101 tests across 12 suites)
+# Run server tests
 npm test --workspace=server
 
 # Type-check server
@@ -220,7 +253,17 @@ ollama pull llama3.2
 
 ## Mobile app
 
-See [`mobile/README.md`](mobile/README.md) for setup instructions. Flutter SDK ≥ 3.22 required; run `flutter create . --org com.riffplayer` in the `mobile/` directory to generate the platform directories before building.
+The Flutter app (Android and iOS, one codebase) lives in [`mobile/`](mobile/README.md). It supports background playback with lock-screen controls, offline downloads (single tracks and whole playlists), and everything the web app does. For development: install Flutter ≥ 3.22, then `cd mobile && flutter pub get && flutter run`.
+
+## Principles
+
+- **Your files only.** RiffPlayer streams the music you already own. It never downloads or sources audio from anywhere else, and recommendations only ever suggest tracks already in your library.
+- **Private by default.** No telemetry, no analytics, no accounts with us. Your audio and your listening history stay on your server. The server does make a few outside requests, so you should know exactly what they are:
+  - **LRCLIB** (synced lyrics) — only when a track has no lyrics file next to it. Sends the track's title, artist, album and duration.
+  - **Cover Art Archive** (album covers) — only when an album has no embedded artwork. Sends the album's MusicBrainz ID.
+  - **Last.fm / ListenBrainz** scrobbling and **Last.fm recommendations** — off until you configure them.
+  - AI features run locally through Ollama; nothing is sent anywhere.
+- **Subsonic compatible.** Existing Subsonic and OpenSubsonic clients keep working; RiffPlayer's own extras live on a separate API.
 
 ## License
 
