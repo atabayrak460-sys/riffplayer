@@ -75,10 +75,10 @@ services:
     image: ghcr.io/atabayrak460-sys/riffplayer:latest
     ports:
       - "4533:4533"
-    environment:
-      # Optional: choose your own admin password. If you leave this out, a random
-      # one is generated on first boot and printed once in the log.
-      # RIFFPLAYER_ADMIN_PASSWORD: change-me
+    # Optional: choose your own admin password. If you leave this out, a random
+    # one is generated on first boot and printed once in the log.
+    # environment:
+    #   RIFFPLAYER_ADMIN_PASSWORD: change-me
     volumes:
       - riffplayer_data:/data          # database + cover-art cache
       - /path/to/your/music:/music:ro  # ← your music folder (read-only is fine)
