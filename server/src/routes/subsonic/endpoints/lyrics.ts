@@ -1,5 +1,4 @@
 import { readFile } from 'fs/promises';
-import path from 'path';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../../db/database.js';
 import { sendOk, sendError, SubsonicErrorCode } from '../response.js';

@@ -18,6 +18,9 @@ export default [
     },
     rules: {
       ...tsPlugin.configs['recommended'].rules,
+      // TypeScript already reports undefined identifiers; ESLint's no-undef
+      // doesn't know Node globals (process, Buffer, console) and only adds noise.
+      'no-undef': 'off',
     },
   },
   prettierConfig,

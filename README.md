@@ -108,7 +108,7 @@ All runtime configuration is via environment variables. Everything else is in th
 | `DB_PATH` | `./cadence.db` | SQLite database path |
 | `COVERS_DIR` | `./covers` | Cover art cache directory |
 | `CADENCE_ADMIN_USER` | `admin` | Username for the auto-created admin account |
-| `CADENCE_ADMIN_PASSWORD` | `admin` | Password for the auto-created admin account |
+| `CADENCE_ADMIN_PASSWORD` | _random_ | Password for the auto-created admin account. If unset, a random one is generated on first boot and printed once in the server log (`docker compose logs cadence`) |
 | `NODE_ENV` | `development` | Set to `production` in Docker |
 
 ## Development

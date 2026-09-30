@@ -20,7 +20,10 @@ export function ensureAdminUser(db: Database.Database): void {
   if (count > 0) return;
 
   const username = process.env.CADENCE_ADMIN_USER ?? 'admin';
-  const password = process.env.CADENCE_ADMIN_PASSWORD ?? 'admin';
+  // No shipped default: a well-known password on a server people expose to
+  // the internet is a footgun. Generate one and print it once instead.
+  const configured = process.env.CADENCE_ADMIN_PASSWORD;
+  const password = configured ?? randomBytes(9).toString('base64url');
   const secret = getOrCreateServerSecret(db);
 
   db.prepare(
@@ -28,10 +31,10 @@ export function ensureAdminUser(db: Database.Database): void {
      VALUES (?, ?, ?, 'admin')`,
   ).run(username, hashPassword(password), encryptPassword(password, secret));
 
-  if (password === 'admin') {
+  if (!configured) {
     console.warn(
-      '[seed] Created default admin user "admin" with password "admin". ' +
-        'Change it via CADENCE_ADMIN_PASSWORD before exposing to the network.',
+      `[seed] Created admin user "${username}" with a generated password: ${password}\n` +
+        '[seed] Save it now — it is not shown again. Set CADENCE_ADMIN_PASSWORD to choose your own.',
     );
   }
 }
