@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/branding/app-icon-1024.png" alt="RiffPlayer" width="160"></p>
+
 # RiffPlayer
 
 A self-hosted music server with a polished first-party web client, native mobile apps, and full Subsonic API compatibility. Stream your own music library from anywhere — use RiffPlayer's built-in web app, the Flutter iOS/Android app, or any Subsonic-compatible client (Amperfy, Symfonium, DSub, Feishin, …).

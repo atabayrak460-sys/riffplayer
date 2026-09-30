@@ -44,7 +44,7 @@ void main() {
       config: const AudioServiceConfig(
         androidNotificationChannelId: 'com.riffplayer.audio',
         androidNotificationChannelName: 'RiffPlayer',
-        androidNotificationIcon: 'mipmap/ic_launcher',
+        androidNotificationIcon: 'drawable/ic_stat_riff',
         androidNotificationOngoing: true,
         androidStopForegroundOnPause: true,
         notificationColor: Color(0xFFA78BFA),
