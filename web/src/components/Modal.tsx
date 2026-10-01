@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 interface Props {
   onClose: () => void;
@@ -58,7 +59,13 @@ export function Modal({ onClose, label, className = '', children }: Props) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
-  return (
+  // Portaled to <body> — callers like AddToPlaylistDialog/SongInfoDialog are
+  // opened from SongRow inside virtualized list rows (react-virtual positions
+  // each row with a CSS `transform`), and a `transform` on any ancestor makes
+  // it the containing block for `position: fixed` descendants instead of the
+  // viewport. Without the portal this "fixed inset-0" overlay would be sized
+  // and centered against the row's small translated box, not the screen.
+  return createPortal(
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
       <div
         ref={cardRef}
@@ -71,6 +78,7 @@ export function Modal({ onClose, label, className = '', children }: Props) {
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

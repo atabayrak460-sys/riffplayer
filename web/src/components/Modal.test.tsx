@@ -79,4 +79,24 @@ describe('Modal', () => {
 
     expect(screen.getByText('Third')).toHaveFocus();
   });
+
+  it('portals out of a transformed ancestor (e.g. a virtualized list row), not nested under it', () => {
+    // AddToPlaylistDialog/SongInfoDialog open from SongRow inside a
+    // virtualized list row, which react-virtual positions with a CSS
+    // `transform` — making that row the containing block for this dialog's
+    // `fixed inset-0` overlay instead of the viewport. Without the portal,
+    // the backdrop/card would be sized and centered against the row's small
+    // translated box rather than filling the screen.
+    const { container } = render(
+      <div style={{ transform: 'translateY(400px)' }}>
+        <Modal onClose={vi.fn()} label="Test dialog">
+          <button>First</button>
+        </Modal>
+      </div>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(container.contains(dialog)).toBe(false);
+    expect(document.body.contains(dialog)).toBe(true);
+  });
 });
