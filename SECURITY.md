@@ -4,7 +4,7 @@ RiffPlayer is a server you run on your own machine, often exposed to a network, 
 
 ## Supported versions
 
-Only the [latest release](https://github.com/atabayrak460-sys/riffplayer/releases/latest) receives security fixes. Please update before reporting, in case the problem is already fixed.
+Only the [latest release](https://github.com/atabayrak460/riffplayer/releases/latest) receives security fixes. Please update before reporting, in case the problem is already fixed.
 
 ## Reporting a vulnerability
 
@@ -12,7 +12,7 @@ Only the [latest release](https://github.com/atabayrak460-sys/riffplayer/release
 
 Use GitHub's private reporting instead:
 
-1. Go to the [Security tab](https://github.com/atabayrak460-sys/riffplayer/security) of this repository.
+1. Go to the [Security tab](https://github.com/atabayrak460/riffplayer/security) of this repository.
 2. Click **Report a vulnerability**.
 3. Describe what you found, how to reproduce it, and what version you tested.
 

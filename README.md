@@ -72,7 +72,7 @@ Create a `docker-compose.yml`:
 ```yaml
 services:
   riffplayer:
-    image: ghcr.io/atabayrak460-sys/riffplayer:latest
+    image: ghcr.io/atabayrak460/riffplayer:latest
     ports:
       - "4533:4533"
     # Optional: choose your own admin password. If you leave this out, a random
@@ -105,7 +105,7 @@ Open **http://localhost:4533** and sign in as `admin`. Change the password under
 
 | Where | How |
 |---|---|
-| **Android** | Download the APK from the [latest release](https://github.com/atabayrak460-sys/riffplayer/releases/latest). Pick **`arm64-v8a`** for nearly every phone made since ~2017; `armeabi-v7a` is for older 32-bit devices, `x86_64` for emulators and Chromebooks. Android will ask you to allow installing from your browser or file manager. Open the app, enter your server address (for example `http://192.168.1.10:4533`) and sign in. |
+| **Android** | Download the APK from the [latest release](https://github.com/atabayrak460/riffplayer/releases/latest). Pick **`arm64-v8a`** for nearly every phone made since ~2017; `armeabi-v7a` is for older 32-bit devices, `x86_64` for emulators and Chromebooks. Android will ask you to allow installing from your browser or file manager. Open the app, enter your server address (for example `http://192.168.1.10:4533`) and sign in. |
 | **Computer (Windows, macOS, Linux)** | Open your server address in any browser. To install it like an app, use the install icon in the address bar (Chrome, Edge) or **Share → Add to Dock** (Safari). There is no separate native desktop app yet. |
 | **Other Subsonic clients** | Point them at your server address. See [Subsonic client setup](#subsonic-client-setup). |
 
@@ -114,7 +114,7 @@ Release APKs are signed with the project's release key, so updates install over 
 ### Build from source
 
 ```bash
-git clone https://github.com/atabayrak460-sys/riffplayer.git
+git clone https://github.com/atabayrak460/riffplayer.git
 cd riffplayer
 # Edit docker-compose.yml so the /music volume points at your library, then:
 docker compose up -d --build

@@ -4,7 +4,7 @@ Thanks for your interest! RiffPlayer is a small project, and bug reports, ideas 
 
 ## Reporting bugs and asking for features
 
-Open an [issue](https://github.com/atabayrak460-sys/riffplayer/issues/new/choose) and pick the matching template. For bugs, the most useful details are your RiffPlayer version, how you run it (Docker, from source), and the steps to reproduce.
+Open an [issue](https://github.com/atabayrak460/riffplayer/issues/new/choose) and pick the matching template. For bugs, the most useful details are your RiffPlayer version, how you run it (Docker, from source), and the steps to reproduce.
 
 **Security problems:** please do not file a public issue. See [SECURITY.md](SECURITY.md).
 
