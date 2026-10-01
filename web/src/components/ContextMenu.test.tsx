@@ -13,6 +13,19 @@ function Harness({ items }: { items: ContextMenuItem[] }) {
   );
 }
 
+// Mirrors the "⋯ More options" button pattern used by SongRow/PlayerBar/
+// AlbumDetailPage, which open the menu via `openAt(e, items)` from a button
+// `onClick` rather than from `handlers()`'s contextmenu/long-press.
+function ButtonTriggerHarness({ items }: { items: ContextMenuItem[] }) {
+  const { menu, openAt, close } = useContextMenu();
+  return (
+    <div>
+      <button data-testid="trigger" onClick={(e) => openAt(e, items)} />
+      <ContextMenu menu={menu} onClose={close} />
+    </div>
+  );
+}
+
 function renderMenu() {
   const onClick1 = vi.fn();
   const onClick2 = vi.fn();
@@ -74,6 +87,27 @@ describe('ContextMenu', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Second' }));
     expect(onClick2).toHaveBeenCalledOnce();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('portals out of a transformed ancestor (e.g. a virtualized list row), not nested under it', () => {
+    // react-virtual positions each row with `transform: translateY(...)`,
+    // which makes that row the containing block for any `position: fixed`
+    // descendant — so without a portal, the menu's "fixed" coordinates
+    // resolve against the row's translated box instead of the viewport,
+    // landing in the wrong place depending on which row/scroll offset it
+    // opened from. Rendering via a portal to <body> escapes that regardless
+    // of what transforms sit between the trigger and the menu.
+    const items: ContextMenuItem[] = [{ label: 'Only', onClick: vi.fn() }];
+    const { container } = render(
+      <div style={{ transform: 'translateY(400px)' }}>
+        <Harness items={items} />
+      </div>,
+    );
+    fireEvent.contextMenu(screen.getByTestId('target'));
+
+    const menu = screen.getByRole('menu');
+    expect(container.contains(menu)).toBe(false);
+    expect(document.body.contains(menu)).toBe(true);
   });
 
   describe('desktop vs. mobile rendering', () => {
@@ -148,6 +182,60 @@ describe('ContextMenu', () => {
       expect(left).toBeLessThanOrEqual(240);
       expect(top).toBeLessThanOrEqual(270);
       expect(menu.style.visibility).toBe('visible');
+    });
+
+    it('anchors to the trigger button instead of the screen corner when opened via keyboard', () => {
+      // A keyboard-activated click (Tab to the "⋯" button, then Enter/Space)
+      // fires with clientX/clientY both 0 — there's no real cursor position.
+      // Naively using that would pin the menu to the top-left corner of the
+      // screen regardless of where the button actually is.
+      Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true });
+      Object.defineProperty(window, 'innerHeight', { value: 1000, configurable: true });
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        if (this.getAttribute('data-testid') === 'trigger') {
+          return { width: 20, height: 20, top: 100, left: 300, right: 320, bottom: 120, x: 300, y: 100, toJSON() { return this; } } as DOMRect;
+        }
+        if (this.getAttribute('role') === 'menu') {
+          return { width: 150, height: 120, top: 0, left: 0, right: 150, bottom: 120, x: 0, y: 0, toJSON() { return this; } } as DOMRect;
+        }
+        return originalGetBoundingClientRect.call(this);
+      };
+
+      const items: ContextMenuItem[] = [{ label: 'Only', onClick: vi.fn() }];
+      render(<ButtonTriggerHarness items={items} />);
+      fireEvent.click(screen.getByTestId('trigger'), { clientX: 0, clientY: 0 });
+
+      const menu = screen.getByRole('menu') as HTMLElement;
+      expect(parseFloat(menu.style.left)).toBe(300);
+      expect(parseFloat(menu.style.top)).toBe(120);
+    });
+
+    it('positions correctly on the very first open of a given menu instance, not just subsequent ones', () => {
+      // Before any position is computed, the menu's style starts out as just
+      // `{ visibility: 'hidden' }` — with no `position` set, that's
+      // `position: static`, which (now that the menu is portaled straight
+      // onto <body>) sizes to fill the available width rather than shrinking
+      // to its content. A real browser would measure a near-viewport-wide
+      // box on that first pass; simulate that here by returning a wide rect
+      // whenever the element isn't yet `position: fixed`.
+      Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true });
+      Object.defineProperty(window, 'innerHeight', { value: 1000, configurable: true });
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        if (this.getAttribute('role') !== 'menu') return originalGetBoundingClientRect.call(this);
+        const isFixed = (this as HTMLElement).style.position === 'fixed';
+        const width = isFixed ? 150 : 1000;
+        return { width, height: 120, top: 0, left: 0, right: width, bottom: 120, x: 0, y: 0, toJSON() { return this; } } as DOMRect;
+      };
+
+      const items: ContextMenuItem[] = [{ label: 'Only', onClick: vi.fn() }];
+      render(<Harness items={items} />);
+      // Click well within the viewport — a correctly-measured 150px-wide
+      // menu would never need to flip or clamp from here.
+      fireEvent.contextMenu(screen.getByTestId('target'), { clientX: 300, clientY: 300 });
+
+      const menu = screen.getByRole('menu') as HTMLElement;
+      expect(parseFloat(menu.style.left)).toBe(300);
+      expect(parseFloat(menu.style.top)).toBe(300);
     });
   });
 });

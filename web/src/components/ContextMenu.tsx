@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useUiMenuStore } from '../store/uiMenu';
 import { useMediaQuery } from '../lib/useMediaQuery';
 
@@ -55,7 +56,17 @@ export function useContextMenu() {
     setMenu({ position, items });
   };
 
-  const openAt = (e: { clientX: number; clientY: number }, items: ContextMenuItem[]) => {
+  const openAt = (e: React.MouseEvent, items: ContextMenuItem[]) => {
+    // A keyboard-activated click (Tab to a "⋯" button, then Enter/Space)
+    // fires with clientX/clientY both 0 — there's no real cursor position to
+    // anchor to. Anchoring there anyway pins the menu to the screen's
+    // top-left corner instead of near the button the user actually
+    // activated, so fall back to that button's own position instead.
+    if (e.clientX === 0 && e.clientY === 0) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      openAtPosition({ x: rect.left, y: rect.bottom }, items);
+      return;
+    }
     openAtPosition({ x: e.clientX, y: e.clientY }, items);
   };
 
@@ -89,7 +100,17 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
   const ref = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const isMobile = useMediaQuery(MOBILE_QUERY);
-  const [style, setStyle] = useState<React.CSSProperties>({ visibility: 'hidden' });
+  // `position: 'fixed'` from the very first render, not just once the real
+  // left/top are computed below — now that this is portaled straight onto
+  // <body>, an initial style of merely `{ visibility: 'hidden' }` renders as
+  // `position: static`, which (unlike fixed/absolute) sizes to fill the
+  // available width instead of shrinking to its content. The very first
+  // getBoundingClientRect() measurement for a given trigger would then see a
+  // near-full-viewport-wide box, making the flip/clamp math below pin the
+  // menu to the left margin. Every *re*-open was fine, since by then `style`
+  // already held `position: fixed` from the previous open — only the first
+  // open of a given menu instance ever hit this.
+  const [style, setStyle] = useState<React.CSSProperties>({ position: 'fixed', visibility: 'hidden' });
 
   // Menu opens already focused, like a native context menu — arrow keys can
   // navigate immediately without an extra Tab first.
@@ -178,8 +199,15 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
     </button>
   ));
 
+  // Portaled to <body> — callers like SongRow render this inline inside
+  // virtualized list rows (react-virtual positions each row with a CSS
+  // `transform`), and a `transform` on any ancestor makes it the containing
+  // block for `position: fixed` descendants instead of the viewport. Without
+  // the portal, the menu's fixed coordinates were resolved against the row's
+  // translated box, not the screen — landing in the wrong place depending on
+  // which row/scroll offset it opened from and overlapping other rows.
   if (isMobile) {
-    return (
+    return createPortal(
       <div className="fixed inset-0 bg-black/60 z-50" onClick={onClose}>
         <div
           ref={ref}
@@ -190,11 +218,12 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
           <div className="w-10 h-1 bg-zinc-600 rounded-full mx-auto my-2" />
           {itemButtons}
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 
-  return (
+  return createPortal(
     <div
       role="menu"
       ref={ref}
@@ -202,6 +231,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
       className="z-50 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[11rem]"
     >
       {itemButtons}
-    </div>
+    </div>,
+    document.body,
   );
 }
