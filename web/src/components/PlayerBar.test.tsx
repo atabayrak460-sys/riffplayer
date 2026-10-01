@@ -86,5 +86,34 @@ describe('PlayerBar', () => {
 
       expect(screen.queryByTestId('mobile-expanded-sheet')).not.toBeInTheDocument();
     });
+
+    it('the expanded sheet has a "More options" menu beyond just favoriting', () => {
+      renderBar();
+      fireEvent.click(compactBar().getByText('Test Song'));
+      const sheet = within(screen.getByTestId('mobile-expanded-sheet'));
+
+      fireEvent.click(sheet.getByTitle('More options'));
+
+      expect(screen.getByText('Add to playlist')).toBeInTheDocument();
+      expect(screen.getByText('Add to queue')).toBeInTheDocument();
+      expect(screen.getByText('Go to album')).toBeInTheDocument();
+      expect(screen.getByText('Go to artist')).toBeInTheDocument();
+      expect(screen.getByText('Song info')).toBeInTheDocument();
+    });
+  });
+
+  describe('desktop bar', () => {
+    beforeEach(() => {
+      usePlayerStore.setState({ currentSong: song, playing: false, currentTime: 50, duration: 200 });
+    });
+
+    it('has a "More options" menu next to the favorite button', () => {
+      renderBar();
+
+      fireEvent.click(screen.getByTitle('More options'));
+
+      expect(screen.getByText('Add to playlist')).toBeInTheDocument();
+      expect(screen.getByText('Download')).toBeInTheDocument();
+    });
   });
 });
