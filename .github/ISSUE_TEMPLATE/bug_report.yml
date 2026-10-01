@@ -1,0 +1,56 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time! **Do not include passwords, tokens or private server URLs** in logs and screenshots. For security problems please use the private reporting link instead of this form.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to …
+        2. Click …
+        3. See the problem
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Where does it happen?
+      multiple: true
+      options:
+        - Web app
+        - Android app
+        - Server / API
+        - Other Subsonic client
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: RiffPlayer version
+      description: Release tag or image tag (for example 0.1.3), or the commit if you build from source.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: How you run the server and what you use to connect.
+      placeholder: Docker on Debian 12, Chrome 130 / Pixel 7 on Android 15
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Server log (`docker compose logs riffplayer`), browser console, or screenshots. Remove anything private.
+      render: shell
