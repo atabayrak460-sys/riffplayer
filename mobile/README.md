@@ -1,6 +1,6 @@
 # RiffPlayer — Flutter mobile app
 
-Native iOS + Android client for the RiffPlayer music server.
+Flutter client for the RiffPlayer music server. **Android is supported and released** (signed APKs on GitHub Releases). The iOS project files are in the repo, but iOS builds are not verified on hardware or published yet.
 
 ## Features
 
@@ -36,7 +36,7 @@ In the app, enter your server address (for example `http://192.168.1.10:4533`) a
 
 ## Platform notes
 
-### iOS
+### iOS (planned — not verified or published yet)
 
 - Background audio requires the **UIBackgroundModes: audio** key in Info.plist (included).
 - `NSAllowsArbitraryLoads: true` is set so you can connect to local HTTP servers; remove it

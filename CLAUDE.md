@@ -2,7 +2,7 @@
 
 **Name:** RiffPlayer
 
-**What it is:** An open-source, self-hosted music server with first-party **web** and **native mobile** clients. A Navidrome alternative that competes on UX and on a polished, cohesive first-party app experience — especially on **iOS**, which the self-hosted ecosystem underserves.
+**What it is:** An open-source, self-hosted music server with first-party **web** and **mobile** clients. A Navidrome alternative that competes on UX and on a polished, cohesive first-party app experience. **Android ships today; iOS is planned** (the Flutter project already contains iOS files, but nothing is built, verified or published for iOS yet) — don't describe iOS as available in public text.
 
 You (Claude Code) are building this from scratch. **Read every file in `docs/` before writing code.** Build strictly phase by phase per `docs/ROADMAP.md`. Do not jump ahead.
 
@@ -31,8 +31,8 @@ You (Claude Code) are building this from scratch. **Read every file in `docs/` b
 | Tag reading | `music-metadata` |
 | Transcoding | `ffmpeg` (invoked as subprocess) |
 | Web client | React + TypeScript, responsive, installable as a **PWA** |
-| Mobile | **Flutter** (Dart) — iOS + Android, single codebase |
-| Distribution | **Docker** primary; mobile via App Store / Play Store / F-Droid |
+| Mobile | **Flutter** (Dart) — one codebase; Android released, iOS planned |
+| Distribution | **Docker** primary; Android via signed APKs on GitHub Releases (Play Store / F-Droid / App Store are future options) |
 
 TypeScript **strict mode**. ESLint + Prettier. Prefer well-maintained libraries; document every non-trivial dependency choice in `docs/ARCHITECTURE.md`.
 
@@ -43,7 +43,7 @@ TypeScript **strict mode**. ESLint + Prettier. Prefer well-maintained libraries;
 ```
 /server            Node + TS backend (Subsonic API + custom API)
 /web               React + TS web client (PWA)
-/mobile            Flutter app (iOS + Android)
+/mobile            Flutter app (Android; iOS planned)
 /docs              specs (read these first)
 docker-compose.yml example deployment
 CLAUDE.md          this file
