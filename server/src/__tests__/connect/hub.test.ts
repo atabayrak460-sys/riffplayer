@@ -1,0 +1,699 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  ConnectHub, parseStateReport, parseCommand, sanitizeName, validDeviceId,
+  type ConnectEvent, type StateReport, type StreamSink,
+} from '../../connect/hub.js';
+
+// ── Harness ──────────────────────────────────────────────────────────────────
+
+let clock = 0;
+const advance = (ms: number) => { clock += ms; };
+
+const DURATIONS: Record<string, number> = { a: 200_000, b: 180_000, c: 240_000 };
+
+function newHub(over: Partial<ConstructorParameters<typeof ConnectHub>[0]> = {}) {
+  return new ConnectHub({
+    now: () => clock,
+    resolveSongs: (_userId, ids) =>
+      ids
+        .filter((id) => id in DURATIONS)
+        .map((id) => ({ id, durationMs: DURATIONS[id], json: { id, title: `Song ${id}` } })),
+    graceMs: 20_000,
+    transferWaitMs: 1_500,
+    pollTimeoutMs: 45_000,
+    maxDevices: 3,
+    idleStateMs: 600_000,
+    ...over,
+  });
+}
+
+class Probe {
+  events: { seq: number; event: ConnectEvent }[] = [];
+  ended = false;
+  sink: StreamSink = {
+    send: (seq, event) => { this.events.push({ seq, event }); },
+    end: () => { this.ended = true; },
+  };
+  names() { return this.events.map((e) => e.event.name); }
+  of<N extends ConnectEvent['name']>(name: N) {
+    return this.events.filter((e) => e.event.name === name).map((e) => e.event as Extract<ConnectEvent, { name: N }>);
+  }
+  last<N extends ConnectEvent['name']>(name: N) { return this.of(name).at(-1); }
+  clear() { this.events = []; }
+}
+
+const U1 = 1;
+const U2 = 2;
+const PC = 'pc-device-0001';
+const PHONE = 'phone-device-1';
+
+let hub: ConnectHub;
+
+function join(userId: number, deviceId: string, type: 'web' | 'android' = 'web', name = deviceId) {
+  const probe = new Probe();
+  const r = hub.connectStream(userId, { deviceId, name, type }, probe.sink);
+  if (!r.ok) throw new Error(r.reason);
+  return { probe, connId: r.connId };
+}
+
+const report = (over: Partial<StateReport> = {}): StateReport => ({
+  queueIds: ['a', 'b', 'c'], index: 0, positionMs: 10_000, playing: true,
+  repeat: 'off', shuffle: false, counted: false, ...over,
+});
+
+beforeEach(() => {
+  clock = 1_000_000;
+  hub = newHub();
+});
+
+// ── Connecting ───────────────────────────────────────────────────────────────
+
+describe('connecting', () => {
+  it('greets a new device with hello (server time) and a snapshot', () => {
+    const { probe } = join(U1, PC);
+
+    expect(probe.names().slice(0, 2)).toEqual(['hello', 'snapshot']);
+    expect(probe.of('hello')[0].data).toEqual({ serverTimeMs: clock, you: PC });
+    expect(probe.of('snapshot')[0].data.devices).toEqual([
+      { id: PC, name: PC, type: 'web', online: true, unreachable: false, active: false },
+    ]);
+  });
+
+  it('numbers events per device so a poller can ask for "everything after n"', () => {
+    const { probe } = join(U1, PC);
+    expect(probe.events.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it('tells the other devices when one joins, but not the one that joined', () => {
+    const pc = join(U1, PC);
+    pc.probe.clear();
+    const phone = join(U1, PHONE, 'android');
+
+    expect(pc.probe.last('devices')!.data.devices.map((d) => d.id)).toEqual([PC, PHONE]);
+    expect(phone.probe.names()).toEqual(['hello', 'snapshot']);
+  });
+
+  it('a device reconnecting under the same id replaces its old connection', () => {
+    const first = join(U1, PC);
+    const second = join(U1, PC);
+
+    expect(first.probe.ended).toBe(true);
+    expect(second.probe.ended).toBe(false);
+    // the old stream's late "close" must not drop the new connection
+    hub.disconnect(U1, PC, first.connId);
+    expect(hub.snapshot(U1).devices.map((d) => d.id)).toEqual([PC]);
+    expect(hub.snapshot(U1).devices[0].online).toBe(true);
+  });
+
+  it('refuses a new device beyond the per-user limit, but not a known one reconnecting', () => {
+    join(U1, 'device-aaaa-01');
+    join(U1, 'device-bbbb-02');
+    join(U1, 'device-cccc-03');
+
+    const extra = hub.connectStream(U1, { deviceId: 'device-dddd-04', name: 'x', type: 'web' }, new Probe().sink);
+    expect(extra).toEqual({ ok: false, reason: 'too_many_devices' });
+    expect(hub.connectStream(U1, { deviceId: 'device-aaaa-01', name: 'x', type: 'web' }, new Probe().sink).ok).toBe(true);
+  });
+
+  it('removes a device on disconnect and tells the rest', () => {
+    const pc = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    pc.probe.clear();
+
+    hub.disconnect(U1, PHONE, phone.connId);
+
+    expect(pc.probe.last('devices')!.data.devices.map((d) => d.id)).toEqual([PC]);
+  });
+});
+
+// ── Isolation (D2) ───────────────────────────────────────────────────────────
+
+describe('users are isolated', () => {
+  it('never shows, commands or notifies another user\'s devices', () => {
+    const mine = join(U1, PC);
+    const mineB = join(U1, PHONE, 'android');
+    const theirs = join(U2, 'other-user-dev1');
+    hub.reportState(U1, PC, report());
+    theirs.probe.clear();
+    mineB.probe.clear();
+
+    expect(hub.snapshot(U2).devices.map((d) => d.id)).toEqual(['other-user-dev1']);
+    expect(hub.snapshot(U2).state).toBeNull();
+
+    // the other user can't command mine: they have no active device of their own
+    expect(hub.sendCommand(U2, 'other-user-dev1', { commandId: 'c1', type: 'pause' })).toEqual({ ok: false, reason: 'no_active_device' });
+    // and can't use my device id as a sender or transfer target
+    expect(hub.sendCommand(U2, PHONE, { commandId: 'c2', type: 'pause' })).toEqual({ ok: false, reason: 'unknown_device' });
+    expect(hub.transfer(U2, 'other-user-dev1', PC, true)).toEqual({ ok: false, reason: 'target_offline' });
+
+    expect(mine.probe.of('command')).toEqual([]);
+    expect(theirs.probe.events).toEqual([]);
+  });
+});
+
+// ── State and takeover ───────────────────────────────────────────────────────
+
+describe('reporting state', () => {
+  it('a device that starts playing becomes the active one and everyone else hears about it', () => {
+    const pc = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    pc.probe.clear();
+    phone.probe.clear();
+
+    expect(hub.reportState(U1, PC, report())).toEqual({ ok: true, takeover: true });
+
+    for (const probe of [phone.probe]) {
+      expect(probe.last('devices')!.data.activeDeviceId).toBe(PC);
+      const state = probe.last('state')!.data;
+      expect(state).toMatchObject({
+        activeDeviceId: PC, playing: true, index: 0, queueLength: 3, positionMs: 10_000,
+        positionAtMs: clock, durationMs: 200_000, song: { id: 'a', title: 'Song a' },
+      });
+    }
+    // the reporter doesn't get its own state echoed back
+    expect(pc.probe.of('state')).toEqual([]);
+  });
+
+  it('while active, updates are accepted and broadcast with the resolved song', () => {
+    join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report());
+    phone.probe.clear();
+    advance(5_000);
+
+    hub.reportState(U1, PC, report({ queueIds: undefined, index: 1, positionMs: 0 }));
+
+    expect(phone.probe.last('state')!.data).toMatchObject({ index: 1, song: { id: 'b' }, durationMs: 180_000, positionAtMs: clock });
+  });
+
+  it('only bumps queueVersion when the queue itself changes', () => {
+    join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report());
+    const v1 = phone.probe.last('state')!.data.queueVersion;
+
+    hub.reportState(U1, PC, report({ queueIds: ['a', 'b', 'c'], positionMs: 20_000 }));
+    expect(phone.probe.last('state')!.data.queueVersion).toBe(v1);
+
+    hub.reportState(U1, PC, report({ queueIds: ['a', 'c'] }));
+    expect(phone.probe.last('state')!.data.queueVersion).toBe(v1 + 1);
+    expect(phone.probe.last('state')!.data.queueLength).toBe(2);
+  });
+
+  it('a device that starts playing takes over (D1): the previous one is told to pause', () => {
+    const pc = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report());
+    pc.probe.clear();
+
+    expect(hub.reportState(U1, PHONE, report({ queueIds: ['b', 'c'], positionMs: 0 }))).toEqual({ ok: true, takeover: true });
+
+    expect(hub.snapshot(U1).activeDeviceId).toBe(PHONE);
+    const pause = pc.probe.of('command')[0].data;
+    expect(pause.type).toBe('pause');
+    expect(pause.expiresAtMs).toBeGreaterThan(clock);
+    expect(pc.probe.last('devices')!.data.activeDeviceId).toBe(PHONE);
+    expect(phone.probe.of('command')).toEqual([]);
+  });
+
+  it('a paused report from a bystander changes nothing', () => {
+    join(U1, PC);
+    join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report());
+
+    expect(hub.reportState(U1, PHONE, report({ playing: false }))).toEqual({ ok: false, reason: 'not_active' });
+    expect(hub.snapshot(U1).activeDeviceId).toBe(PC);
+  });
+
+  it('taking over requires the queue (the server may never have seen it)', () => {
+    join(U1, PC);
+    expect(hub.reportState(U1, PC, report({ queueIds: undefined }))).toEqual({ ok: false, reason: 'need_queue' });
+    expect(hub.snapshot(U1).activeDeviceId).toBeNull();
+  });
+
+  it('asks the active device to resend the queue when the server lost it', () => {
+    // server restarted: nothing known, the (re-registered) device reports without a queue
+    join(U1, PC);
+    expect(hub.reportState(U1, PC, report({ queueIds: undefined }))).toEqual({ ok: false, reason: 'need_queue' });
+  });
+
+  it('rejects reports from unknown devices', () => {
+    expect(hub.reportState(U1, 'nobody-device-1', report())).toEqual({ ok: false, reason: 'unknown_device' });
+  });
+
+  it('clamps an out-of-range index to the queue', () => {
+    join(U1, PC);
+    hub.reportState(U1, PC, report({ index: 99 }));
+    expect(hub.snapshot(U1).state!.index).toBe(2);
+  });
+
+  it('is rate limited per user', () => {
+    join(U1, PC);
+    hub.reportState(U1, PC, report());
+    let limited = 0;
+    for (let i = 0; i < 200; i++) {
+      const r = hub.reportState(U1, PC, report({ queueIds: undefined }));
+      if (!r.ok && r.reason === 'rate_limited') limited++;
+    }
+    expect(limited).toBeGreaterThan(0);
+    advance(11_000);
+    expect(hub.reportState(U1, PC, report({ queueIds: undefined })).ok).toBe(true);
+  });
+});
+
+// ── Commands ─────────────────────────────────────────────────────────────────
+
+describe('commands', () => {
+  function playingPcAndPhone() {
+    const pc = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report());
+    pc.probe.clear();
+    phone.probe.clear();
+    return { pc, phone };
+  }
+
+  it('reach only the active device, with a short expiry', () => {
+    const { pc, phone } = playingPcAndPhone();
+
+    expect(hub.sendCommand(U1, PHONE, { commandId: 'c1', type: 'next' })).toEqual({ ok: true });
+
+    expect(pc.probe.of('command')[0].data).toEqual({ commandId: 'c1', type: 'next', expiresAtMs: clock + 5_000 });
+    expect(phone.probe.of('command')).toEqual([]);
+  });
+
+  it('carry the position for a seek', () => {
+    const { pc } = playingPcAndPhone();
+    hub.sendCommand(U1, PHONE, { commandId: 'c1', type: 'seek', positionMs: 42_000 });
+    expect(pc.probe.of('command')[0].data).toMatchObject({ type: 'seek', positionMs: 42_000 });
+  });
+
+  it('are delivered once even if the controller retries with the same commandId', () => {
+    const { pc } = playingPcAndPhone();
+
+    hub.sendCommand(U1, PHONE, { commandId: 'same', type: 'next' });
+    expect(hub.sendCommand(U1, PHONE, { commandId: 'same', type: 'next' })).toEqual({ ok: true, duplicate: true });
+
+    expect(pc.probe.of('command')).toHaveLength(1);
+  });
+
+  it('fail clearly when nothing is active', () => {
+    join(U1, PHONE, 'android');
+    expect(hub.sendCommand(U1, PHONE, { commandId: 'c1', type: 'pause' })).toEqual({ ok: false, reason: 'no_active_device' });
+  });
+
+  it('are refused when the active device sends one to itself', () => {
+    playingPcAndPhone();
+    expect(hub.sendCommand(U1, PC, { commandId: 'c1', type: 'pause' })).toEqual({ ok: false, reason: 'self' });
+  });
+
+  it('fail when the active device is offline (it is a ghost, nothing to deliver to)', () => {
+    const { pc, phone } = playingPcAndPhone();
+    hub.disconnect(U1, PC, pc.connId);
+    phone.probe.clear();
+
+    expect(hub.sendCommand(U1, PHONE, { commandId: 'c1', type: 'pause' })).toEqual({ ok: false, reason: 'no_active_device' });
+  });
+
+  it('are rate limited per user', () => {
+    playingPcAndPhone();
+    let limited = 0;
+    for (let i = 0; i < 100; i++) {
+      const r = hub.sendCommand(U1, PHONE, { commandId: `c${i}`, type: 'next' });
+      if (!r.ok && r.reason === 'rate_limited') limited++;
+    }
+    expect(limited).toBeGreaterThan(0);
+  });
+});
+
+// ── Transfer ─────────────────────────────────────────────────────────────────
+
+describe('transfer', () => {
+  function setup(positionMs = 10_000) {
+    const pc = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report({ positionMs }));
+    pc.probe.clear();
+    phone.probe.clear();
+    return { pc, phone };
+  }
+
+  it('asks the old device to pause, then hands the queue to the target using its final position', () => {
+    const { pc, phone } = setup(10_000);
+    advance(3_000);
+
+    expect(hub.transfer(U1, PHONE, PHONE, true)).toEqual({ ok: true, status: 'pending' });
+    expect(pc.probe.of('command')[0].data.type).toBe('pause');
+    expect(phone.probe.of('load')).toEqual([]); // not yet: waiting for the old device's final position
+
+    advance(200);
+    hub.reportState(U1, PC, report({ queueIds: undefined, positionMs: 13_100, playing: false }));
+
+    expect(phone.probe.of('load')[0].data).toEqual({
+      queueVersion: 1, index: 0, positionMs: 13_100, play: true, counted: false,
+    });
+    expect(hub.snapshot(U1).activeDeviceId).toBe(PHONE);
+    expect(phone.probe.last('devices')!.data.activeDeviceId).toBe(PHONE);
+    expect(pc.probe.last('devices')!.data.activeDeviceId).toBe(PHONE);
+  });
+
+  it('does not wait for a stale "still playing" report', () => {
+    const { phone } = setup();
+    hub.transfer(U1, PHONE, PHONE, true);
+
+    hub.reportState(U1, PC, report({ queueIds: undefined, positionMs: 11_000, playing: true }));
+
+    expect(phone.probe.of('load')).toEqual([]);
+  });
+
+  it('proceeds on its own when the old device never answers, extrapolating its position', () => {
+    const { phone } = setup(10_000);
+    advance(4_000);
+    hub.transfer(U1, PHONE, PHONE, true);
+
+    advance(1_499);
+    hub.tick();
+    expect(phone.probe.of('load')).toEqual([]);
+
+    advance(1);
+    hub.tick();
+    // 10 s + the 5.5 s that passed since the report
+    expect(phone.probe.of('load')[0].data.positionMs).toBe(15_500);
+    expect(hub.snapshot(U1).activeDeviceId).toBe(PHONE);
+  });
+
+  it('never extrapolates past the end of the song', () => {
+    const { phone } = setup(199_000);
+    advance(60_000);
+    hub.transfer(U1, PHONE, PHONE, true);
+    advance(1_500);
+    hub.tick();
+
+    expect(phone.probe.of('load')[0].data.positionMs).toBe(200_000);
+  });
+
+  it('passes "play: false" through, and whether the play was already counted', () => {
+    const { phone } = setup();
+    hub.reportState(U1, PC, report({ queueIds: undefined, counted: true }));
+    hub.transfer(U1, PHONE, PHONE, false);
+    hub.reportState(U1, PC, report({ queueIds: undefined, playing: false, counted: true }));
+
+    expect(phone.probe.of('load')[0].data).toMatchObject({ play: false, counted: true });
+  });
+
+  it('"Continue here": an unreachable active device is replaced at once, frozen where it vanished', () => {
+    const { pc, phone } = setup(10_000);
+    advance(6_000); // 6 s of music played, then the PC goes to sleep
+    hub.disconnect(U1, PC, pc.connId);
+    advance(60_000);
+    hub.tick();
+    expect(hub.snapshot(U1).devices.find((d) => d.id === PC)).toMatchObject({ online: false, unreachable: true, active: true });
+    phone.probe.clear();
+
+    expect(hub.transfer(U1, PHONE, PHONE, true)).toEqual({ ok: true, status: 'done' });
+
+    // frozen where it vanished (10 s + 6 s), not advanced by the 60 s of silence that followed
+    expect(phone.probe.of('load')[0].data.positionMs).toBe(16_000);
+    expect(hub.snapshot(U1).devices.map((d) => d.id)).toEqual([PHONE]);
+  });
+
+  it('is a no-op when the target is already active', () => {
+    setup();
+    expect(hub.transfer(U1, PHONE, PC, true)).toEqual({ ok: true, status: 'noop' });
+  });
+
+  it('refuses an offline or unknown target', () => {
+    setup();
+    expect(hub.transfer(U1, PC, 'ghost-device-01', true)).toEqual({ ok: false, reason: 'target_offline' });
+  });
+
+  it('refuses when nothing has been played yet', () => {
+    join(U1, PC);
+    join(U1, PHONE, 'android');
+    expect(hub.transfer(U1, PC, PHONE, true)).toEqual({ ok: false, reason: 'nothing_playing' });
+  });
+
+  it('forgets a pending transfer if the target disappears before it completes', () => {
+    const { phone } = setup();
+    hub.transfer(U1, PC, PHONE, true);
+    hub.disconnect(U1, PHONE, phone.connId);
+    advance(2_000);
+    hub.tick();
+
+    expect(phone.probe.of('load')).toEqual([]);
+    expect(hub.snapshot(U1).activeDeviceId).toBe(PC);
+  });
+});
+
+// ── Active device disappearing (D4) ──────────────────────────────────────────
+
+describe('the active device disappears', () => {
+  it('freezes the state as paused where it vanished and shows the device as reconnecting, then unreachable after the grace period', () => {
+    const pcConn = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report({ positionMs: 10_000 }));
+    phone.probe.clear();
+    advance(4_000);
+
+    hub.disconnect(U1, PC, pcConn.connId);
+
+    const frozen = phone.probe.last('state')!.data;
+    expect(frozen).toMatchObject({ playing: false, positionMs: 14_000, positionAtMs: clock });
+    let pc = phone.probe.last('devices')!.data.devices.find((d) => d.id === PC)!;
+    expect(pc).toMatchObject({ online: false, unreachable: false, active: true });
+
+    advance(19_999);
+    hub.tick();
+    expect(phone.probe.last('devices')!.data.devices.find((d) => d.id === PC)!.unreachable).toBe(false);
+
+    advance(1);
+    hub.tick();
+    pc = phone.probe.last('devices')!.data.devices.find((d) => d.id === PC)!;
+    expect(pc).toMatchObject({ online: false, unreachable: true });
+  });
+
+  it('a quick reconnect within the grace period restores the device as active', () => {
+    const first = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report());
+    hub.disconnect(U1, PC, first.connId);
+    advance(5_000);
+    phone.probe.clear();
+
+    join(U1, PC);
+    advance(60_000);
+    hub.tick();
+
+    // listed exactly once: no leftover "unreachable" copy next to the reconnected device
+    expect(hub.snapshot(U1).devices.filter((d) => d.id === PC)).toEqual([
+      { id: PC, name: PC, type: 'web', online: true, unreachable: false, active: true },
+    ]);
+  });
+
+  it('keeps the unreachable notice to a single broadcast', () => {
+    const first = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report());
+    hub.disconnect(U1, PC, first.connId);
+    phone.probe.clear();
+
+    advance(25_000);
+    hub.tick();
+    hub.tick();
+    advance(5_000);
+    hub.tick();
+
+    expect(phone.probe.of('devices')).toHaveLength(1);
+  });
+});
+
+// ── Rename / revoke / housekeeping ───────────────────────────────────────────
+
+describe('rename, revoke and housekeeping', () => {
+  it('renames a device and notifies everyone, sanitising the name', () => {
+    const pc = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    pc.probe.clear();
+    phone.probe.clear();
+
+    expect(hub.rename(U1, PHONE, '  My\u0000 phone  ')).toBe(true);
+
+    expect(pc.probe.last('devices')!.data.devices.find((d) => d.id === PHONE)!.name).toBe('My phone');
+    expect(phone.probe.last('devices')).toBeDefined();
+    expect(hub.rename(U1, 'nobody-device-1', 'x')).toBe(false);
+  });
+
+  it('revoke tells the user\'s devices, ends their streams and drops their state', () => {
+    const pc = join(U1, PC);
+    const other = join(U2, 'other-user-dev1');
+    hub.reportState(U1, PC, report());
+
+    hub.revoke(U1);
+
+    expect(pc.probe.of('revoked')).toHaveLength(1);
+    expect(pc.probe.ended).toBe(true);
+    expect(hub.snapshot(U1)).toEqual({ devices: [], activeDeviceId: null, state: null });
+    expect(other.probe.ended).toBe(false);
+  });
+
+  it('shutdown ends every stream', () => {
+    const a = join(U1, PC);
+    const b = join(U2, 'other-user-dev1');
+    hub.shutdown();
+    expect(a.probe.ended && b.probe.ended).toBe(true);
+  });
+
+  it('forgets a user\'s state once nobody has been connected for the idle period', () => {
+    const conn = join(U1, PC);
+    hub.reportState(U1, PC, report());
+    hub.disconnect(U1, PC, conn.connId);
+
+    advance(599_000);
+    hub.tick();
+    expect(hub.snapshot(U1).state).not.toBeNull();
+
+    advance(2_000);
+    hub.tick();
+    expect(hub.snapshot(U1).state).toBeNull();
+  });
+
+  it('queue() returns the full songs, skips unknown ids and keeps the index pointing at the same song', () => {
+    join(U1, PC);
+    hub.reportState(U1, PC, report({ queueIds: ['zzz', 'a', 'b', 'c'], index: 2 }));
+
+    const q = hub.queue(U1)!;
+    expect(q.songs.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(q.index).toBe(1); // 'b' is now at position 1
+    expect(q.queueVersion).toBe(1);
+  });
+
+  it('queue() is null before anything was played', () => {
+    join(U1, PC);
+    expect(hub.queue(U1)).toBeNull();
+  });
+});
+
+// ── Long-poll fallback ───────────────────────────────────────────────────────
+
+describe('long-poll fallback', () => {
+  const info = { deviceId: 'poller-device-1', name: 'Poller', type: 'web' as const };
+
+  it('registers the device and returns hello + snapshot straight away', async () => {
+    const r = await hub.pollEvents(U1, info, undefined, 0);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.events.map((e) => e.event.name)).toEqual(['hello', 'snapshot']);
+    expect(hub.snapshot(U1).devices.map((d) => d.id)).toEqual(['poller-device-1']);
+  });
+
+  it('only returns events after `since`', async () => {
+    const first = await hub.pollEvents(U1, info, undefined, 0);
+    if (!first.ok) throw new Error('poll failed');
+    const since = first.events.at(-1)!.seq;
+    join(U1, PC); // produces a `devices` event for the poller
+
+    const next = await hub.pollEvents(U1, info, since, 0);
+    expect(next.ok && next.events.map((e) => e.event.name)).toEqual(['devices']);
+  });
+
+  it('holds the request and answers as soon as something happens', async () => {
+    const first = await hub.pollEvents(U1, info, undefined, 0);
+    if (!first.ok) throw new Error('poll failed');
+    const since = first.events.at(-1)!.seq;
+
+    const waiting = hub.pollEvents(U1, info, since, 5_000);
+    join(U1, PC);
+    const r = await waiting;
+
+    expect(r.ok && r.events.map((e) => e.event.name)).toEqual(['devices']);
+  });
+
+  it('returns an empty list when nothing happens within the hold time', async () => {
+    const first = await hub.pollEvents(U1, info, undefined, 0);
+    if (!first.ok) throw new Error('poll failed');
+
+    const r = await hub.pollEvents(U1, info, first.events.at(-1)!.seq, 10);
+    expect(r.ok && r.events).toEqual([]);
+  });
+
+  it('receives commands like a streamed device does', async () => {
+    const first = await hub.pollEvents(U1, info, undefined, 0);
+    if (!first.ok) throw new Error('poll failed');
+    hub.reportState(U1, info.deviceId, report());
+    join(U1, PHONE, 'android');
+    const since = first.events.at(-1)!.seq;
+
+    hub.sendCommand(U1, PHONE, { commandId: 'p1', type: 'pause' });
+
+    const r = await hub.pollEvents(U1, info, since, 0);
+    expect(r.ok && r.events.some((e) => e.event.name === 'command')).toBe(true);
+  });
+
+  it('a poller that stops polling is dropped after the timeout, one that is waiting is not', async () => {
+    const first = await hub.pollEvents(U1, info, undefined, 0);
+    if (!first.ok) throw new Error('poll failed');
+    advance(46_000);
+    hub.tick();
+
+    expect(hub.snapshot(U1).devices).toEqual([]);
+  });
+
+  it('counts towards the device limit', async () => {
+    join(U1, 'device-aaaa-01');
+    join(U1, 'device-bbbb-02');
+    join(U1, 'device-cccc-03');
+
+    expect(await hub.pollEvents(U1, info, undefined, 0)).toEqual({ ok: false, reason: 'too_many_devices' });
+  });
+});
+
+// ── Input validation helpers ─────────────────────────────────────────────────
+
+describe('validation helpers', () => {
+  it('validDeviceId accepts url-safe ids of sane length only', () => {
+    expect(validDeviceId('3f2b9c1e-aaaa-bbbb-cccc-1234567890ab')).toBe(true);
+    for (const bad of ['short', 'has space in it', 'x'.repeat(65), '../../etc', 42, null, undefined]) {
+      expect(validDeviceId(bad)).toBe(false);
+    }
+  });
+
+  it('sanitizeName strips control characters, trims, truncates and falls back', () => {
+    expect(sanitizeName('  Living\nroom\u0007 PC ')).toBe('Livingroom PC');
+    expect(sanitizeName('x'.repeat(100))).toHaveLength(40);
+    expect(sanitizeName('   ')).toBe('Unnamed device');
+    expect(sanitizeName(42, 'Fallback')).toBe('Fallback');
+  });
+
+  it('parseStateReport accepts a good report and rounds the position', () => {
+    expect(parseStateReport({ queueIds: ['1', '2'], index: 1, positionMs: 1234.6, playing: true, repeat: 'all', shuffle: true })).toEqual({
+      queueIds: ['1', '2'], index: 1, positionMs: 1235, playing: true, repeat: 'all', shuffle: true, counted: false,
+    });
+  });
+
+  it.each([
+    ['not an object', null],
+    ['negative index', { index: -1, positionMs: 0, playing: true, repeat: 'off', shuffle: false }],
+    ['fractional index', { index: 1.5, positionMs: 0, playing: true, repeat: 'off', shuffle: false }],
+    ['bad position', { index: 0, positionMs: -5, playing: true, repeat: 'off', shuffle: false }],
+    ['NaN position', { index: 0, positionMs: NaN, playing: true, repeat: 'off', shuffle: false }],
+    ['bad playing', { index: 0, positionMs: 0, playing: 'yes', repeat: 'off', shuffle: false }],
+    ['bad repeat', { index: 0, positionMs: 0, playing: true, repeat: 'sometimes', shuffle: false }],
+    ['bad shuffle', { index: 0, positionMs: 0, playing: true, repeat: 'off', shuffle: 1 }],
+    ['queueIds not strings', { queueIds: [1], index: 0, positionMs: 0, playing: true, repeat: 'off', shuffle: false }],
+    ['too many queueIds', { queueIds: Array.from({ length: 5001 }, (_, i) => String(i)), index: 0, positionMs: 0, playing: true, repeat: 'off', shuffle: false }],
+  ])('parseStateReport rejects %s', (_label, body) => {
+    expect(typeof parseStateReport(body)).toBe('string');
+  });
+
+  it('parseCommand validates type, id and seek position', () => {
+    expect(parseCommand({ commandId: 'c1', type: 'next' })).toEqual({ commandId: 'c1', type: 'next' });
+    expect(parseCommand({ commandId: 'c1', type: 'seek', positionMs: 5000.4 })).toEqual({ commandId: 'c1', type: 'seek', positionMs: 5000 });
+    for (const bad of [
+      null, { type: 'next' }, { commandId: '', type: 'next' }, { commandId: 'x'.repeat(65), type: 'next' },
+      { commandId: 'c1', type: 'explode' }, { commandId: 'c1', type: 'seek' }, { commandId: 'c1', type: 'seek', positionMs: -1 },
+    ]) {
+      expect(typeof parseCommand(bad)).toBe('string');
+    }
+  });
+});

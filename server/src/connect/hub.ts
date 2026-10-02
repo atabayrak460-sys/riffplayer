@@ -1,0 +1,745 @@
+// RiffPlayer Connect — in-memory registry + relay for one user's devices.
+//
+// Pure logic, no HTTP: transports (SSE stream / long-poll) hand in a sink and the
+// routes translate requests into method calls. Time comes from an injectable clock and
+// nothing here owns a timer (the plugin calls tick()), so every rule is unit-testable.
+// See docs/CONNECT-DESIGN.md for the full design.
+
+export type DeviceType = 'web' | 'android' | 'desktop';
+export const DEVICE_TYPES: readonly DeviceType[] = ['web', 'android', 'desktop'];
+
+export const COMMAND_TYPES = ['play', 'pause', 'next', 'previous', 'seek'] as const;
+export type CommandType = (typeof COMMAND_TYPES)[number];
+
+export type RepeatMode = 'off' | 'all' | 'one';
+const REPEAT_MODES: readonly RepeatMode[] = ['off', 'all', 'one'];
+
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  type: DeviceType;
+  /** Connected right now. */
+  online: boolean;
+  /** Offline for longer than the grace period — controllers may offer "Continue here". */
+  unreachable: boolean;
+  active: boolean;
+}
+
+export interface PublicState {
+  activeDeviceId: string;
+  playing: boolean;
+  song: Record<string, unknown> | null;
+  index: number;
+  queueLength: number;
+  queueVersion: number;
+  positionMs: number;
+  /** Server clock at which `positionMs` was true; controllers extrapolate while playing. */
+  positionAtMs: number;
+  durationMs: number | null;
+  repeat: RepeatMode;
+  shuffle: boolean;
+  /** The current play was already counted (scrobbled) by the reporting device. */
+  counted: boolean;
+}
+
+export type ConnectEvent =
+  | { name: 'hello'; data: { serverTimeMs: number; you: string } }
+  | { name: 'snapshot'; data: { devices: DeviceInfo[]; activeDeviceId: string | null; state: PublicState | null } }
+  | { name: 'devices'; data: { devices: DeviceInfo[]; activeDeviceId: string | null } }
+  | { name: 'state'; data: PublicState }
+  | { name: 'command'; data: { commandId: string; type: CommandType; positionMs?: number; expiresAtMs: number } }
+  | { name: 'load'; data: { queueVersion: number; index: number; positionMs: number; play: boolean; counted: boolean } }
+  | { name: 'revoked'; data: Record<string, never> };
+
+export interface StreamSink {
+  send(seq: number, event: ConnectEvent): void;
+  end(): void;
+}
+
+export interface ResolvedSong {
+  id: string;
+  durationMs: number | null;
+  json: Record<string, unknown>;
+}
+export type SongResolver = (userId: number, ids: string[]) => ResolvedSong[];
+
+export interface StateReport {
+  queueIds?: string[];
+  index: number;
+  positionMs: number;
+  playing: boolean;
+  repeat: RepeatMode;
+  shuffle: boolean;
+  counted: boolean;
+}
+
+export interface HubOptions {
+  resolveSongs: SongResolver;
+  now?: () => number;
+  /** How long an active device may be offline before it counts as unreachable. */
+  graceMs?: number;
+  /** How long a transfer waits for the old active device's final position. */
+  transferWaitMs?: number;
+  commandTtlMs?: number;
+  /** A long-poll device that hasn't polled for this long is gone. */
+  pollTimeoutMs?: number;
+  maxDevices?: number;
+  /** How long a user's state is kept after their last device left. */
+  idleStateMs?: number;
+}
+
+export const MAX_QUEUE_IDS = 5000;
+const MAX_NAME_LENGTH = 40;
+const POLL_BUFFER = 200;
+const RECENT_COMMANDS = 200;
+
+// Per-user request budgets (sliding window) — cheap protection against a runaway client.
+const LIMITS = {
+  command: { max: 60, windowMs: 10_000 },
+  state: { max: 120, windowMs: 10_000 },
+} as const;
+
+type Bucket = keyof typeof LIMITS;
+
+interface Device {
+  id: string;
+  name: string;
+  type: DeviceType;
+  transport: 'stream' | 'poll';
+  connId: number;
+  sink?: StreamSink;
+  seq: number;
+  buffer: { seq: number; event: ConnectEvent }[];
+  wake?: () => void;
+  lastSeen: number;
+}
+
+interface Ghost {
+  id: string;
+  name: string;
+  type: DeviceType;
+  since: number;
+  unreachable: boolean;
+}
+
+interface StoredState {
+  playing: boolean;
+  index: number;
+  positionMs: number;
+  positionAtMs: number;
+  repeat: RepeatMode;
+  shuffle: boolean;
+  counted: boolean;
+  queueVersion: number;
+  durationMs: number | null;
+  song: Record<string, unknown> | null;
+}
+
+interface PendingTransfer {
+  toDeviceId: string;
+  play: boolean;
+  deadline: number;
+}
+
+interface UserHub {
+  devices: Map<string, Device>;
+  activeDeviceId: string | null;
+  ghost: Ghost | null;
+  state: StoredState | null;
+  queueIds: string[];
+  queueVersion: number;
+  pending: PendingTransfer | null;
+  recentCommands: string[];
+  hits: Record<Bucket, number[]>;
+  emptySince: number | null;
+}
+
+// ── Validation helpers (shared with the routes) ──────────────────────────────
+
+export function validDeviceId(v: unknown): v is string {
+  return typeof v === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(v);
+}
+
+export function sanitizeName(v: unknown, fallback = 'Unnamed device'): string {
+  if (typeof v !== 'string') return fallback;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_NAME_LENGTH);
+  return cleaned || fallback;
+}
+
+export function parseDeviceType(v: unknown): DeviceType {
+  return DEVICE_TYPES.includes(v as DeviceType) ? (v as DeviceType) : 'web';
+}
+
+const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** Returns the cleaned report, or a message describing what is wrong. */
+export function parseStateReport(body: unknown): StateReport | string {
+  if (typeof body !== 'object' || body === null) return 'JSON body required';
+  const b = body as Record<string, unknown>;
+
+  let queueIds: string[] | undefined;
+  if (b.queueIds !== undefined) {
+    if (!Array.isArray(b.queueIds) || b.queueIds.length > MAX_QUEUE_IDS) return `queueIds must be an array of at most ${MAX_QUEUE_IDS} ids`;
+    if (!b.queueIds.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 32)) return 'queueIds must be non-empty strings';
+    queueIds = b.queueIds as string[];
+  }
+  if (!Number.isInteger(b.index) || (b.index as number) < 0) return 'index must be a non-negative integer';
+  if (!isFiniteNumber(b.positionMs) || b.positionMs < 0) return 'positionMs must be a non-negative number';
+  if (typeof b.playing !== 'boolean') return 'playing must be a boolean';
+  if (!REPEAT_MODES.includes(b.repeat as RepeatMode)) return 'repeat must be off, all or one';
+  if (typeof b.shuffle !== 'boolean') return 'shuffle must be a boolean';
+
+  return {
+    queueIds,
+    index: b.index as number,
+    positionMs: Math.round(b.positionMs),
+    playing: b.playing,
+    repeat: b.repeat as RepeatMode,
+    shuffle: b.shuffle,
+    counted: b.counted === true,
+  };
+}
+
+export interface CommandInput {
+  commandId: string;
+  type: CommandType;
+  positionMs?: number;
+}
+
+export function parseCommand(body: unknown): CommandInput | string {
+  if (typeof body !== 'object' || body === null) return 'JSON body required';
+  const b = body as Record<string, unknown>;
+  if (typeof b.commandId !== 'string' || !b.commandId || b.commandId.length > 64) return 'commandId (string, max 64) required';
+  if (!COMMAND_TYPES.includes(b.type as CommandType)) return `type must be one of ${COMMAND_TYPES.join(', ')}`;
+  if (b.type === 'seek') {
+    if (!isFiniteNumber(b.positionMs) || b.positionMs < 0) return 'seek needs a non-negative positionMs';
+    return { commandId: b.commandId, type: 'seek', positionMs: Math.round(b.positionMs) };
+  }
+  return { commandId: b.commandId, type: b.type as CommandType };
+}
+
+// ── Hub ──────────────────────────────────────────────────────────────────────
+
+export class ConnectHub {
+  private readonly users = new Map<number, UserHub>();
+  private readonly now: () => number;
+  private readonly resolveSongs: SongResolver;
+  private readonly graceMs: number;
+  private readonly transferWaitMs: number;
+  private readonly commandTtlMs: number;
+  private readonly pollTimeoutMs: number;
+  private readonly maxDevices: number;
+  private readonly idleStateMs: number;
+  private nextConnId = 1;
+  private nextSystemCommand = 1;
+
+  constructor(opts: HubOptions) {
+    this.resolveSongs = opts.resolveSongs;
+    this.now = opts.now ?? Date.now;
+    this.graceMs = opts.graceMs ?? 20_000;
+    this.transferWaitMs = opts.transferWaitMs ?? 1_500;
+    this.commandTtlMs = opts.commandTtlMs ?? 5_000;
+    this.pollTimeoutMs = opts.pollTimeoutMs ?? 45_000;
+    this.maxDevices = opts.maxDevices ?? 10;
+    this.idleStateMs = opts.idleStateMs ?? 10 * 60_000;
+  }
+
+  // ── Connections ────────────────────────────────────────────────────────────
+
+  /** Registers a device on an SSE stream. A second connection with the same deviceId replaces the first. */
+  connectStream(
+    userId: number,
+    info: { deviceId: string; name: string; type: DeviceType },
+    sink: StreamSink,
+  ): { ok: true; connId: number } | { ok: false; reason: 'too_many_devices' } {
+    const device = this.register(userId, info, 'stream', sink);
+    if (!device) return { ok: false, reason: 'too_many_devices' };
+    return { ok: true, connId: device.connId };
+  }
+
+  /** Called when a stream closes. Ignored if the device has since reconnected (different connId). */
+  disconnect(userId: number, deviceId: string, connId: number): void {
+    const hub = this.users.get(userId);
+    const device = hub?.devices.get(deviceId);
+    if (!hub || !device || device.connId !== connId) return;
+    this.removeDevice(hub, device);
+  }
+
+  /**
+   * Long-poll fallback: registers the device on first use, then returns the events with
+   * `seq > since` — immediately if there are any, otherwise as soon as one arrives or after `holdMs`.
+   */
+  async pollEvents(
+    userId: number,
+    info: { deviceId: string; name: string; type: DeviceType },
+    since: number | undefined,
+    holdMs: number,
+  ): Promise<{ ok: true; events: { seq: number; event: ConnectEvent }[] } | { ok: false; reason: 'too_many_devices' }> {
+    let hub = this.users.get(userId);
+    let device = hub?.devices.get(info.deviceId);
+    // A stream-connected device can't also poll; a (re)started poller starts a new connection.
+    if (!device || device.transport !== 'poll' || since === undefined) {
+      device = this.register(userId, info, 'poll') ?? undefined;
+      if (!device) return { ok: false, reason: 'too_many_devices' };
+      hub = this.users.get(userId)!;
+    }
+    device.lastSeen = this.now();
+    // Stay registered while a request is waiting: only time spent *between* polls counts as absence.
+    const after = since ?? 0;
+
+    const pending = () => device!.buffer.filter((e) => e.seq > after);
+    if (pending().length === 0 && holdMs > 0) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, holdMs);
+        device!.wake = () => { clearTimeout(timer); resolve(); };
+      });
+      device.wake = undefined;
+    }
+    device.lastSeen = this.now();
+    return { ok: true, events: pending() };
+  }
+
+  // ── State from the active device ───────────────────────────────────────────
+
+  reportState(
+    userId: number,
+    deviceId: string,
+    report: StateReport,
+  ): { ok: true; takeover?: boolean } | { ok: false; reason: 'unknown_device' | 'not_active' | 'need_queue' | 'rate_limited' } {
+    const hub = this.users.get(userId);
+    const device = hub?.devices.get(deviceId);
+    if (!hub || !device) return { ok: false, reason: 'unknown_device' };
+    if (!this.allow(hub, 'state')) return { ok: false, reason: 'rate_limited' };
+
+    const isActive = hub.activeDeviceId === deviceId;
+    let takeover = false;
+
+    if (!isActive) {
+      // Only a device that actually starts playing may take over (D1); a paused report from a bystander is noise.
+      if (!report.playing) return { ok: false, reason: 'not_active' };
+      // Taking over needs the queue, since the server may never have seen it.
+      if (!report.queueIds) return { ok: false, reason: 'need_queue' };
+      takeover = true;
+    } else if (!report.queueIds && hub.queueIds.length === 0) {
+      // The server lost its state (restart) — ask the active device to resend the queue.
+      return { ok: false, reason: 'need_queue' };
+    }
+
+    if (takeover) {
+      const previous = hub.activeDeviceId ? hub.devices.get(hub.activeDeviceId) : undefined;
+      if (previous && previous.id !== deviceId) {
+        this.emit(previous, {
+          name: 'command',
+          data: {
+            commandId: `takeover-${this.nextSystemCommand++}`,
+            type: 'pause',
+            expiresAtMs: this.now() + this.commandTtlMs,
+          },
+        });
+      }
+      hub.activeDeviceId = deviceId;
+      hub.ghost = null;
+      hub.pending = null;
+    }
+
+    this.applyReport(userId, hub, report);
+
+    if (takeover) this.broadcastDevices(hub);
+    this.broadcastState(hub, deviceId);
+
+    // The old active device's "I have paused" report is the final position a waiting transfer needs.
+    // (A report that still says playing is a stale periodic one — the deadline covers that case.)
+    if (hub.pending && isActive && !report.playing) this.completeTransfer(hub);
+
+    return { ok: true, takeover };
+  }
+
+  // ── Commands and transfer ──────────────────────────────────────────────────
+
+  sendCommand(
+    userId: number,
+    fromDeviceId: string,
+    cmd: CommandInput,
+  ):
+    | { ok: true; duplicate?: boolean }
+    | { ok: false; reason: 'unknown_device' | 'no_active_device' | 'self' | 'rate_limited' } {
+    const hub = this.users.get(userId);
+    if (!hub?.devices.has(fromDeviceId)) return { ok: false, reason: 'unknown_device' };
+    if (!this.allow(hub, 'command')) return { ok: false, reason: 'rate_limited' };
+
+    if (hub.recentCommands.includes(cmd.commandId)) return { ok: true, duplicate: true };
+    const target = hub.activeDeviceId ? hub.devices.get(hub.activeDeviceId) : undefined;
+    if (!target) return { ok: false, reason: 'no_active_device' };
+    if (target.id === fromDeviceId) return { ok: false, reason: 'self' };
+
+    hub.recentCommands.push(cmd.commandId);
+    if (hub.recentCommands.length > RECENT_COMMANDS) hub.recentCommands.shift();
+
+    this.emit(target, {
+      name: 'command',
+      data: {
+        commandId: cmd.commandId,
+        type: cmd.type,
+        ...(cmd.positionMs !== undefined ? { positionMs: cmd.positionMs } : {}),
+        expiresAtMs: this.now() + this.commandTtlMs,
+      },
+    });
+    return { ok: true };
+  }
+
+  /**
+   * Moves playback to `toDeviceId` (which may be the caller — "Continue here").
+   * If the current device is reachable it is paused first and the hub waits briefly for its final
+   * position (status 'pending'); otherwise the last known state is used straight away.
+   */
+  transfer(
+    userId: number,
+    fromDeviceId: string,
+    toDeviceId: string,
+    play: boolean,
+  ):
+    | { ok: true; status: 'done' | 'pending' | 'noop' }
+    | { ok: false; reason: 'unknown_device' | 'target_offline' | 'nothing_playing' | 'rate_limited' } {
+    const hub = this.users.get(userId);
+    if (!hub?.devices.has(fromDeviceId)) return { ok: false, reason: 'unknown_device' };
+    if (!this.allow(hub, 'command')) return { ok: false, reason: 'rate_limited' };
+    if (!hub.devices.has(toDeviceId)) return { ok: false, reason: 'target_offline' };
+    if (hub.activeDeviceId === toDeviceId) return { ok: true, status: 'noop' };
+    if (!hub.state || hub.queueIds.length === 0) return { ok: false, reason: 'nothing_playing' };
+
+    const current = hub.activeDeviceId ? hub.devices.get(hub.activeDeviceId) : undefined;
+    hub.pending = { toDeviceId, play, deadline: this.now() + this.transferWaitMs };
+
+    if (current) {
+      // Ask the old device to stop; its next state report (or the deadline) completes the transfer.
+      this.emit(current, {
+        name: 'command',
+        data: {
+          commandId: `transfer-${this.nextSystemCommand++}`,
+          type: 'pause',
+          expiresAtMs: this.now() + this.commandTtlMs,
+        },
+      });
+      return { ok: true, status: 'pending' };
+    }
+
+    this.completeTransfer(hub);
+    return { ok: true, status: 'done' };
+  }
+
+  rename(userId: number, deviceId: string, name: string): boolean {
+    const hub = this.users.get(userId);
+    const device = hub?.devices.get(deviceId);
+    if (!hub || !device) return false;
+    device.name = sanitizeName(name, device.name);
+    this.broadcastDevices(hub);
+    return true;
+  }
+
+  // ── Reads ──────────────────────────────────────────────────────────────────
+
+  snapshot(userId: number): { devices: DeviceInfo[]; activeDeviceId: string | null; state: PublicState | null } {
+    const hub = this.users.get(userId);
+    if (!hub) return { devices: [], activeDeviceId: null, state: null };
+    return { devices: this.deviceList(hub), activeDeviceId: hub.activeDeviceId, state: this.publicState(hub) };
+  }
+
+  /** The queue as full songs (unknown ids dropped) and the index of the current song within them. */
+  queue(userId: number): { queueVersion: number; index: number; songs: Record<string, unknown>[] } | null {
+    const hub = this.users.get(userId);
+    if (!hub || !hub.state || hub.queueIds.length === 0) return null;
+    const resolved = new Map(this.resolveSongs(userId, hub.queueIds).map((s) => [s.id, s]));
+    const songs: Record<string, unknown>[] = [];
+    let index = 0;
+    hub.queueIds.forEach((id, i) => {
+      const song = resolved.get(id);
+      if (!song) return;
+      if (i < hub.state!.index) index++;
+      songs.push(song.json);
+    });
+    return { queueVersion: hub.queueVersion, index: Math.min(index, Math.max(0, songs.length - 1)), songs };
+  }
+
+  // ── Time-driven housekeeping (called by the plugin every few seconds) ───────
+
+  tick(): void {
+    const now = this.now();
+    for (const [userId, hub] of this.users) {
+      // Long-poll devices that stopped polling are gone.
+      for (const device of [...hub.devices.values()]) {
+        if (device.transport === 'poll' && !device.wake && now - device.lastSeen > this.pollTimeoutMs) {
+          this.removeDevice(hub, device);
+        }
+      }
+      // A transfer that never got the old device's final position proceeds with what we know.
+      if (hub.pending && now >= hub.pending.deadline) this.completeTransfer(hub);
+      // The active device has been gone past the grace period.
+      if (hub.ghost && !hub.ghost.unreachable && now - hub.ghost.since >= this.graceMs) {
+        hub.ghost.unreachable = true;
+        this.broadcastDevices(hub);
+      }
+      // Forget users nobody is connected for any more.
+      if (hub.devices.size === 0) {
+        hub.emptySince ??= now;
+        if (now - hub.emptySince >= this.idleStateMs) this.users.delete(userId);
+      } else {
+        hub.emptySince = null;
+      }
+    }
+  }
+
+  /** Ends every stream (server shutdown). */
+  shutdown(): void {
+    for (const hub of this.users.values()) {
+      for (const device of hub.devices.values()) {
+        device.sink?.end();
+        device.wake?.();
+      }
+    }
+    this.users.clear();
+  }
+
+  /** Tells every connection of a user that their credentials are no longer valid and drops them. */
+  revoke(userId: number): void {
+    const hub = this.users.get(userId);
+    if (!hub) return;
+    for (const device of [...hub.devices.values()]) {
+      this.emit(device, { name: 'revoked', data: {} });
+      device.sink?.end();
+      device.wake?.();
+    }
+    this.users.delete(userId);
+  }
+
+  // ── Internals ──────────────────────────────────────────────────────────────
+
+  private hubFor(userId: number): UserHub {
+    let hub = this.users.get(userId);
+    if (!hub) {
+      hub = {
+        devices: new Map(),
+        activeDeviceId: null,
+        ghost: null,
+        state: null,
+        queueIds: [],
+        queueVersion: 0,
+        pending: null,
+        recentCommands: [],
+        hits: { command: [], state: [] },
+        emptySince: null,
+      };
+      this.users.set(userId, hub);
+    }
+    return hub;
+  }
+
+  private register(
+    userId: number,
+    info: { deviceId: string; name: string; type: DeviceType },
+    transport: 'stream' | 'poll',
+    sink?: StreamSink,
+  ): Device | null {
+    const hub = this.hubFor(userId);
+    const existing = hub.devices.get(info.deviceId);
+    if (!existing && hub.devices.size >= this.maxDevices) {
+      if (hub.devices.size === 0) this.users.delete(userId);
+      return null;
+    }
+    // The same device reconnecting replaces its previous connection.
+    if (existing) {
+      existing.sink?.end();
+      existing.wake?.();
+    }
+
+    const device: Device = {
+      id: info.deviceId,
+      name: info.name,
+      type: info.type,
+      transport,
+      connId: this.nextConnId++,
+      sink,
+      seq: existing?.seq ?? 0,
+      buffer: [],
+      lastSeen: this.now(),
+    };
+    hub.devices.set(device.id, device);
+    hub.emptySince = null;
+    if (hub.ghost?.id === device.id) hub.ghost = null; // the active device came back
+
+    this.emit(device, { name: 'hello', data: { serverTimeMs: this.now(), you: device.id } });
+    this.emit(device, { name: 'snapshot', data: this.snapshot(userId) });
+    this.broadcastDevices(hub, device.id);
+    return device;
+  }
+
+  private removeDevice(hub: UserHub, device: Device): void {
+    device.sink?.end();
+    device.wake?.();
+    hub.devices.delete(device.id);
+
+    if (hub.activeDeviceId === device.id) {
+      // Keep it as a "ghost" so controllers can show its name and offer Continue here later.
+      const since = this.now();
+      hub.ghost = { id: device.id, name: device.name, type: device.type, since, unreachable: false };
+      if (hub.state) {
+        // The music stopped when the device vanished: freeze the position at that moment.
+        hub.state.positionMs = this.positionAt(hub.state, since);
+        hub.state.positionAtMs = since;
+        hub.state.playing = false;
+      }
+      this.broadcastState(hub);
+    }
+    if (hub.pending?.toDeviceId === device.id) hub.pending = null;
+    this.broadcastDevices(hub);
+    if (hub.devices.size === 0) hub.emptySince = this.now();
+  }
+
+  private applyReport(userId: number, hub: UserHub, r: StateReport): void {
+    if (r.queueIds) {
+      const changed = r.queueIds.length !== hub.queueIds.length || r.queueIds.some((id, i) => id !== hub.queueIds[i]);
+      if (changed) {
+        hub.queueIds = r.queueIds;
+        hub.queueVersion++;
+      }
+    }
+    const index = Math.min(r.index, Math.max(0, hub.queueIds.length - 1));
+    const songId = hub.queueIds[index];
+    let song: Record<string, unknown> | null = null;
+    let durationMs: number | null = null;
+    if (songId !== undefined) {
+      const resolved = this.resolveSongs(userId, [songId])[0];
+      song = resolved?.json ?? null;
+      durationMs = resolved?.durationMs ?? null;
+    }
+    hub.state = {
+      playing: r.playing,
+      index,
+      positionMs: r.positionMs,
+      positionAtMs: this.now(),
+      repeat: r.repeat,
+      shuffle: r.shuffle,
+      counted: r.counted,
+      queueVersion: hub.queueVersion,
+      durationMs,
+      song,
+    };
+  }
+
+  private completeTransfer(hub: UserHub): void {
+    const pending = hub.pending;
+    hub.pending = null;
+    const target = pending ? hub.devices.get(pending.toDeviceId) : undefined;
+    if (!pending || !target || !hub.state) return;
+
+    const now = this.now();
+    const s = hub.state;
+    // A playing state is extrapolated to now; a frozen one (device vanished, or it paused) is used as is.
+    const positionMs = s.playing ? this.positionAt(s, now) : s.positionMs;
+
+    hub.activeDeviceId = target.id;
+    hub.ghost = null;
+    s.playing = false; // nobody is playing until the target reports
+    s.positionMs = positionMs;
+    s.positionAtMs = now;
+
+    this.emit(target, {
+      name: 'load',
+      data: {
+        queueVersion: hub.queueVersion,
+        index: s.index,
+        positionMs,
+        play: pending.play,
+        counted: s.counted,
+      },
+    });
+    this.broadcastDevices(hub);
+    this.broadcastState(hub);
+  }
+
+  private positionAt(s: StoredState, atMs: number): number {
+    const raw = s.playing ? s.positionMs + Math.max(0, atMs - s.positionAtMs) : s.positionMs;
+    return s.durationMs != null ? Math.min(raw, s.durationMs) : raw;
+  }
+
+  private allow(hub: UserHub, bucket: Bucket): boolean {
+    const { max, windowMs } = LIMITS[bucket];
+    const now = this.now();
+    const hits = hub.hits[bucket];
+    while (hits.length && now - hits[0] >= windowMs) hits.shift();
+    if (hits.length >= max) return false;
+    hits.push(now);
+    return true;
+  }
+
+  private publicState(hub: UserHub): PublicState | null {
+    if (!hub.state || !hub.activeDeviceId) return null;
+    const s = hub.state;
+    return {
+      activeDeviceId: hub.activeDeviceId,
+      playing: s.playing,
+      song: s.song,
+      index: s.index,
+      queueLength: hub.queueIds.length,
+      queueVersion: s.queueVersion,
+      positionMs: s.positionMs,
+      positionAtMs: s.positionAtMs,
+      durationMs: s.durationMs,
+      repeat: s.repeat,
+      shuffle: s.shuffle,
+      counted: s.counted,
+    };
+  }
+
+  private deviceList(hub: UserHub): DeviceInfo[] {
+    const list: DeviceInfo[] = [...hub.devices.values()].map((d) => ({
+      id: d.id,
+      name: d.name,
+      type: d.type,
+      online: true,
+      unreachable: false,
+      active: hub.activeDeviceId === d.id,
+    }));
+    if (hub.ghost) {
+      list.push({
+        id: hub.ghost.id,
+        name: hub.ghost.name,
+        type: hub.ghost.type,
+        online: false,
+        unreachable: hub.ghost.unreachable,
+        active: hub.activeDeviceId === hub.ghost.id,
+      });
+    }
+    return list;
+  }
+
+  private broadcastDevices(hub: UserHub, exceptDeviceId?: string): void {
+    const data = { devices: this.deviceList(hub), activeDeviceId: hub.activeDeviceId };
+    for (const d of hub.devices.values()) {
+      if (d.id !== exceptDeviceId) this.emit(d, { name: 'devices', data });
+    }
+  }
+
+  private broadcastState(hub: UserHub, exceptDeviceId?: string): void {
+    const state = this.publicState(hub);
+    if (!state) return;
+    for (const d of hub.devices.values()) {
+      if (d.id !== exceptDeviceId) this.emit(d, { name: 'state', data: state });
+    }
+  }
+
+  private emit(device: Device, event: ConnectEvent): void {
+    const seq = ++device.seq;
+    if (device.transport === 'stream') {
+      try {
+        device.sink?.send(seq, event);
+      } catch {
+        // A broken pipe is handled by the stream's own close event.
+      }
+      return;
+    }
+    device.buffer.push({ seq, event });
+    if (device.buffer.length > POLL_BUFFER) device.buffer.shift();
+    device.wake?.();
+  }
+}

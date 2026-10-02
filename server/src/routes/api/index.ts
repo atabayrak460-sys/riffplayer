@@ -12,6 +12,7 @@ import { recommendationsPlugin } from './recommendations.js';
 import { historyPlugin } from './history.js';
 import { librarySidebarPlugin } from './librarySidebar.js';
 import { systemViewsPlugin } from './systemViews.js';
+import { connectPlugin } from './connect.js';
 
 // ── Plugin ────────────────────────────────────────────────────────────────────
 // Each area of the custom REST API lives in its own file (auth, me, admin/*,
@@ -46,6 +47,12 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
     lib.addHook('preHandler', apiAuth);
     lib.register(librarySidebarPlugin);
   }, { prefix: '/library-sidebar' });
+
+  // RiffPlayer Connect (multi-device remote control) — all require auth, registered under /connect/*
+  app.register(async (conn) => {
+    conn.addHook('preHandler', apiAuth);
+    conn.register(connectPlugin);
+  }, { prefix: '/connect' });
 
   // Per-user system-view cover + description overrides — all require auth,
   // registered under /system-views/*
