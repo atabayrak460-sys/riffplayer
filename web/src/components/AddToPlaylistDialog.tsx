@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getPlaylists, addSongToPlaylist, createPlaylistWithName } from '../api/subsonic';
+import { getPlaylists, getPlaylist, addSongToPlaylist, createPlaylistWithName } from '../api/subsonic';
+import { useToastStore } from '../store/toast';
+import type { Playlist } from '../api/types';
 import { Modal } from './Modal';
 
 interface Props {
@@ -11,10 +13,20 @@ export function AddToPlaylistDialog({ songId, onClose }: Props) {
   const qc = useQueryClient();
   const { data: playlists = [], isLoading } = useQuery({ queryKey: ['playlists'], queryFn: getPlaylists });
 
+  const showToast = useToastStore((s) => s.show);
+
+  // Subsonic itself allows duplicate entries, so the check lives here: a
+  // song already in the playlist isn't added again, just flagged.
   const addMutation = useMutation({
-    mutationFn: (playlistId: string) => addSongToPlaylist(playlistId, songId),
-    onSuccess: (_data, playlistId) => {
-      qc.invalidateQueries({ queryKey: ['playlist', playlistId] });
+    mutationFn: async (playlist: Playlist) => {
+      const { entry = [] } = await getPlaylist(playlist.id);
+      if (entry.some((s) => s.id === songId)) return false;
+      await addSongToPlaylist(playlist.id, songId);
+      return true;
+    },
+    onSuccess: (added, playlist) => {
+      if (added) qc.invalidateQueries({ queryKey: ['playlist', playlist.id] });
+      else showToast(`Already in "${playlist.name}"`);
       onClose();
     },
   });
@@ -61,7 +73,7 @@ export function AddToPlaylistDialog({ songId, onClose }: Props) {
           playlists.map((pl) => (
             <button
               key={pl.id}
-              onClick={() => addMutation.mutate(pl.id)}
+              onClick={() => addMutation.mutate(pl)}
               disabled={busy}
               className="w-full text-left px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700 rounded-md truncate disabled:opacity-50 transition-colors"
             >

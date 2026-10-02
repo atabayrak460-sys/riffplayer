@@ -5,12 +5,17 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AddToPlaylistDialog } from './AddToPlaylistDialog';
 import * as subsonic from '../api/subsonic';
+import { useToastStore } from '../store/toast';
+import type { Song } from '../api/types';
 
 const EXISTING_PLAYLIST = { id: 'p-1', name: 'My Playlist', owner: 'admin', songCount: 0, duration: 0, public: false, created: '2024-01-01', changed: '2024-01-01' };
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   vi.spyOn(subsonic, 'getPlaylists').mockResolvedValue([EXISTING_PLAYLIST]);
+  vi.spyOn(subsonic, 'getPlaylist').mockResolvedValue({ ...EXISTING_PLAYLIST, entry: [] });
   vi.spyOn(subsonic, 'addSongToPlaylist').mockResolvedValue(undefined);
+  useToastStore.setState({ message: null });
   vi.spyOn(subsonic, 'createPlaylistWithName').mockResolvedValue({ ...EXISTING_PLAYLIST, id: 'p-2', name: 'New Playlist 2' });
 });
 
@@ -54,5 +59,31 @@ describe('AddToPlaylistDialog', () => {
     expect(subsonic.createPlaylistWithName).toHaveBeenCalledWith('New Playlist 2');
     await waitFor(() => expect(subsonic.addSongToPlaylist).toHaveBeenCalledWith('p-2', 't-1'));
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it('adds the song to an existing playlist that does not contain it yet', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderDialog();
+
+    await user.click(await screen.findByText('My Playlist'));
+
+    await waitFor(() => expect(subsonic.addSongToPlaylist).toHaveBeenCalledWith('p-1', 't-1'));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(useToastStore.getState().message).toBeNull();
+  });
+
+  it('does not add a song that is already in the playlist and shows a toast instead', async () => {
+    vi.spyOn(subsonic, 'getPlaylist').mockResolvedValue({
+      ...EXISTING_PLAYLIST,
+      entry: [{ id: 't-1' } as Song],
+    });
+    const user = userEvent.setup();
+    const { onClose } = renderDialog();
+
+    await user.click(await screen.findByText('My Playlist'));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(subsonic.addSongToPlaylist).not.toHaveBeenCalled();
+    expect(useToastStore.getState().message).toBe('Already in "My Playlist"');
   });
 });
