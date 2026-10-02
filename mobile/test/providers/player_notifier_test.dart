@@ -411,6 +411,42 @@ void main() {
       verifySubmissions(1);
     });
 
+    test('playing the same song again submits a second play', () async {
+      await tick(const Duration(seconds: 31));
+      verifySubmissions(1);
+
+      await notifier.playSong(_song('a'), client, downloads);
+      await tick(const Duration(seconds: 31));
+
+      // mocktail's verify consumes the calls it matched, so this counts
+      // only the new one.
+      verifySubmissions(1);
+    });
+
+    test('repeat-one looping back to the start submits a second play',
+        () async {
+      await setDuration(const Duration(minutes: 3));
+      await tick(const Duration(seconds: 31));
+      await tick(const Duration(minutes: 2, seconds: 59));
+      verifySubmissions(1);
+
+      await tick(const Duration(milliseconds: 100));
+      await tick(const Duration(seconds: 31));
+
+      // mocktail's verify consumes the calls it matched, so this counts
+      // only the new one.
+      verifySubmissions(1);
+    });
+
+    test('seeking back after a submission does not submit again', () async {
+      await setDuration(const Duration(minutes: 3));
+      await tick(const Duration(seconds: 40));
+      await tick(const Duration(seconds: 5));
+      await tick(const Duration(seconds: 40));
+
+      verifySubmissions(1);
+    });
+
     test('position ticks before any song is playing submit nothing', () async {
       final idlePosition = StreamController<Duration>();
       addTearDown(idlePosition.close);

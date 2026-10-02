@@ -122,6 +122,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   SubsonicClient? _scrobbleClient;
   String? _scrobbledSongId;
   String? _nowPlayingSongId;
+  Duration _lastPosition = Duration.zero;
 
   // How many songs "Add to queue" has inserted directly after the current
   // one, in this run — the next addition goes after all of them, so
@@ -200,16 +201,29 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     state = state.copyWith(queue: songs, currentIndex: resolvedIndex);
     _scrobbleClient = client;
     _nowPlayingSongId = song.id;
+    // An explicit play is a new play, even of the song that just finished.
+    _scrobbledSongId = null;
     client.scrobble(song.id, submission: false).ignore();
 
     await _handler.playQueue(sources, resolvedIndex);
   }
 
   void _maybeScrobble(Duration pos) {
+    final previous = _lastPosition;
+    _lastPosition = pos;
+    // Repeat-one restarts the same track without changing the index, so
+    // detect the loop (position jumps from the very end back to the very
+    // start) and count the next pass as a new play. A plain seek backwards
+    // doesn't match this and stays one play.
+    final durationMs = state.duration.inMilliseconds;
+    if (durationMs > 0 &&
+        previous.inMilliseconds >= durationMs - 3000 &&
+        pos.inMilliseconds < 3000) {
+      _scrobbledSongId = null;
+    }
     final song = state.currentSong;
     final client = _scrobbleClient;
     if (song == null || client == null || _scrobbledSongId == song.id) return;
-    final durationMs = state.duration.inMilliseconds;
     final thresholdMs =
         durationMs > 0 ? (durationMs * 0.5).clamp(0, 30000).round() : 30000;
     if (pos.inMilliseconds >= thresholdMs) {
