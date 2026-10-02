@@ -405,6 +405,14 @@ class SubsonicClient {
   Future<void> updateMyPreferences(Map<String, dynamic> prefs) =>
       _apiCall('PATCH', 'users/me/preferences', data: prefs);
 
+  /// Throws a [DioException] with the server's message (e.g. "Current
+  /// password is incorrect") in `e.response?.data['error']` on failure.
+  Future<void> changeMyPassword(String currentPassword, String newPassword) =>
+      _apiCall('PATCH', 'users/me/password', data: {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      });
+
   // ── Admin: users ────────────────────────────────────────────────────────────
 
   Future<List<AdminUser>> adminGetUsers() async {

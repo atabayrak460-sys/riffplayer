@@ -1,8 +1,10 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../api/types.dart';
 import '../providers/providers.dart';
+import '../utils/snackbar.dart';
 
 const _transcodeFormats = [
   (null, 'Original format'),
@@ -78,6 +80,8 @@ class SettingsScreen extends ConsumerWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            const _PasswordSection(),
             const SizedBox(height: 24),
           ],
           meAsync.when(
@@ -127,6 +131,101 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _PasswordSection extends ConsumerStatefulWidget {
+  const _PasswordSection();
+
+  @override
+  ConsumerState<_PasswordSection> createState() => _PasswordSectionState();
+}
+
+class _PasswordSectionState extends ConsumerState<_PasswordSection> {
+  final _currentCtrl = TextEditingController();
+  final _newCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _currentCtrl.dispose();
+    _newCtrl.dispose();
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_currentCtrl.text.isEmpty || _newCtrl.text.isEmpty) {
+      setState(() => _error = 'Fill in all fields.');
+      return;
+    }
+    if (_newCtrl.text != _confirmCtrl.text) {
+      setState(() => _error = "New passwords don't match.");
+      return;
+    }
+    final client = ref.read(apiClientProvider);
+    if (client == null) return;
+    setState(() { _saving = true; _error = null; });
+    try {
+      await client.changeMyPassword(_currentCtrl.text, _newCtrl.text);
+      if (!mounted) return;
+      showSnackBar(context, 'Password changed — please sign in again.');
+      // Changing your own password bumps token_version server-side,
+      // invalidating this session's JWT and Subsonic credentials (now the
+      // old password) immediately — same reasoning as the "Sign out" button
+      // below, which also just clears credentials and lets the router
+      // redirect to the login screen on its own.
+      await ref.read(authProvider.notifier).logout();
+    } on DioException catch (e) {
+      final message = (e.response?.data is Map)
+          ? (e.response?.data as Map)['error'] as String?
+          : null;
+      if (mounted) setState(() => _error = message ?? 'Failed to change password.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionLabel('Password'),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _currentCtrl,
+          obscureText: true,
+          autofillHints: const [AutofillHints.password],
+          decoration: const InputDecoration(hintText: 'Current password'),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _newCtrl,
+          obscureText: true,
+          autofillHints: const [AutofillHints.newPassword],
+          decoration: const InputDecoration(hintText: 'New password'),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _confirmCtrl,
+          obscureText: true,
+          autofillHints: const [AutofillHints.newPassword],
+          decoration: const InputDecoration(hintText: 'Confirm new password'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          onPressed: _saving ? null : _submit,
+          child: Text(_saving ? 'Changing…' : 'Change password'),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+        ],
+      ],
     );
   }
 }
