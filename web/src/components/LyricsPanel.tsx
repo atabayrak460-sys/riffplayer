@@ -5,9 +5,13 @@ import { usePlayerStore } from '../store/player';
 
 interface Props {
   onClose: () => void;
+  /** Renders to fill its parent instead of as its own fixed floating panel —
+   *  used when hosted inside the full-screen expanded player, which already
+   *  provides its own fixed/full-screen chrome and backdrop. */
+  embedded?: boolean;
 }
 
-export function LyricsPanel({ onClose }: Props) {
+export function LyricsPanel({ onClose, embedded = false }: Props) {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const currentTime = usePlayerStore((s) => s.currentTime);
   const activeLyricRef = useRef<HTMLParagraphElement>(null);
@@ -36,10 +40,9 @@ export function LyricsPanel({ onClose }: Props) {
     }
   }, [activeIdx, autoScroll]);
 
-  return (
-    <div className="fixed inset-x-0 bottom-20 top-0 z-10 flex items-end justify-center pointer-events-none">
+  const panel = (
       <div
-        className="pointer-events-auto w-full max-w-lg h-full bg-zinc-950/95 backdrop-blur-md flex flex-col shadow-2xl border-l border-zinc-800"
+        className={`pointer-events-auto w-full h-full bg-zinc-950/95 backdrop-blur-md flex flex-col ${embedded ? '' : 'max-w-lg shadow-2xl border-l border-zinc-800'}`}
         onWheel={() => setAutoScroll(false)}
       >
         {/* Header */}
@@ -57,11 +60,13 @@ export function LyricsPanel({ onClose }: Props) {
                 Auto-scroll
               </button>
             )}
-            <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-              </svg>
-            </button>
+            {!embedded && (
+              <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
@@ -98,6 +103,13 @@ export function LyricsPanel({ onClose }: Props) {
             })}
         </div>
       </div>
+  );
+
+  if (embedded) return panel;
+
+  return (
+    <div className="fixed inset-x-0 bottom-20 top-0 z-10 flex items-end justify-center pointer-events-none">
+      {panel}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
@@ -32,6 +32,8 @@ function formatTime(s: number) {
 
 export function PlayerBar() {
   const currentSong = usePlayerStore((s) => s.currentSong);
+  const queue = usePlayerStore((s) => s.queue);
+  const queueIndex = usePlayerStore((s) => s.queueIndex);
   const playing = usePlayerStore((s) => s.playing);
   const currentTime = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
@@ -58,10 +60,21 @@ export function PlayerBar() {
   const [showLyrics, setShowLyrics] = useState(false);
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
-  // Mobile only (#22): the compact bar expands into this sheet for the
-  // full transport controls, rather than trying to cram the desktop bar's
-  // 3 fixed-width columns into a phone-width footer.
+  // Originally the mobile compact bar's own expansion target (#22); now a
+  // full-screen "now playing" takeover reachable from either bar's cover
+  // art, on any screen size.
   const [mobileExpanded, setMobileExpanded] = useState(false);
+
+  // No backdrop to click away to once this fills the whole screen — Escape
+  // is the other standard way out, same as Modal.tsx's dialogs.
+  useEffect(() => {
+    if (!mobileExpanded) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileExpanded(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileExpanded]);
 
   if (!currentSong) {
     return (
@@ -70,6 +83,9 @@ export function PlayerBar() {
       </footer>
     );
   }
+
+  const prevSong = queueIndex > 0 ? queue[queueIndex - 1] : null;
+  const nextSong = queueIndex >= 0 && queueIndex < queue.length - 1 ? queue[queueIndex + 1] : null;
 
   const menuItems: ContextMenuItem[] = [
     { label: 'Play next', icon: ICONS.playNext, onClick: () => playNext(currentSong) },
@@ -154,6 +170,12 @@ export function PlayerBar() {
     </div>
   );
 
+  // WebKit has no equivalent of Firefox's ::-moz-range-progress, so the
+  // "played" portion of the custom-styled track (see index.css) is drawn
+  // here instead, as a gradient on the input's own background.
+  const seekPct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const volumePct = volume * 100;
+
   const seekBar = (
     <div className="w-full flex items-center gap-2">
       <span className="text-xs text-zinc-400 w-8 text-right tabular-nums">{formatTime(currentTime)}</span>
@@ -165,15 +187,37 @@ export function PlayerBar() {
         step={0.5}
         value={currentTime}
         onChange={(e) => seek(Number(e.target.value))}
-        className="flex-1 h-1 accent-brand cursor-pointer"
+        style={{ background: `linear-gradient(to right, #a78bfa ${seekPct}%, #3f3f46 ${seekPct}%)` }}
+        className="flex-1 cursor-pointer"
       />
       <span className="text-xs text-zinc-400 w-8 tabular-nums">{formatTime(duration)}</span>
     </div>
   );
 
+  const volumeSlider = (
+    <div className="flex items-center gap-2">
+      <svg className="w-4 h-4 text-zinc-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+      </svg>
+      <input
+        type="range"
+        aria-label="Volume"
+        min={0}
+        max={1}
+        step={0.02}
+        value={volume}
+        onChange={(e) => setVolume(Number(e.target.value))}
+        style={{ background: `linear-gradient(to right, #a78bfa ${volumePct}%, #3f3f46 ${volumePct}%)` }}
+        className="w-20 cursor-pointer"
+      />
+    </div>
+  );
+
   return (
     <>
-      {showLyrics && <LyricsPanel onClose={() => setShowLyrics(false)} />}
+      {/* Suppressed while the full-screen expanded player is open — it hosts
+          its own embedded lyrics view instead of this floating one. */}
+      {showLyrics && !mobileExpanded && <LyricsPanel onClose={() => setShowLyrics(false)} />}
       <ContextMenu menu={menu} onClose={close} />
       {showAddToPlaylist && (
         <AddToPlaylistDialog songId={currentSong.id} onClose={() => setShowAddToPlaylist(false)} />
@@ -184,12 +228,21 @@ export function PlayerBar() {
       <footer className="hidden md:flex h-20 border-t border-zinc-800 bg-zinc-950 items-center px-4 gap-4 relative z-20">
         {/* Left: now playing info */}
         <div className="flex items-center gap-3 w-64 min-w-0 flex-shrink-0">
-          <CoverArt
-            id={currentSong.coverArt}
-            size={56}
-            className="w-14 h-14 rounded flex-shrink-0"
-            alt={currentSong.title}
-          />
+          <button onClick={() => setMobileExpanded(true)} title="Expand" className="relative flex-shrink-0 group">
+            <CoverArt
+              id={currentSong.coverArt}
+              size={56}
+              className="w-14 h-14 rounded flex-shrink-0"
+              alt={currentSong.title}
+            />
+            {/* Hover-only affordance — without it, nothing about the small
+                cover suggested it was clickable until you tried. */}
+            <div className="absolute inset-0 rounded flex items-center justify-center bg-black/0 group-hover:bg-black/50 transition-colors">
+              <svg className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+              </svg>
+            </div>
+          </button>
           <div className="min-w-0">
             <Link
               to={`/albums/${currentSong.albumId}`}
@@ -230,18 +283,7 @@ export function PlayerBar() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h10M4 18h7" />
             </svg>
           </Link>
-          <svg className="w-4 h-4 text-zinc-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
-          </svg>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.02}
-            value={volume}
-            onChange={(e) => setVolume(Number(e.target.value))}
-            className="w-20 h-1 accent-brand cursor-pointer"
-          />
+          {volumeSlider}
         </div>
       </footer>
 
@@ -288,48 +330,92 @@ export function PlayerBar() {
         </div>
       </footer>
 
-      {/* Mobile expanded sheet (#22) — full controls; no volume slider, mobile
-          relies on hardware volume keys (same call as #69's mobile decision). */}
+      {/* Expanded player — full-screen "now playing" takeover, reachable by
+          clicking either bar's cover art. Closes via the explicit button
+          top-right or Escape (see the effect above) rather than an
+          outside-click, since once it fills the whole screen there's no
+          "outside" left. Shows a big current cover with the previous/next
+          tracks peeking in on either side, clickable to jump directly to
+          them; toggling Lyrics swaps that cover/title block for an embedded,
+          scrollable lyrics view without leaving this screen. */}
       {mobileExpanded && (
-        <div
-          data-testid="mobile-expanded-sheet"
-          className="md:hidden fixed inset-0 bg-black/60 z-50"
-          onClick={() => setMobileExpanded(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-800 rounded-t-2xl p-4 pb-[calc(env(safe-area-inset-bottom)+16px)]"
-          >
-            <div className="w-10 h-1 bg-zinc-600 rounded-full mx-auto mb-4" />
-            <div className="flex items-center gap-3 mb-4">
-              <CoverArt
-                id={currentSong.coverArt}
-                size={56}
-                className="w-14 h-14 rounded flex-shrink-0"
-                alt={currentSong.title}
-              />
-              <div className="min-w-0 flex-1">
-                <Link
-                  to={`/albums/${currentSong.albumId}`}
-                  onClick={() => setMobileExpanded(false)}
-                  className="text-sm font-medium text-white line-clamp-1 block"
-                >
-                  {currentSong.title}
-                </Link>
-                <Link
-                  to={`/artists/${currentSong.artistId}`}
-                  onClick={() => setMobileExpanded(false)}
-                  className="text-xs text-zinc-400 line-clamp-1 block"
-                >
-                  {currentSong.artist}
-                </Link>
-              </div>
-              <StarButton starred={!!currentSong.starred} opts={{ id: currentSong.id }} />
-              {moreOptionsButton}
-            </div>
+        <div data-testid="mobile-expanded-sheet" className="fixed inset-0 bg-zinc-950 z-50 flex flex-col">
+          <div className="flex items-center justify-end px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-2 flex-shrink-0">
+            <button onClick={() => setMobileExpanded(false)} title="Close" className="text-zinc-400 hover:text-white transition-colors">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
 
+          <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-4 overflow-hidden">
+            {showLyrics ? (
+              <div className="w-full h-full max-w-lg">
+                <LyricsPanel embedded onClose={() => setShowLyrics(false)} />
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-center gap-3 mb-4">
+                  {prevSong ? (
+                    <button onClick={prev} title={`Previous: ${prevSong.title}`} className="flex-shrink-0 opacity-40 hover:opacity-70 transition-opacity">
+                      <CoverArt id={prevSong.coverArt} size={120} className="w-16 h-16 rounded-lg object-cover" alt={prevSong.title} />
+                    </button>
+                  ) : (
+                    <div className="w-16 flex-shrink-0" />
+                  )}
+                  <CoverArt
+                    id={currentSong.coverArt}
+                    size={480}
+                    className="w-48 h-48 sm:w-72 sm:h-72 rounded-xl flex-shrink-0 shadow-xl object-cover"
+                    alt={currentSong.title}
+                  />
+                  {nextSong ? (
+                    <button onClick={next} title={`Next: ${nextSong.title}`} className="flex-shrink-0 opacity-40 hover:opacity-70 transition-opacity">
+                      <CoverArt id={nextSong.coverArt} size={120} className="w-16 h-16 rounded-lg object-cover" alt={nextSong.title} />
+                    </button>
+                  ) : (
+                    <div className="w-16 flex-shrink-0" />
+                  )}
+                </div>
+
+                {/* Centered on the row as a whole, not just the space left
+                    over after the star/menu buttons — those are overlaid on
+                    top via absolute positioning instead of sharing the flex
+                    row, which had been pushing the "centered" text left of
+                    true center. */}
+                <div className="relative flex items-center justify-center w-full max-w-sm">
+                  <div className="min-w-0 text-center px-14">
+                    <Link
+                      to={`/albums/${currentSong.albumId}`}
+                      onClick={() => setMobileExpanded(false)}
+                      className="text-base font-semibold text-white line-clamp-1 block"
+                    >
+                      {currentSong.title}
+                    </Link>
+                    <Link
+                      to={`/artists/${currentSong.artistId}`}
+                      onClick={() => setMobileExpanded(false)}
+                      className="text-sm text-zinc-400 line-clamp-1 block"
+                    >
+                      {currentSong.artist}
+                    </Link>
+                  </div>
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                    <StarButton starred={!!currentSong.starred} opts={{ id: currentSong.id }} />
+                    {moreOptionsButton}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="flex-shrink-0 w-full max-w-lg mx-auto px-4 pb-[calc(env(safe-area-inset-bottom)+16px)]">
             {seekBar}
             <div className="flex justify-center mt-3 mb-1">{transportControls}</div>
+            {/* No hardware volume keys on a browser tab the way mobile has —
+                this view opens on desktop too now, so unlike the old
+                mobile-only sheet it needs its own volume control. */}
+            <div className="flex justify-center mt-2">{volumeSlider}</div>
 
             <div className="flex items-center justify-center gap-8 mt-3 pt-3 border-t border-zinc-800">
               <button
