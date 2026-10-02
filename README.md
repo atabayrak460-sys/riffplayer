@@ -21,7 +21,7 @@ A self-hosted music server with a polished first-party web client, an Android ap
 ## Features
 
 ### Server
-- **Subsonic / OpenSubsonic API** — drop-in replacement for Navidrome, Airsonic, etc.; any Subsonic client works unchanged
+- **Subsonic / OpenSubsonic API** — speaks the same API as Navidrome and Airsonic, so existing Subsonic clients are expected to work (see [compatibility](#subsonic-client-setup))
 - **Library indexing** — walks your music folder, reads tags via `music-metadata`, upserts artists/albums/tracks into SQLite; re-scans skip unchanged files
 - **Streaming** — serves originals or transcodes on the fly with ffmpeg (MP3, AAC, Opus, OGG, FLAC); HTTP range requests for seeking
 - **Per-user transcode settings** — each user can set a preferred format and bitrate cap (useful for mobile data)
@@ -91,6 +91,8 @@ volumes:
 Then:
 
 ```bash
+# Pull the newest image first — Docker reuses a locally cached `latest` otherwise
+docker compose pull
 docker compose up -d
 
 # Find the generated admin password (skip this if you set RIFFPLAYER_ADMIN_PASSWORD):
@@ -263,7 +265,7 @@ The Flutter app (Android) lives in [`mobile/`](mobile/README.md). It supports ba
   - Both are on by default and can be switched off separately under **Admin → Settings → External metadata lookups**.
   - **Last.fm / ListenBrainz** scrobbling and **Last.fm recommendations** — off until you configure them.
   - AI features run locally through Ollama; nothing is sent anywhere.
-- **Subsonic compatible.** Existing Subsonic and OpenSubsonic clients keep working; RiffPlayer's own extras live on a separate API.
+- **Subsonic compatible.** Built to work with existing Subsonic and OpenSubsonic clients; RiffPlayer's own extras live on a separate API, so they never break that.
 
 ## License
 
