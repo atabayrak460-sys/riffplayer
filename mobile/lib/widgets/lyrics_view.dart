@@ -94,17 +94,29 @@ class _LyricsViewState extends ConsumerState<LyricsView> {
             itemCount: lyrics.line.length,
             itemBuilder: (_, i) {
               final isActive = i == activeIndex;
-              final text = lyrics.line[i].value;
-              return Center(
-                child: Text(
-                  text.isEmpty ? ' ' : text,
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: isActive ? Colors.white : const Color(0xFF71717A),
-                    fontSize: isActive ? 17 : 14,
-                    fontWeight: isActive ? FontWeight.w700 : FontWeight.normal,
+              final line = lyrics.line[i];
+              final text = line.value;
+              // Synced lines jump playback to their timestamp on tap.
+              return GestureDetector(
+                key: ValueKey('lyric-line-$i'),
+                behavior: HitTestBehavior.opaque,
+                onTap: lyrics.synced
+                    ? () => ref
+                        .read(playerProvider.notifier)
+                        .seek(Duration(milliseconds: line.start))
+                    : null,
+                child: Center(
+                  child: Text(
+                    text.isEmpty ? ' ' : text,
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isActive ? Colors.white : const Color(0xFF71717A),
+                      fontSize: isActive ? 17 : 14,
+                      fontWeight:
+                          isActive ? FontWeight.w700 : FontWeight.normal,
+                    ),
                   ),
                 ),
               );
