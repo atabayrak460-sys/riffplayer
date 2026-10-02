@@ -462,4 +462,80 @@ void main() {
       verifyNever(() => client.scrobble(any(), submission: true));
     });
   });
+  group('now-playing scrobble', () {
+    late StreamController<int?> index;
+    final queue = [_song('a'), _song('b'), _song('c')];
+
+    setUp(() async {
+      index = StreamController<int?>();
+      addTearDown(index.close);
+      when(() => handler.currentIndexStream).thenAnswer((_) => index.stream);
+      notifier = PlayerNotifier(handler);
+      await notifier.playSong(queue[0], client, downloads, queue: queue);
+    });
+
+    Future<void> skipTo(int? i) async {
+      index.add(i);
+      await pumpEventQueue();
+    }
+
+    void verifyNowPlaying(String id, int times) =>
+        verify(() => client.scrobble(id, submission: false)).called(times);
+
+    test('playSong announces the starting song exactly once', () async {
+      await skipTo(0);
+
+      verifyNowPlaying('a', 1);
+    });
+
+    test('skipping to another track announces it', () async {
+      verifyNowPlaying('a', 1);
+
+      await skipTo(1);
+      verifyNowPlaying('b', 1);
+
+      await skipTo(2);
+      verifyNowPlaying('c', 1);
+    });
+
+    test('the index stream repeating the same track does not re-announce',
+        () async {
+      await skipTo(1);
+      await skipTo(1);
+
+      verifyNowPlaying('b', 1);
+    });
+
+    test('an index of null (nothing playing) announces nothing', () async {
+      clearInteractions(client);
+
+      await skipTo(null);
+
+      verifyNever(
+          () => client.scrobble(any(), submission: any(named: 'submission')));
+    });
+
+    test('a skip is only a now-playing ping, never a submission', () async {
+      await skipTo(1);
+
+      verifyNever(() => client.scrobble(any(), submission: true));
+    });
+
+    test('before any playSong there is no client, so nothing is sent',
+        () async {
+      final idleIndex = StreamController<int?>();
+      addTearDown(idleIndex.close);
+      when(() => handler.currentIndexStream)
+          .thenAnswer((_) => idleIndex.stream);
+      final idle = PlayerNotifier(handler);
+      clearInteractions(client);
+
+      idleIndex.add(1);
+      await pumpEventQueue();
+
+      expect(idle.state.currentSong, isNull);
+      verifyNever(
+          () => client.scrobble(any(), submission: any(named: 'submission')));
+    });
+  });
 }
