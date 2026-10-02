@@ -413,6 +413,11 @@ class SubsonicClient {
         'newPassword': newPassword,
       });
 
+  /// Admin-only. Permanently deletes the track's file from disk along with
+  /// its library entry.
+  Future<void> deleteTrack(String songId) =>
+      _apiCall('DELETE', 'admin/tracks/$songId');
+
   // ── Admin: users ────────────────────────────────────────────────────────────
 
   Future<List<AdminUser>> adminGetUsers() async {

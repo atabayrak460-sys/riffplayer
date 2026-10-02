@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import '../api/subsonic.dart';
 import '../api/types.dart';
 import '../providers/providers.dart';
 import '../utils/snackbar.dart';
@@ -61,6 +62,7 @@ class SongTile extends ConsumerWidget {
     final currentSongId =
         ref.watch(playerProvider.select((s) => s.currentSong?.id));
     final isCurrent = currentSongId == song.id;
+    final isAdmin = ref.watch(meProvider).valueOrNull?.isAdmin ?? false;
 
     final tile = ListTile(
       onTap: onTap ?? () => _play(ref),
@@ -142,6 +144,11 @@ class SongTile extends ConsumerWidget {
               if (onRemove != null)
                 const PopupMenuItem(
                     value: 'remove', child: Text('Remove from queue')),
+              if (isAdmin)
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Text('Delete song', style: TextStyle(color: Colors.red)),
+                ),
             ],
             onSelected: (v) => _onMenu(v, context, ref),
           ),
@@ -288,6 +295,39 @@ class SongTile extends ConsumerWidget {
             context: context, builder: (_) => SongInfoDialog(song: song));
       case 'remove':
         onRemove?.call();
+      case 'delete':
+        _confirmDelete(context, client);
+    }
+  }
+
+  Future<void> _confirmDelete(BuildContext context, SubsonicClient client) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete song?'),
+        content: Text(
+            'Permanently delete "${song.title}"? This deletes the file and cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await client.deleteTrack(song.id);
+      // ignore: use_build_context_synchronously
+      showSnackBar(context, 'Deleted "${song.title}"');
+    } catch (_) {
+      // ignore: use_build_context_synchronously
+      showFailureSnackBar(context, 'Failed to delete song');
     }
   }
 }
