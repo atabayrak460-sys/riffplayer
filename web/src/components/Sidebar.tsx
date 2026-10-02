@@ -1,10 +1,13 @@
+import { useRef } from 'react';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
+import { usePanelSizesStore, SIDEBAR_MIN, SIDEBAR_MAX } from '../store/panelSizes';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   adminGetSettings, getPlaylists, createPlaylistWithName, getLibrarySidebarState,
 } from '../api/subsonic';
 import { SidebarLibraryItem } from './SidebarLibraryItem';
+import { ResizeHandle } from './ResizeHandle';
 import { orderLibraryRows, type LibraryRow } from '../lib/librarySidebarOrder';
 import {
   FavouritesCover, RecentlyPlayedCover, MostPlayedCover, DownloadedCover, DiscoverCover, WrappedCover, AllSongsCover,
@@ -45,6 +48,9 @@ function libraryLinkClass({ isActive }: { isActive: boolean }) {
 export function Sidebar() {
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
+  const sidebarWidth = usePanelSizesStore((s) => s.sidebarWidth);
+  const setSidebarWidth = usePanelSizesStore((s) => s.setSidebarWidth);
+  const asideRef = useRef<HTMLElement>(null);
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data: settings } = useQuery({
@@ -78,7 +84,11 @@ export function Sidebar() {
   const { pinned, dynamic } = orderLibraryRows(libraryRows, sidebarState);
 
   return (
-    <aside className="w-60 flex-shrink-0 flex flex-col bg-zinc-950 border-r border-zinc-800 py-4 overflow-y-auto">
+    <>
+    <aside
+      ref={asideRef}
+      style={{ width: sidebarWidth }}
+      className="flex-shrink-0 flex flex-col bg-zinc-950 border-r border-zinc-800 py-4 overflow-y-auto">
       {/* Logo */}
       <div className="px-5 pb-4 mb-2 border-b border-zinc-800">
         <span className="text-lg font-bold text-brand tracking-tight">RiffPlayer</span>
@@ -172,5 +182,10 @@ export function Sidebar() {
         </button>
       </div>
     </aside>
+    <ResizeHandle
+      targetRef={asideRef} width={sidebarWidth} min={SIDEBAR_MIN} max={SIDEBAR_MAX}
+      direction={1} onCommit={setSidebarWidth}
+    />
+    </>
   );
 }
