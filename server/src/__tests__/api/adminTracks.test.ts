@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, access } from 'fs/promises';
+import { mkdtemp, writeFile, access, chmod } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -94,5 +94,42 @@ describe('DELETE /api/v1/admin/tracks/:id', () => {
     const res = await app.inject({ method: 'DELETE', url: `/api/v1/admin/tracks/${trackId}?${auth}` });
     expect(res.statusCode).toBe(200);
     await expect(access(filePath)).rejects.toThrow();
+  });
+
+  it('still deletes the library entry when the file is already gone from disk', async () => {
+    const db = getDb();
+    const { trackId } = seedLibrary(db);
+    db.prepare('UPDATE tracks SET path = ? WHERE id = ?')
+      .run(join(tmpdir(), 'riffplayer-does-not-exist', 'gone.mp3'), trackId);
+
+    const res = await app.inject({ method: 'DELETE', url: `/api/v1/admin/tracks/${trackId}?${auth}` });
+    expect(res.statusCode).toBe(200);
+    expect(db.prepare('SELECT id FROM tracks WHERE id = ?').get(trackId)).toBeUndefined();
+  });
+
+  it('changes nothing when the file cannot be deleted (read-only music folder)', async () => {
+    // Regression: the row (and its play history) used to be deleted first and
+    // the file removal was best-effort, so on a read-only `/music` mount the
+    // song came back on the next scan with its history gone.
+    const db = getDb();
+    const dir = await mkdtemp(join(tmpdir(), 'riffplayer-track-delete-ro-'));
+    const filePath = join(dir, 'song.mp3');
+    await writeFile(filePath, 'fake audio data');
+    await chmod(dir, 0o555);
+
+    const { trackId } = seedLibrary(db);
+    db.prepare('UPDATE tracks SET path = ? WHERE id = ?').run(filePath, trackId);
+    db.prepare("INSERT INTO play_history (user_id, track_id, client) VALUES (1, ?, 'test')").run(trackId);
+
+    try {
+      const res = await app.inject({ method: 'DELETE', url: `/api/v1/admin/tracks/${trackId}?${auth}` });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatch(/read-only/);
+      await expect(access(filePath)).resolves.toBeUndefined();
+      expect(db.prepare('SELECT id FROM tracks WHERE id = ?').get(trackId)).toBeDefined();
+      expect(db.prepare('SELECT id FROM play_history WHERE track_id = ?').get(trackId)).toBeDefined();
+    } finally {
+      await chmod(dir, 0o755);
+    }
   });
 });
