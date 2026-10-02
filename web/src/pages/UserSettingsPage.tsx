@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { patchMyPreferences } from '../api/subsonic';
+import { patchMyPreferences, changeMyPassword } from '../api/subsonic';
 import { useAuthStore } from '../store/auth';
 import { useDownloadsStore, type DownloadTarget } from '../store/downloads';
 
@@ -64,12 +64,41 @@ export function UserSettingsPage() {
 
 export function AccountSettingsPanel() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
   const { data, isLoading } = useQuery({ queryKey: ['user-me'], queryFn: fetchMe });
   const mut = useMutation({
     mutationFn: patchMyPreferences,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['user-me'] }),
   });
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordMismatch, setPasswordMismatch] = useState(false);
+  const passwordMut = useMutation({
+    mutationFn: () => changeMyPassword(currentPassword, newPassword),
+    onSuccess: () => {
+      // Changing your own password bumps token_version server-side, which
+      // invalidates this session's JWT (and the Subsonic credentials cached
+      // here, since they're now the old password) immediately — staying
+      // "logged in" past this point would just mean every next request
+      // starts failing with 401s. Send the user to sign in again instead.
+      logout();
+      navigate('/login', { replace: true, state: { message: 'Password changed — sign in with your new password.' } });
+    },
+  });
+
+  const submitPasswordChange = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordMismatch(false);
+    if (newPassword !== confirmPassword) {
+      setPasswordMismatch(true);
+      return;
+    }
+    passwordMut.mutate();
+  };
 
   const defaultTarget = useDownloadsStore((s) => s.defaultTarget);
   const setDefaultTarget = useDownloadsStore((s) => s.setDefaultTarget);
@@ -95,6 +124,50 @@ export function AccountSettingsPanel() {
   return (
     <div className="max-w-lg space-y-8">
       <p className="text-sm text-zinc-400 -mt-2">Signed in as {user?.username}</p>
+
+      <section>
+        <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">Password</h2>
+        <form onSubmit={submitPasswordChange} className="space-y-3">
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            placeholder="Current password"
+            autoComplete="current-password"
+            required
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+          />
+          <input
+            type="password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            placeholder="New password"
+            autoComplete="new-password"
+            required
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+          />
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Confirm new password"
+            autoComplete="new-password"
+            required
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand"
+          />
+          {passwordMismatch && <p className="text-red-400 text-sm">New passwords don't match.</p>}
+          {passwordMut.isError && (
+            <p className="text-red-400 text-sm">{(passwordMut.error as Error).message}</p>
+          )}
+          <button
+            type="submit"
+            disabled={passwordMut.isPending}
+            className="bg-brand hover:bg-brand-dim disabled:opacity-60 text-white text-sm px-4 py-2 rounded-lg transition-colors"
+          >
+            {passwordMut.isPending ? 'Changing…' : 'Change password'}
+          </button>
+        </form>
+      </section>
 
       <section>
         <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">Transcoding</h2>

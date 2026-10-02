@@ -441,6 +441,11 @@ export async function patchMyPreferences(prefs: Record<string, unknown>): Promis
   await apiCall('PATCH', 'users/me/preferences', prefs);
 }
 
+/** Throws with the server's message (e.g. "Current password is incorrect") on failure. */
+export async function changeMyPassword(currentPassword: string, newPassword: string): Promise<void> {
+  await apiCall('PATCH', 'users/me/password', { currentPassword, newPassword });
+}
+
 // ── Lyrics ────────────────────────────────────────────────────────────────────
 
 // ── Recommendations & Wrapped ─────────────────────────────────────────────────

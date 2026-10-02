@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 
 export function LoginPage() {
@@ -10,6 +10,9 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const login = useAuthStore((s) => s.login);
   const navigate = useNavigate();
+  // Set by AccountSettingsPanel after a self-service password change, which
+  // invalidates the session that got redirected here.
+  const infoMessage = (useLocation().state as { message?: string } | null)?.message;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +34,10 @@ export function LoginPage() {
         <h1 className="text-3xl font-bold text-white text-center mb-8 tracking-tight">
           <span className="text-brand">RiffPlayer</span>
         </h1>
+
+        {infoMessage && (
+          <p className="text-sm text-brand bg-brand/10 px-3 py-2 rounded-lg mb-4 text-center">{infoMessage}</p>
+        )}
 
         <form onSubmit={submit} className="bg-zinc-800/60 rounded-xl p-6 space-y-4 border border-zinc-700/50">
           <div>
