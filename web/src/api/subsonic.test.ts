@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   setCredentials, addSongToPlaylist, renamePlaylist, setPlaylistDescription,
-  createPlaylistWithName, getAllSongs,
+  createPlaylistWithName, getAllSongs, setJwt, clearCredentials,
+  changeMyPassword, adminDeleteTrack,
 } from './subsonic';
 
 function mockOkResponse(payload: Record<string, unknown> = { status: 'ok', searchResult3: { song: [] } }) {
@@ -87,5 +88,92 @@ describe('getAllSongs', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOkResponse({ status: 'ok', searchResult3: {} })));
     const songs = await getAllSongs(0, 100);
     expect(songs).toEqual([]);
+  });
+});
+
+function lastCall() {
+  const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1) as [string, RequestInit];
+  return { url, init };
+}
+
+describe('REST /api/v1 calls (changeMyPassword, adminDeleteTrack)', () => {
+  beforeEach(() => {
+    setJwt('jwt-token');
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => ({}) } as Response);
+  });
+
+  it('changeMyPassword PATCHes users/me/password with a JSON body and the bearer token', async () => {
+    await changeMyPassword('old-pw', 'new-pw');
+
+    const { url, init } = lastCall();
+    expect(url).toBe('http://localhost:4533/api/v1/users/me/password');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({ currentPassword: 'old-pw', newPassword: 'new-pw' });
+    expect(init.headers).toMatchObject({
+      Authorization: 'Bearer jwt-token',
+      'Content-Type': 'application/json',
+    });
+  });
+
+  it('adminDeleteTrack DELETEs admin/tracks/:id without a body', async () => {
+    await adminDeleteTrack('tr-9');
+
+    const { url, init } = lastCall();
+    expect(url).toBe('http://localhost:4533/api/v1/admin/tracks/tr-9');
+    expect(init.method).toBe('DELETE');
+    expect(init.body).toBeUndefined();
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined();
+  });
+
+  it('sends no Authorization header when there is no JWT', async () => {
+    setJwt(null);
+    await adminDeleteTrack('tr-9');
+
+    expect((lastCall().init.headers as Record<string, string>).Authorization).toBeUndefined();
+  });
+
+  it('does not double the slash when the server URL ends with one', async () => {
+    setCredentials({ serverUrl: 'http://localhost:4533/', username: 'admin', password: 'admin' });
+    await adminDeleteTrack('tr-9');
+
+    expect(lastCall().url).toBe('http://localhost:4533/api/v1/admin/tracks/tr-9');
+  });
+
+  it('surfaces the server\'s error message (e.g. the 409 for a read-only folder)', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: 'Music folder is read-only' }),
+    } as Response);
+
+    await expect(adminDeleteTrack('tr-9')).rejects.toThrow('Music folder is read-only');
+  });
+
+  it('surfaces "Current password is incorrect" from a failed password change', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'Current password is incorrect' }),
+    } as Response);
+
+    await expect(changeMyPassword('bad', 'new-pw')).rejects.toThrow('Current password is incorrect');
+  });
+
+  it('falls back to "HTTP <status>" when the error body is not JSON', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => { throw new SyntaxError('Unexpected token <'); },
+    } as unknown as Response);
+
+    await expect(adminDeleteTrack('tr-9')).rejects.toThrow('HTTP 502');
+  });
+
+  it('throws "Not authenticated" without credentials and never calls fetch', async () => {
+    clearCredentials();
+    vi.mocked(fetch).mockClear();
+
+    await expect(changeMyPassword('a', 'b')).rejects.toThrow('Not authenticated');
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
