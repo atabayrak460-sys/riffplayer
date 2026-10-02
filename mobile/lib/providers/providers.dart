@@ -124,6 +124,20 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   String? _nowPlayingSongId;
   Duration _lastPosition = Duration.zero;
 
+  // Replay detection that doesn't depend on the position stream. Some players
+  // keep reporting the last position (clamped to the track length) while a
+  // repeat-one loop plays on, so the loop can't always be seen as a position
+  // jump. Instead, after a submission we add up how long playback actually
+  // runs; once that covers the rest of the track plus the threshold into the
+  // next pass, it counts as another play.
+  final DateTime Function() _now;
+  DateTime? _lastTickAt;
+  int _listenedSinceSubmitMs = 0;
+  int _submitPositionMs = 0;
+  // Gaps longer than this between two position ticks (app suspended, stream
+  // stalled) are not counted as listening time.
+  static const _maxTickGapMs = 1500;
+
   // How many songs "Add to queue" has inserted directly after the current
   // one, in this run — the next addition goes after all of them, so
   // queueing A then B plays A before B instead of each jumping to right
@@ -145,7 +159,9 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     return result;
   }
 
-  PlayerNotifier(this._handler) : super(const PlayerState()) {
+  PlayerNotifier(this._handler, {DateTime Function()? now})
+      : _now = now ?? DateTime.now,
+        super(const PlayerState()) {
     _handler.positionStream.listen((pos) {
       state = state.copyWith(position: pos);
       _maybeScrobble(pos);
@@ -159,6 +175,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     _handler.currentIndexStream.listen((idx) {
       state = state.copyWith(currentIndex: idx ?? -1);
       _queuedCount = 0;
+      _listenedSinceSubmitMs = 0;
       // Skipping (next/previous/tap-in-queue) changes the track without going
       // through playSong() — send its "now playing" scrobble here instead.
       final song = state.currentSong;
@@ -203,6 +220,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     _nowPlayingSongId = song.id;
     // An explicit play is a new play, even of the song that just finished.
     _scrobbledSongId = null;
+    _listenedSinceSubmitMs = 0;
     client.scrobble(song.id, submission: false).ignore();
 
     await _handler.playQueue(sources, resolvedIndex);
@@ -211,6 +229,18 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   void _maybeScrobble(Duration pos) {
     final previous = _lastPosition;
     _lastPosition = pos;
+
+    // Wall-clock time since the previous tick, counted as listening only while
+    // playing and only when the gap is plausible.
+    final tickAt = _now();
+    final gapMs = _lastTickAt == null
+        ? 0
+        : tickAt.difference(_lastTickAt!).inMilliseconds;
+    _lastTickAt = tickAt;
+    if (state.playing && gapMs > 0 && gapMs <= _maxTickGapMs) {
+      _listenedSinceSubmitMs += gapMs;
+    }
+
     // Repeat-one restarts the same track without changing the index, so
     // detect the loop (position jumps from the very end back to the very
     // start) and count the next pass as a new play. A plain seek backwards
@@ -223,11 +253,28 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     }
     final song = state.currentSong;
     final client = _scrobbleClient;
-    if (song == null || client == null || _scrobbledSongId == song.id) return;
+    if (song == null || client == null) return;
     final thresholdMs =
         durationMs > 0 ? (durationMs * 0.5).clamp(0, 30000).round() : 30000;
+
+    if (_scrobbledSongId == song.id) {
+      // Already counted this pass. Count another one if playback has run for
+      // the remainder of the track plus the threshold into the next pass.
+      if (durationMs > 0 &&
+          _listenedSinceSubmitMs >=
+              (durationMs - _submitPositionMs) + thresholdMs) {
+        _listenedSinceSubmitMs = 0;
+        // We are now `thresholdMs` into a pass, whatever the player reports.
+        _submitPositionMs = thresholdMs;
+        client.scrobble(song.id, submission: true).ignore();
+      }
+      return;
+    }
+
     if (pos.inMilliseconds >= thresholdMs) {
       _scrobbledSongId = song.id;
+      _listenedSinceSubmitMs = 0;
+      _submitPositionMs = pos.inMilliseconds;
       client.scrobble(song.id, submission: true).ignore();
     }
   }

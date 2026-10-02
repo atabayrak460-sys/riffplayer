@@ -538,4 +538,115 @@ void main() {
           () => client.scrobble(any(), submission: any(named: 'submission')));
     });
   });
+  group('replay detected by listening time (position never wraps)', () {
+    // Some players keep reporting the last position (clamped to the track
+    // length) for a repeat-one loop instead of jumping back to 0, so the
+    // loop can't be seen in the position stream. The notifier must then
+    // rely on how long playback has actually been running.
+    late StreamController<Duration> position;
+    late StreamController<Duration?> duration;
+    late StreamController<bool> playing;
+    late DateTime clock;
+    const trackLength = Duration(minutes: 3);
+
+    setUp(() async {
+      position = StreamController<Duration>();
+      duration = StreamController<Duration?>();
+      playing = StreamController<bool>();
+      addTearDown(position.close);
+      addTearDown(duration.close);
+      addTearDown(playing.close);
+      when(() => handler.positionStream).thenAnswer((_) => position.stream);
+      when(() => handler.durationStream).thenAnswer((_) => duration.stream);
+      when(() => handler.playingStream).thenAnswer((_) => playing.stream);
+      clock = DateTime(2026, 1, 1);
+      notifier = PlayerNotifier(handler, now: () => clock);
+      await notifier.playSong(_song('a'), client, downloads);
+      clearInteractions(client);
+      duration.add(trackLength);
+      playing.add(true);
+      await pumpEventQueue();
+    });
+
+    /// Plays [wall] of real time, with the reported position stuck at [pos].
+    Future<void> listen(Duration wall, {required Duration pos}) async {
+      for (var t = Duration.zero;
+          t < wall;
+          t += const Duration(milliseconds: 200)) {
+        clock = clock.add(const Duration(milliseconds: 200));
+        position.add(pos);
+        await pumpEventQueue();
+      }
+    }
+
+    test('counts the next lap after a full track length of listening',
+        () async {
+      position.add(const Duration(seconds: 31));
+      await pumpEventQueue();
+      verify(() => client.scrobble('a', submission: true)).called(1);
+
+      // lap 1 has 149s left, then 30s into lap 2 -> 179s of listening
+      await listen(const Duration(seconds: 178), pos: trackLength);
+      verifyNever(() => client.scrobble(any(), submission: true));
+
+      await listen(const Duration(seconds: 3), pos: trackLength);
+      verify(() => client.scrobble('a', submission: true)).called(1);
+    });
+
+    test('keeps counting one play per further lap, not one per 30 seconds',
+        () async {
+      position.add(const Duration(seconds: 31));
+      await pumpEventQueue();
+      verify(() => client.scrobble('a', submission: true)).called(1);
+
+      await listen(const Duration(seconds: 181), pos: trackLength);
+      verify(() => client.scrobble('a', submission: true)).called(1);
+
+      // next one only a whole track length later
+      await listen(const Duration(seconds: 150), pos: trackLength);
+      verifyNever(() => client.scrobble(any(), submission: true));
+      await listen(const Duration(seconds: 35), pos: trackLength);
+      verify(() => client.scrobble('a', submission: true)).called(1);
+    });
+
+    test('time spent paused does not count', () async {
+      position.add(const Duration(seconds: 31));
+      await pumpEventQueue();
+      verify(() => client.scrobble('a', submission: true)).called(1);
+
+      playing.add(false);
+      await pumpEventQueue();
+      await listen(const Duration(minutes: 10),
+          pos: const Duration(seconds: 31));
+
+      verifyNever(() => client.scrobble(any(), submission: true));
+    });
+
+    test('a long gap between ticks (app in background) does not count',
+        () async {
+      position.add(const Duration(seconds: 31));
+      await pumpEventQueue();
+      verify(() => client.scrobble('a', submission: true)).called(1);
+
+      clock = clock.add(const Duration(minutes: 10));
+      position.add(const Duration(seconds: 32));
+      await pumpEventQueue();
+
+      verifyNever(() => client.scrobble(any(), submission: true));
+    });
+
+    test('skipping forward after the first play does not count another',
+        () async {
+      position.add(const Duration(seconds: 31));
+      await pumpEventQueue();
+      verify(() => client.scrobble('a', submission: true)).called(1);
+
+      position.add(const Duration(minutes: 2, seconds: 50));
+      await pumpEventQueue();
+      await listen(const Duration(seconds: 20),
+          pos: const Duration(minutes: 3));
+
+      verifyNever(() => client.scrobble(any(), submission: true));
+    });
+  });
 }
