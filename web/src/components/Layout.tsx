@@ -5,6 +5,8 @@ import { MobileTopBar } from './MobileTopBar';
 import { MobileNavDrawer } from './MobileNavDrawer';
 import { NowPlayingPanel } from './NowPlayingPanel';
 import { PlayerBar } from './PlayerBar';
+import { LyricsPanel } from './LyricsPanel';
+import { useLyricsViewStore } from '../store/lyrics';
 import { DownloadTargetModal } from './DownloadTargetModal';
 import { Toast } from './Toast';
 import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
@@ -16,6 +18,13 @@ export function Layout() {
   const hydrateDownloads = useDownloadsStore((s) => s.hydrate);
   const location = useLocation();
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const lyricsOpen = useLyricsViewStore((s) => s.open);
+  const closeLyrics = useLyricsViewStore((s) => s.close);
+
+  // Navigating anywhere dismisses the lyrics so the new page is visible.
+  useEffect(() => {
+    closeLyrics();
+  }, [location.pathname, closeLyrics]);
 
   useGlobalShortcuts(setShowShortcutsHelp);
 
@@ -30,7 +39,10 @@ export function Layout() {
         <div className="hidden md:flex">
           <Sidebar />
         </div>
-        <main className="flex-1 overflow-y-auto">
+        {/* Lyrics cover the main content area only — sidebar, Now Playing
+            panel and player bar stay visible and usable around them. */}
+        <div className="flex-1 min-w-0 relative">
+        <main className="h-full overflow-y-auto">
           {/* Keyed on the route so navigating to a new page resets a
               previously-tripped boundary instead of leaving the fallback
               stuck forever — sidebar/player bar stay usable either way. */}
@@ -40,6 +52,8 @@ export function Layout() {
             </Suspense>
           </ErrorBoundary>
         </main>
+        {lyricsOpen && <LyricsPanel onClose={closeLyrics} />}
+        </div>
         <NowPlayingPanel />
       </div>
       <MobileNavDrawer />

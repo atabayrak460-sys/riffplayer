@@ -9,6 +9,7 @@ import { adminDeleteTrack } from '../api/subsonic';
 import { CoverArt } from './CoverArt';
 import { StarButton } from './StarButton';
 import { LyricsPanel } from './LyricsPanel';
+import { useLyricsViewStore } from '../store/lyrics';
 import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { AddToPlaylistDialog } from './AddToPlaylistDialog';
 import { SongInfoDialog } from './SongInfoDialog';
@@ -63,7 +64,9 @@ export function PlayerBar() {
   const { menu, openAt, close } = useContextMenu();
 
   const seekRef = useRef<HTMLInputElement>(null);
-  const [showLyrics, setShowLyrics] = useState(false);
+  const showLyrics = useLyricsViewStore((s) => s.open);
+  const toggleLyrics = useLyricsViewStore((s) => s.toggle);
+  const closeLyrics = useLyricsViewStore((s) => s.close);
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   // Originally the mobile compact bar's own expansion target (#22); now a
@@ -235,9 +238,6 @@ export function PlayerBar() {
 
   return (
     <>
-      {/* Suppressed while the full-screen expanded player is open — it hosts
-          its own embedded lyrics view instead of this floating one. */}
-      {showLyrics && !mobileExpanded && <LyricsPanel onClose={() => setShowLyrics(false)} />}
       <ContextMenu menu={menu} onClose={close} />
       {showAddToPlaylist && (
         <AddToPlaylistDialog songId={currentSong.id} onClose={() => setShowAddToPlaylist(false)} />
@@ -245,7 +245,7 @@ export function PlayerBar() {
       {showInfo && <SongInfoDialog song={currentSong} onClose={() => setShowInfo(false)} />}
 
       {/* Desktop bar — unchanged from before #22, just now gated to md+ */}
-      <footer className="hidden md:flex h-20 border-t border-zinc-800 bg-zinc-950 items-center px-4 gap-4 relative z-20">
+      <footer data-lyrics-keep-open className="hidden md:flex h-20 border-t border-zinc-800 bg-zinc-950 items-center px-4 gap-4 relative z-20">
         {/* Left: now playing info */}
         <div className="flex items-center gap-3 w-64 min-w-0 flex-shrink-0">
           <button onClick={() => setMobileExpanded(true)} title="Expand" className="relative flex-shrink-0 group">
@@ -290,7 +290,7 @@ export function PlayerBar() {
         {/* Right: volume + queue link */}
         <div className="flex items-center gap-3 w-48 justify-end flex-shrink-0">
           <button
-            onClick={() => setShowLyrics((v) => !v)}
+            onClick={toggleLyrics}
             title="Lyrics"
             className={`transition-colors ${showLyrics ? 'text-brand' : 'text-zinc-400 hover:text-white'}`}
           >
@@ -308,7 +308,7 @@ export function PlayerBar() {
       </footer>
 
       {/* Mobile compact bar (#22) — tap the song info to expand full controls below */}
-      <footer data-testid="mobile-compact-bar" className="md:hidden border-t border-zinc-800 bg-zinc-950 relative z-20">
+      <footer data-lyrics-keep-open data-testid="mobile-compact-bar" className="md:hidden border-t border-zinc-800 bg-zinc-950 relative z-20">
         <div className="flex items-center gap-3 px-3 py-2">
           <button
             onClick={() => setMobileExpanded(true)}
@@ -359,7 +359,7 @@ export function PlayerBar() {
           them; toggling Lyrics swaps that cover/title block for an embedded,
           scrollable lyrics view without leaving this screen. */}
       {mobileExpanded && (
-        <div data-testid="mobile-expanded-sheet" className="fixed inset-0 bg-zinc-950 z-50 flex flex-col">
+        <div data-lyrics-keep-open data-testid="mobile-expanded-sheet" className="fixed inset-0 bg-zinc-950 z-50 flex flex-col">
           <div className="flex items-center justify-end px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-2 flex-shrink-0">
             <button onClick={() => setMobileExpanded(false)} title="Close" className="text-zinc-400 hover:text-white transition-colors">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -371,7 +371,7 @@ export function PlayerBar() {
           <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-4 overflow-hidden">
             {showLyrics ? (
               <div className="w-full h-full max-w-lg">
-                <LyricsPanel embedded onClose={() => setShowLyrics(false)} />
+                <LyricsPanel embedded onClose={closeLyrics} />
               </div>
             ) : (
               <>
@@ -439,7 +439,7 @@ export function PlayerBar() {
 
             <div className="flex items-center justify-center gap-8 mt-3 pt-3 border-t border-zinc-800">
               <button
-                onClick={() => setShowLyrics((v) => !v)}
+                onClick={toggleLyrics}
                 className={`flex items-center gap-2 text-sm transition-colors ${
                   showLyrics ? 'text-brand' : 'text-zinc-400 hover:text-white'
                 }`}

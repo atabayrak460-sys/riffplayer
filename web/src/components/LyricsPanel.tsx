@@ -11,11 +11,17 @@ interface Props {
   embedded?: boolean;
 }
 
+/** Elements marked with this attribute (the player bars, the expanded
+ *  player) don't count as an "outside" click — using the player controls,
+ *  including the lyrics toggle itself, shouldn't dismiss the lyrics. */
+const KEEP_OPEN_SELECTOR = '[data-lyrics-keep-open]';
+
 export function LyricsPanel({ onClose, embedded = false }: Props) {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const currentTime = usePlayerStore((s) => s.currentTime);
   const seek = usePlayerStore((s) => s.seek);
   const activeLyricRef = useRef<HTMLParagraphElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
   const { data: lyrics, isLoading, isError } = useQuery({
@@ -41,9 +47,32 @@ export function LyricsPanel({ onClose, embedded = false }: Props) {
     }
   }, [activeIdx, autoScroll]);
 
-  const panel = (
+  // The standalone view closes on Escape or a click anywhere outside it.
+  useEffect(() => {
+    if (embedded) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (!target || panelRef.current?.contains(target)) return;
+      if (target.closest(KEEP_OPEN_SELECTOR)) return;
+      onClose();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [embedded, onClose]);
+
+  return (
       <div
-        className={`pointer-events-auto w-full h-full bg-zinc-950/95 backdrop-blur-md flex flex-col ${embedded ? '' : 'max-w-lg shadow-2xl border-l border-zinc-800'}`}
+        ref={panelRef}
+        className={embedded
+          ? 'w-full h-full bg-zinc-950/95 backdrop-blur-md flex flex-col'
+          : 'absolute inset-0 z-10 bg-zinc-950 flex flex-col'}
         onWheel={() => setAutoScroll(false)}
       >
         {/* Header */}
@@ -72,7 +101,8 @@ export function LyricsPanel({ onClose, embedded = false }: Props) {
         </div>
 
         {/* Lyrics body */}
-        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-3">
+        <div className="flex-1 overflow-y-auto">
+        <div className={embedded ? 'px-5 py-6 space-y-3' : 'max-w-3xl mx-auto px-8 py-10 space-y-5'}>
           {!currentSong && (
             <p className="text-zinc-500 text-center text-sm">Nothing playing.</p>
           )}
@@ -88,10 +118,11 @@ export function LyricsPanel({ onClose, embedded = false }: Props) {
           {lyrics &&
             lines.map((line, i) => {
               const isActive = i === activeIdx;
-              const className = `text-lg leading-relaxed transition-all duration-300 ${
+              const size = embedded ? 'text-lg' : 'text-2xl md:text-3xl font-bold';
+              const className = `${size} leading-relaxed transition-all duration-300 ${
                 isActive
                   ? 'text-white font-semibold scale-105 origin-left'
-                  : 'text-zinc-500'
+                  : embedded ? 'text-zinc-500' : 'text-zinc-600'
               }`;
               // Synced lines jump playback to their timestamp on click, and
               // resume auto-scroll so the view follows the new position.
@@ -115,14 +146,7 @@ export function LyricsPanel({ onClose, embedded = false }: Props) {
               );
             })}
         </div>
+        </div>
       </div>
-  );
-
-  if (embedded) return panel;
-
-  return (
-    <div className="fixed inset-x-0 bottom-20 top-0 z-10 flex items-end justify-center pointer-events-none">
-      {panel}
-    </div>
   );
 }

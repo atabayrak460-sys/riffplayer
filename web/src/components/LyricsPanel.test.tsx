@@ -12,11 +12,13 @@ vi.mock('../api/subsonic', () => ({ getLyrics: vi.fn() }));
 const { getLyrics } = await import('../api/subsonic');
 const seek = vi.fn();
 
-function renderPanel() {
+function renderPanel(onClose = () => {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <LyricsPanel onClose={() => {}} />
+      <button>outside</button>
+      <footer data-lyrics-keep-open><button>player control</button></footer>
+      <LyricsPanel onClose={onClose} />
     </QueryClientProvider>,
   );
 }
@@ -52,5 +54,27 @@ describe('LyricsPanel', () => {
 
     expect(await screen.findByText('Plain line')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Plain line' })).toBeNull();
+  });
+
+  it('closes on a click outside, but not on the player controls or inside', async () => {
+    vi.mocked(getLyrics).mockResolvedValue(null);
+    const onClose = vi.fn();
+    renderPanel(onClose);
+    await screen.findByText('No lyrics found for this track.');
+
+    await userEvent.click(screen.getByText('No lyrics found for this track.'));
+    await userEvent.click(screen.getByRole('button', { name: 'player control' }));
+    expect(onClose).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'outside' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('closes on Escape', async () => {
+    vi.mocked(getLyrics).mockResolvedValue(null);
+    const onClose = vi.fn();
+    renderPanel(onClose);
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });
