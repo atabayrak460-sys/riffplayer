@@ -48,7 +48,7 @@ export function OfflinePlaylistPage() {
         <div className="flex flex-col justify-end gap-2 min-w-0">
           <p className="text-xs uppercase tracking-widest text-zinc-400">Downloaded Playlist</p>
           <h1 className="text-2xl sm:text-3xl font-bold text-white break-words">{playlist.name}</h1>
-          <p className="text-sm text-zinc-400">{songs.length} tracks</p>
+          <p className="text-sm text-zinc-400">{songs.length} {songs.length === 1 ? 'track' : 'tracks'}</p>
           {playlist.comment && <p className="text-sm text-zinc-400 max-w-md break-words">{playlist.comment}</p>}
           <div className="flex flex-wrap items-center gap-3 mt-1">
             <button

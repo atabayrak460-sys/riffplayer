@@ -111,6 +111,13 @@ describe('PlaylistDetailPage — states', () => {
     expect(rows().map((r) => r!.split(' @')[0])).toEqual(['1. Song a', '2. Song b', '3. Song c']);
   });
 
+  it('says "1 track" for a single-track playlist', async () => {
+    vi.spyOn(subsonic, 'getPlaylist').mockResolvedValue(playlist({ entry: [songs[0]], songCount: 1, duration: 120 }));
+    renderPage();
+
+    expect(await screen.findByText(/admin · 1 track · 2 min/)).toBeInTheDocument();
+  });
+
   it('formats a sub-hour duration without hours', async () => {
     vi.spyOn(subsonic, 'getPlaylist').mockResolvedValue(playlist({ duration: 2400 }));
     renderPage();

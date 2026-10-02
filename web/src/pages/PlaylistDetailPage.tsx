@@ -221,7 +221,7 @@ export function PlaylistDetailPage() {
             </h1>
           )}
           <p className="text-sm text-zinc-400 mt-1.5">
-            {playlist.owner} · {songs.length} tracks
+            {playlist.owner} · {songs.length} {songs.length === 1 ? 'track' : 'tracks'}
             {songs.length > 0 && ` · ${formatDuration(playlist.duration)}`}
           </p>
 
