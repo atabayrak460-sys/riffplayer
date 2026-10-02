@@ -5,6 +5,7 @@ import { mePlugin } from './me.js';
 import { adminUsersPlugin } from './admin/users.js';
 import { adminLibrariesPlugin } from './admin/libraries.js';
 import { adminSettingsPlugin } from './admin/settings.js';
+import { adminTracksPlugin } from './admin/tracks.js';
 import { playlistsPlugin } from './playlists.js';
 import { artistsPlugin } from './artists.js';
 import { recommendationsPlugin } from './recommendations.js';
@@ -24,6 +25,7 @@ export async function apiPlugin(app: FastifyInstance): Promise<void> {
   app.register(adminUsersPlugin);
   app.register(adminLibrariesPlugin);
   app.register(adminSettingsPlugin);
+  app.register(adminTracksPlugin);
   app.register(playlistsPlugin);
   app.register(artistsPlugin);
 
