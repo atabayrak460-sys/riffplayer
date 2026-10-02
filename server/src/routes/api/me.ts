@@ -1,6 +1,9 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../../db/database.js';
+import { hashPassword, encryptPassword, verifyPasswordHash } from '../../auth/crypto.js';
+import { getOrCreateServerSecret } from '../../auth/seed.js';
 import { apiAuth } from './middleware.js';
+import { jsonError } from './helpers.js';
 
 export async function mePlugin(app: FastifyInstance): Promise<void> {
   // ── GET /api/v1/users/me ────────────────────────────────────────────────────
@@ -44,6 +47,32 @@ export async function mePlugin(app: FastifyInstance): Promise<void> {
         );
       }
     }
+    reply.send({ ok: true });
+  });
+
+  // ── PATCH /api/v1/users/me/password — self-service, requires the current
+  //    password (unlike admin/users.ts's reset-for-others, which doesn't) ───
+  app.patch('/users/me/password', { preHandler: apiAuth }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword?: string };
+    if (!currentPassword || !newPassword) return jsonError(reply, 400, 'currentPassword and newPassword required');
+
+    const db = getDb();
+    const userId = req.subsonicUser!.id;
+    const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId) as { password_hash: string };
+    if (!verifyPasswordHash(currentPassword, row.password_hash)) {
+      return jsonError(reply, 400, 'Current password is incorrect');
+    }
+
+    const secret = getOrCreateServerSecret(db);
+    // Bumping token_version invalidates this request's own JWT along with
+    // every other session for this user (same as admin/users.ts's password
+    // reset) — the client is expected to log the user out right after a
+    // successful call, since both this JWT and the stored Subsonic
+    // credentials are now stale.
+    db.prepare(
+      'UPDATE users SET password_hash = ?, subsonic_token = ?, token_version = token_version + 1 WHERE id = ?',
+    ).run(hashPassword(newPassword), encryptPassword(newPassword, secret), userId);
+
     reply.send({ ok: true });
   });
 

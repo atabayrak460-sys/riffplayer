@@ -87,3 +87,68 @@ describe('PATCH /api/v1/users/me/preferences', () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+describe('PATCH /api/v1/users/me/password', () => {
+  it('returns 401 without credentials', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/v1/users/me/password', payload: {} });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('requires both currentPassword and newPassword', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/v1/users/me/password?${auth}`,
+      payload: { currentPassword: 'admin' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects an incorrect current password, leaving the real one unchanged', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/v1/users/me/password?${auth}`,
+      payload: { currentPassword: 'wrong-password', newPassword: 'newpass123' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'Current password is incorrect' });
+
+    const stillWorks = await app.inject({ url: `/api/v1/users/me?${authParams('admin')}` });
+    expect(stillWorks.statusCode).toBe(200);
+  });
+
+  it('changes the password — the old one stops authenticating, the new one works', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/v1/users/me/password?${auth}`,
+      payload: { currentPassword: 'admin', newPassword: 'newpass123' },
+    });
+    expect(res.statusCode).toBe(200);
+
+    // /api/v1/users/me falls back to Subsonic-style query auth for clients
+    // without a JWT, which (per the Subsonic protocol, unlike apiAuth's own
+    // no-credentials-at-all guard) always replies HTTP 200 with an error
+    // code in the body on failure rather than a real 401.
+    const oldPassword = await app.inject({ url: `/api/v1/users/me?${authParams('admin')}` });
+    expect(oldPassword.statusCode).toBe(200);
+    expect(oldPassword.json()).toMatchObject({ 'subsonic-response': { status: 'failed', error: { code: 40 } } });
+
+    const newPassword = await app.inject({ url: `/api/v1/users/me?${authParams('newpass123')}` });
+    expect(newPassword.statusCode).toBe(200);
+    expect((newPassword.json() as { username: string }).username).toBe('admin');
+  });
+
+  it('invalidates JWTs issued before the change (token_version bump)', async () => {
+    const login = await app.inject({
+      method: 'POST', url: '/api/v1/auth/login',
+      payload: { username: 'admin', password: 'admin' },
+    });
+    const { token } = login.json() as { token: string };
+    const beforeChange = await app.inject({ url: '/api/v1/users/me', headers: { Authorization: `Bearer ${token}` } });
+    expect(beforeChange.statusCode).toBe(200);
+
+    await app.inject({
+      method: 'PATCH', url: `/api/v1/users/me/password?${auth}`,
+      payload: { currentPassword: 'admin', newPassword: 'newpass123' },
+    });
+
+    const afterChange = await app.inject({ url: '/api/v1/users/me', headers: { Authorization: `Bearer ${token}` } });
+    expect(afterChange.statusCode).toBe(401);
+  });
+});
