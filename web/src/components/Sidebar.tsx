@@ -7,15 +7,17 @@ import {
 import { SidebarLibraryItem } from './SidebarLibraryItem';
 import { orderLibraryRows, type LibraryRow } from '../lib/librarySidebarOrder';
 import {
-  FavouritesCover, RecentlyPlayedCover, MostPlayedCover, DownloadedCover, DiscoverCover, WrappedCover,
+  FavouritesCover, RecentlyPlayedCover, MostPlayedCover, DownloadedCover, DiscoverCover, WrappedCover, AllSongsCover,
 } from './StockCovers';
 
-// Fixed top section — always in this order, never reordered.
+// Fixed top section — always in this order, never reordered. All Songs
+// lives in the pinnable Library list below instead (same key, 'all-songs',
+// as the mobile app's library_screen.dart — mobile never had it as a
+// separate top-level tab in the first place, only ever as a Library item).
 const TOP_NAV = [
   { to: '/home', label: 'Home', icon: 'M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25' },
   { to: '/albums', label: 'Albums', icon: 'M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z' },
   { to: '/artists', label: 'Artists', icon: 'M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z' },
-  { to: '/songs', label: 'All Songs', icon: 'M4 6h16M4 10h16M4 14h10M4 18h6' },
   { to: '/search', label: 'Search', icon: 'M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z' },
   { to: '/queue', label: 'Queue', icon: 'M4 6h16M4 12h10M4 18h7' },
 ];
@@ -25,6 +27,7 @@ const TOP_NAV = [
 // route in spirit even though it currently matches the path, since routes can
 // change but stored keys can't retroactively.
 const LIBRARY_SYSTEM_ITEMS = [
+  { key: 'all-songs', to: '/songs', label: 'All Songs', StockCover: AllSongsCover },
   { key: 'favorites', to: '/favorites', label: 'Favourites', StockCover: FavouritesCover },
   { key: 'recent', to: '/recent', label: 'Recently Played', StockCover: RecentlyPlayedCover },
   { key: 'most-played', to: '/most-played', label: 'Most Played', StockCover: MostPlayedCover },
