@@ -62,9 +62,27 @@ class AddToPlaylistDialog extends ConsumerWidget {
                           onTap: () async {
                             final client = ref.read(apiClientProvider);
                             if (client == null) return;
-                            await client.addSongToPlaylist(pl.id, songId);
-                            ref.invalidate(playlistDetailProvider(pl.id));
+                            // Captured before the await/pop, so the
+                            // SnackBar still has a messenger after the
+                            // dialog's context is gone.
+                            final messenger = ScaffoldMessenger.of(context);
+                            // Subsonic itself allows duplicate entries, so
+                            // the check lives here: a song already in the
+                            // playlist isn't added again, just flagged.
+                            final current = await client.getPlaylist(pl.id);
+                            final exists = (current.entries ?? const [])
+                                .any((s) => s.id == songId);
+                            if (!exists) {
+                              await client.addSongToPlaylist(pl.id, songId);
+                              ref.invalidate(playlistDetailProvider(pl.id));
+                            }
                             if (context.mounted) Navigator.pop(context);
+                            if (exists) {
+                              messenger.showSnackBar(SnackBar(
+                                content: Text('Already in "${pl.name}"'),
+                                duration: const Duration(seconds: 2),
+                              ));
+                            }
                           },
                         );
                       },
