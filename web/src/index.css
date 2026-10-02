@@ -31,6 +31,56 @@
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-zinc-500;
   }
+
+  /* Custom seek/volume slider rendering — native `accent-color` styling left
+     the thumb at the mercy of the OS/browser's own widget theme (e.g. some
+     Linux GTK themes flatten it to barely more than the track), so this
+     fully replaces both track and thumb instead. The "filled" portion up to
+     the thumb comes for free from Firefox's own ::-moz-range-progress; for
+     WebKit (no equivalent pseudo-element) each <input> gets its progress
+     drawn via an inline `background: linear-gradient(...)` set in JS, which
+     only shows through because the track pseudo-element itself is
+     transparent here. */
+  input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 9999px;
+    background: #3f3f46;
+    cursor: pointer;
+  }
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: transparent;
+  }
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border-radius: 9999px;
+    background: theme('colors.brand.DEFAULT');
+  }
+  input[type='range']::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: #3f3f46;
+  }
+  input[type='range']::-moz-range-progress {
+    height: 4px;
+    border-radius: 9999px;
+    background: theme('colors.brand.DEFAULT');
+  }
+  input[type='range']::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: none;
+    border-radius: 9999px;
+    background: theme('colors.brand.DEFAULT');
+  }
 }
 
 @layer utilities {
