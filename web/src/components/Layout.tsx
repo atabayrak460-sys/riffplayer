@@ -9,39 +9,15 @@ import { DownloadTargetModal } from './DownloadTargetModal';
 import { Toast } from './Toast';
 import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
 import { ErrorBoundary } from './ErrorBoundary';
-import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
-import { handleKeyboardShortcut } from '../lib/keyboard';
+import { useGlobalShortcuts } from '../lib/useGlobalShortcuts';
 
 export function Layout() {
   const hydrateDownloads = useDownloadsStore((s) => s.hydrate);
   const location = useLocation();
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      // Read live state at call time (not via a hook) so this listener
-      // never needs re-subscribing as playback state changes every second.
-      const s = usePlayerStore.getState();
-      const handled = handleKeyboardShortcut(e, {
-        currentTime: s.currentTime,
-        duration: s.duration,
-        volume: s.volume,
-        togglePlay: s.togglePlay,
-        seek: s.seek,
-        setVolume: s.setVolume,
-        next: s.next,
-        prev: s.prev,
-        toggleShuffle: s.toggleShuffle,
-        toggleRepeat: s.toggleRepeat,
-        toggleMute: s.toggleMute,
-        toggleShortcutsHelp: () => setShowShortcutsHelp((v) => !v),
-      });
-      if (handled) e.preventDefault();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, []);
+  useGlobalShortcuts(setShowShortcutsHelp);
 
   useEffect(() => {
     hydrateDownloads();
