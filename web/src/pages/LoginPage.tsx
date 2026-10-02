@@ -41,8 +41,9 @@ export function LoginPage() {
 
         <form onSubmit={submit} className="bg-zinc-800/60 rounded-xl p-6 space-y-4 border border-zinc-700/50">
           <div>
-            <label className="block text-sm text-zinc-300 mb-1.5">Server URL</label>
+            <label htmlFor="login-server-url" className="block text-sm text-zinc-300 mb-1.5">Server URL</label>
             <input
+              id="login-server-url"
               type="url"
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
@@ -53,8 +54,9 @@ export function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-sm text-zinc-300 mb-1.5">Username</label>
+            <label htmlFor="login-username" className="block text-sm text-zinc-300 mb-1.5">Username</label>
             <input
+              id="login-username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -66,8 +68,9 @@ export function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-sm text-zinc-300 mb-1.5">Password</label>
+            <label htmlFor="login-password" className="block text-sm text-zinc-300 mb-1.5">Password</label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
