@@ -21,6 +21,12 @@ vi.mock('./KeyboardShortcutsHelp', () => ({ KeyboardShortcutsHelp: () => null })
 vi.mock('../store/downloads', () => ({
   useDownloadsStore: (select: (s: { hydrate: () => void }) => unknown) => select({ hydrate: () => {} }),
 }));
+// Connect opens a network stream; Layout's job is only to start it on mount and stop it on unmount.
+const { connectStart, connectStop } = vi.hoisted(() => ({ connectStart: vi.fn(), connectStop: vi.fn() }));
+vi.mock('../store/connect', () => ({
+  useConnectStore: (select: (s: { start: () => void; stop: () => void }) => unknown) =>
+    select({ start: connectStart, stop: connectStop }),
+}));
 vi.mock('../lib/useGlobalShortcuts', () => ({ useGlobalShortcuts: () => {} }));
 vi.mock('./LyricsPanel', () => ({
   LyricsPanel: ({ onClose }: { onClose: () => void }) => (
@@ -46,9 +52,21 @@ function renderLayout() {
 
 beforeEach(() => {
   useLyricsViewStore.setState({ open: false });
+  connectStart.mockClear();
+  connectStop.mockClear();
 });
 
 describe('Layout', () => {
+  it('connects this device to the user\'s others while the app is open, and disconnects on the way out', () => {
+    const { unmount } = renderLayout();
+    expect(connectStart).toHaveBeenCalledTimes(1);
+    expect(connectStop).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(connectStop).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps sidebar, now playing panel and player bar around the routed page', () => {
     renderLayout();
 

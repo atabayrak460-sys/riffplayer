@@ -32,6 +32,24 @@ let removeScrobbleListener: (() => void) | null = null;
 // to restore to.
 let volumeBeforeMute: number | null = null;
 
+/**
+ * Hook for RiffPlayer Connect. While another device is the one playing, this device is only a remote:
+ * the transport actions below hand over to the controller instead of driving the local <audio>.
+ * (A registry rather than an import so this store doesn't depend on the connect store.)
+ */
+export interface RemoteController {
+  isRemote(): boolean;
+  command(type: 'play' | 'pause' | 'next' | 'previous' | 'seek', positionMs?: number): void;
+}
+export const remote: { current: RemoteController | null } = { current: null };
+
+// Whether the track now loaded has already been counted as a play (scrobbled). Connect hands this to
+// the device that takes over, so a transfer mid-song doesn't count the same listen twice.
+let currentCounted = false;
+export function currentPlayCounted(): boolean {
+  return currentCounted;
+}
+
 /** Prefer a locally downloaded copy so offline-played tracks need no network. */
 async function resolvePlaybackUrl(song: Song): Promise<string> {
   if (useDownloadsStore.getState().trackState(song.id) === 'downloaded') {
@@ -79,6 +97,10 @@ interface PlayerState {
   // Actions
   playSong: (song: Song, queue?: Song[]) => void;
   playQueue: (songs: Song[], index?: number) => void;
+  /** Loads a queue at a position (used when playback is handed over from another device). */
+  restoreQueue: (songs: Song[], index: number, positionMs: number, play: boolean, counted?: boolean) => void;
+  /** Silences the local audio element without touching the queue. */
+  pauseLocal: () => void;
   togglePlay: () => void;
   next: () => void;
   prev: () => void;
@@ -114,8 +136,13 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
   audio.addEventListener('play', () => set({ playing: true }));
   audio.addEventListener('pause', () => set({ playing: false }));
 
-  async function loadAndPlay(song: Song): Promise<void> {
+  async function loadAndPlay(
+    song: Song,
+    opts: { startAt?: number; autoplay?: boolean; counted?: boolean } = {},
+  ): Promise<void> {
     const generation = ++loadGeneration;
+    const autoplay = opts.autoplay !== false;
+    currentCounted = opts.counted === true;
     const url = await resolvePlaybackUrl(song);
     if (generation !== loadGeneration) return; // a newer loadAndPlay() call already took over
 
@@ -138,17 +165,28 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       audio.volume = userVol;
     }
 
-    audio.play().catch(() => {/* autoplay policy */});
-    scrobble(song.id, false).catch(() => {/* best-effort */});
+    if (opts.startAt && opts.startAt > 0) {
+      const startAt = opts.startAt;
+      if (audio.readyState >= 1) audio.currentTime = startAt;
+      else audio.addEventListener('loadedmetadata', () => { audio.currentTime = startAt; }, { once: true });
+    }
+    if (autoplay) {
+      audio.play().catch(() => {/* autoplay policy */});
+      scrobble(song.id, false).catch(() => {/* best-effort */});
+    } else {
+      audio.pause();
+    }
 
     // Scrobble submission after 30 s or 50% played (whichever first). Replace
     // any listener left over from a track skipped before its own threshold
     // fired, so at most one is ever attached and it always matches this track.
     removeScrobbleListener?.();
-    let scrobbled = false;
+    // A play handed over from another device that already counted it must not be counted again.
+    let scrobbled = opts.counted === true;
     const onTime = () => {
       if (!scrobbled && audio.currentTime >= Math.min(30, (audio.duration || 60) * 0.5)) {
         scrobbled = true;
+        currentCounted = true;
         scrobble(song.id, true).catch(() => {});
         audio.removeEventListener('timeupdate', onTime);
         removeScrobbleListener = null;
@@ -206,7 +244,24 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
       loadAndPlay(song);
     },
 
+    restoreQueue: (songs, index, positionMs, play, counted = false) => {
+      if (!songs.length) return;
+      const i = Math.min(Math.max(index, 0), songs.length - 1);
+      const song = songs[i];
+      set({ queue: songs, queueIndex: i, currentSong: song, originalQueue: null, currentTime: positionMs / 1000 });
+      loadAndPlay(song, { startAt: positionMs / 1000, autoplay: play, counted });
+    },
+
+    pauseLocal: () => {
+      audio.pause();
+    },
+
     togglePlay: () => {
+      const r = remote.current;
+      if (r?.isRemote()) {
+        r.command(get().playing ? 'pause' : 'play');
+        return;
+      }
       if (audio.paused) {
         audio.play().catch(() => {});
       } else {
@@ -215,6 +270,11 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     },
 
     next: () => {
+      const r = remote.current;
+      if (r?.isRemote()) {
+        r.command('next');
+        return;
+      }
       const { queue, queueIndex, shuffle } = get();
       if (!queue.length) return;
       // A manual skip always drops repeat-one — it only survives the track's own natural loop
@@ -244,6 +304,11 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     },
 
     prev: () => {
+      const r = remote.current;
+      if (r?.isRemote()) {
+        r.command('previous');
+        return;
+      }
       const { queue, queueIndex, currentTime } = get();
       // A manual skip always drops repeat-one — it only survives the track's own natural loop.
       if (get().repeatMode === 'one') set({ repeatMode: 'off' });
@@ -259,6 +324,12 @@ export const usePlayerStore = create<PlayerState>()((set, get) => {
     },
 
     seek: (seconds) => {
+      const r = remote.current;
+      if (r?.isRemote()) {
+        set({ currentTime: seconds }); // show the new position at once; the real one arrives with the next state
+        r.command('seek', seconds * 1000);
+        return;
+      }
       audio.currentTime = seconds;
       set({ currentTime: seconds });
     },

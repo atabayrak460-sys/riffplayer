@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Song } from '../api/types';
 
 // player.ts creates a singleton `new Audio()` at module load time, which
@@ -77,7 +77,7 @@ vi.mock('../api/subsonic', async (importOriginal) => ({
   scrobble: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { usePlayerStore } = await import('./player');
+const { usePlayerStore, remote, currentPlayCounted } = await import('./player');
 const { useDownloadsStore } = await import('./downloads');
 const { scrobble } = await import('../api/subsonic');
 
@@ -562,5 +562,167 @@ describe('loadAndPlay race conditions (#35 / #36)', () => {
 
     expect(scrobble).toHaveBeenCalledWith('b', true);
     expect(scrobble).not.toHaveBeenCalledWith('a', true);
+  });
+});
+
+describe('remote control hook (Connect)', () => {
+  const command = vi.fn();
+  let isRemote = true;
+
+  beforeEach(() => {
+    FakeAudio.rejectPlay = false;
+    useDownloadsStore.setState({ status: {} });
+    command.mockClear();
+    isRemote = true;
+    remote.current = { isRemote: () => isRemote, command };
+    FakeAudio.instance.paused = true;
+    FakeAudio.instance.currentTime = 0;
+  });
+  afterEach(() => {
+    remote.current = null;
+  });
+
+  it('togglePlay sends pause while the remote is playing and play while it is paused, leaving the local audio alone', () => {
+    usePlayerStore.setState({ playing: true });
+    usePlayerStore.getState().togglePlay();
+    usePlayerStore.setState({ playing: false });
+    usePlayerStore.getState().togglePlay();
+
+    expect(command.mock.calls).toEqual([['pause'], ['play']]);
+    expect(FakeAudio.instance.paused).toBe(true);
+  });
+
+  it('next and prev become commands without touching the local queue', () => {
+    const a = song('r-a');
+    const b = song('r-b');
+    usePlayerStore.setState({ queue: [a, b], queueIndex: 0, currentSong: a });
+
+    usePlayerStore.getState().next();
+    usePlayerStore.getState().prev();
+
+    expect(command.mock.calls).toEqual([['next'], ['previous']]);
+    expect(usePlayerStore.getState().queueIndex).toBe(0);
+  });
+
+  it('seek sends the position in milliseconds and shows it straight away without moving the local audio', () => {
+    usePlayerStore.getState().seek(42.5);
+
+    expect(command).toHaveBeenCalledWith('seek', 42_500);
+    expect(usePlayerStore.getState().currentTime).toBe(42.5);
+    expect(FakeAudio.instance.currentTime).toBe(0);
+  });
+
+  it('acts locally as usual when this device is not just a remote', () => {
+    isRemote = false;
+    const a = song('r-a');
+    const b = song('r-b');
+    usePlayerStore.setState({ queue: [a, b], queueIndex: 0, currentSong: a });
+
+    usePlayerStore.getState().next();
+    usePlayerStore.getState().seek(10);
+    usePlayerStore.getState().togglePlay();
+
+    expect(command).not.toHaveBeenCalled();
+    expect(usePlayerStore.getState().queueIndex).toBe(1);
+    expect(FakeAudio.instance.currentTime).toBe(10);
+    expect(FakeAudio.instance.paused).toBe(false);
+  });
+
+  it('playing something locally is never forwarded: it takes over', () => {
+    const a = song('r-a');
+    usePlayerStore.getState().playQueue([a], 0);
+
+    expect(command).not.toHaveBeenCalled();
+    expect(usePlayerStore.getState().currentSong?.id).toBe('r-a');
+  });
+});
+
+describe('restoreQueue and pauseLocal (Connect handover)', () => {
+  // distinct ids: earlier tests above leave 'a'/'b' marked as downloaded, which would stall loading
+  const [a, b, c] = ['r-a', 'r-b', 'r-c'].map(song);
+
+  beforeEach(() => {
+    FakeAudio.rejectPlay = false;
+    useDownloadsStore.setState({ status: {} });
+  });
+
+  it('loads the queue at the given index and shows the position, without any shuffle bookkeeping', async () => {
+    usePlayerStore.getState().restoreQueue([a, b, c], 1, 83_500, true);
+    await flush();
+
+    const s = usePlayerStore.getState();
+    expect(s.queue.map((x) => x.id)).toEqual(['r-a', 'r-b', 'r-c']);
+    expect(s.queueIndex).toBe(1);
+    expect(s.currentSong?.id).toBe('r-b');
+    expect(s.currentTime).toBe(83.5);
+    expect(s.originalQueue).toBeNull();
+  });
+
+  it('starts playback and seeks to the position once the track\'s metadata is available', async () => {
+    FakeAudio.instance.paused = true;
+    usePlayerStore.getState().restoreQueue([a, b], 0, 12_000, true);
+    await flush();
+
+    expect(FakeAudio.instance.paused).toBe(false);
+    expect(FakeAudio.instance.currentTime).not.toBe(12);
+    FakeAudio.instance.emit('loadedmetadata');
+    expect(FakeAudio.instance.currentTime).toBe(12);
+  });
+
+  it('with play=false it loads and positions the track but leaves it paused, and sends no "now playing"', async () => {
+    FakeAudio.instance.paused = true;
+    vi.mocked(scrobble).mockClear();
+
+    usePlayerStore.getState().restoreQueue([a], 0, 5_000, false);
+    await flush();
+
+    expect(FakeAudio.instance.paused).toBe(true);
+    expect(scrobble).not.toHaveBeenCalled();
+  });
+
+  it('a play that the other device already counted is not counted again here', async () => {
+    vi.mocked(scrobble).mockClear();
+    usePlayerStore.getState().restoreQueue([a], 0, 40_000, true, true);
+    await flush();
+    FakeAudio.instance.currentTime = 90;
+    FakeAudio.instance.duration = 200;
+    FakeAudio.instance.emit('timeupdate');
+
+    expect(scrobble).not.toHaveBeenCalledWith('r-a', true);
+    expect(currentPlayCounted()).toBe(true);
+  });
+
+  it('an uncounted play is counted once it passes the threshold, and then reports itself as counted', async () => {
+    vi.mocked(scrobble).mockClear();
+    usePlayerStore.getState().restoreQueue([a], 0, 0, true, false);
+    await flush();
+    expect(currentPlayCounted()).toBe(false);
+
+    FakeAudio.instance.currentTime = 31;
+    FakeAudio.instance.duration = 200;
+    FakeAudio.instance.emit('timeupdate');
+
+    expect(scrobble).toHaveBeenCalledWith('r-a', true);
+    expect(currentPlayCounted()).toBe(true);
+  });
+
+  it('clamps an out-of-range index and ignores an empty queue', async () => {
+    usePlayerStore.getState().restoreQueue([a, b], 99, 0, false);
+    await flush();
+    expect(usePlayerStore.getState().queueIndex).toBe(1);
+
+    usePlayerStore.setState({ queue: [], queueIndex: -1, currentSong: null });
+    usePlayerStore.getState().restoreQueue([], 0, 0, true);
+    expect(usePlayerStore.getState().currentSong).toBeNull();
+  });
+
+  it('pauseLocal silences the audio and leaves the queue alone', () => {
+    usePlayerStore.setState({ queue: [a, b], queueIndex: 0, currentSong: a });
+    FakeAudio.instance.paused = false;
+
+    usePlayerStore.getState().pauseLocal();
+
+    expect(FakeAudio.instance.paused).toBe(true);
+    expect(usePlayerStore.getState().queue).toHaveLength(2);
   });
 });

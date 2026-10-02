@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { patchMyPreferences, changeMyPassword } from '../api/subsonic';
 import { useAuthStore } from '../store/auth';
 import { useDownloadsStore, type DownloadTarget } from '../store/downloads';
+import { DeviceNameSection } from '../components/DeviceNameSection';
 
 // Fetch current user preferences via /api/v1/users/me
 async function fetchMe() {
@@ -215,6 +216,8 @@ export function AccountSettingsPanel() {
           <option value="device">This device's Downloads folder</option>
         </select>
       </section>
+
+      <DeviceNameSection />
 
       <section>
         <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">ListenBrainz</h2>

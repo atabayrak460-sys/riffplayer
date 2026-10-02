@@ -1,0 +1,194 @@
+// RiffPlayer Connect API client — see docs/CONNECT-DESIGN.md. Thin typed wrappers around
+// /api/v1/connect/*; every function maps HTTP outcomes to a small result value instead of throwing,
+// so the store can react to "need_queue" / "no_active_device" etc. without parsing errors.
+
+import { apiFetch } from './subsonic';
+import { newId } from '../lib/connectProtocol';
+import type { Song } from './types';
+
+export type DeviceType = 'web' | 'android' | 'desktop';
+export type RepeatMode = 'off' | 'all' | 'one';
+export type CommandType = 'play' | 'pause' | 'next' | 'previous' | 'seek';
+
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  type: DeviceType;
+  online: boolean;
+  unreachable: boolean;
+  active: boolean;
+}
+
+export interface PublicState {
+  activeDeviceId: string;
+  playing: boolean;
+  song: Song | null;
+  index: number;
+  queueLength: number;
+  queueVersion: number;
+  positionMs: number;
+  /** Server clock at which `positionMs` was true. */
+  positionAtMs: number;
+  durationMs: number | null;
+  repeat: RepeatMode;
+  shuffle: boolean;
+  counted: boolean;
+}
+
+export interface Snapshot {
+  devices: DeviceInfo[];
+  activeDeviceId: string | null;
+  state: PublicState | null;
+}
+
+export interface LoadInstruction {
+  queueVersion: number;
+  index: number;
+  positionMs: number;
+  play: boolean;
+  counted: boolean;
+}
+
+export interface CommandInstruction {
+  commandId: string;
+  type: CommandType;
+  positionMs?: number;
+  expiresAtMs: number;
+}
+
+export interface DeviceIdentity {
+  deviceId: string;
+  name: string;
+  type: DeviceType;
+}
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+function identityQuery({ deviceId, name, type }: DeviceIdentity): string {
+  return `deviceId=${encodeURIComponent(deviceId)}&name=${encodeURIComponent(name)}&type=${type}`;
+}
+
+async function post(path: string, body: unknown, method = 'POST'): Promise<Response | null> {
+  try {
+    return await apiFetch(`connect/${path}`, { method, headers: JSON_HEADERS, body: JSON.stringify(body) });
+  } catch {
+    return null; // network failure
+  }
+}
+
+async function errorCode(res: Response): Promise<string | undefined> {
+  return ((await res.json().catch(() => null)) as { error?: string } | null)?.error;
+}
+
+// ── Streams ──────────────────────────────────────────────────────────────────
+
+export function openStream(identity: DeviceIdentity, signal: AbortSignal): Promise<Response> {
+  return apiFetch(`connect/stream?${identityQuery(identity)}`, {
+    signal,
+    headers: { Accept: 'text/event-stream' },
+  });
+}
+
+export interface PolledEvent { seq: number; event: string; data: unknown }
+
+/** One long-poll round trip. `since` is undefined on the first call (which registers the device). */
+export async function pollOnce(
+  identity: DeviceIdentity,
+  since: number | undefined,
+  signal: AbortSignal,
+): Promise<{ status: number; events: PolledEvent[] }> {
+  const query = identityQuery(identity) + (since !== undefined ? `&since=${since}` : '');
+  const res = await apiFetch(`connect/poll?${query}`, { signal });
+  if (!res.ok) return { status: res.status, events: [] };
+  const body = (await res.json()) as { events: PolledEvent[] };
+  return { status: res.status, events: body.events };
+}
+
+// ── State, commands, transfer ────────────────────────────────────────────────
+
+export interface StateReport {
+  deviceId: string;
+  queueIds?: string[];
+  index: number;
+  positionMs: number;
+  playing: boolean;
+  repeat: RepeatMode;
+  shuffle: boolean;
+  counted: boolean;
+}
+
+export type ReportResult =
+  | { kind: 'ok'; takeover: boolean }
+  | { kind: 'not_active' }
+  | { kind: 'need_queue' }
+  | { kind: 'unknown_device' }
+  | { kind: 'rate_limited' }
+  | { kind: 'unavailable' }
+  | { kind: 'error' };
+
+export async function reportState(report: StateReport): Promise<ReportResult> {
+  const res = await post('state', report);
+  if (!res) return { kind: 'error' };
+  if (res.status === 404) return { kind: 'unavailable' };
+  if (res.status === 429) return { kind: 'rate_limited' };
+  if (res.status === 409) {
+    const code = await errorCode(res);
+    return code === 'need_queue' ? { kind: 'need_queue' } : { kind: 'unknown_device' };
+  }
+  if (!res.ok) return { kind: 'error' };
+  const body = (await res.json()) as { accepted: boolean; takeover?: boolean };
+  return body.accepted ? { kind: 'ok', takeover: body.takeover === true } : { kind: 'not_active' };
+}
+
+export type CommandResult = 'sent' | 'no_active_device' | 'self' | 'unknown_device' | 'rate_limited' | 'unavailable' | 'error';
+
+export async function sendCommand(deviceId: string, type: CommandType, positionMs?: number): Promise<CommandResult> {
+  const res = await post('command', {
+    deviceId,
+    commandId: newId(),
+    type,
+    ...(positionMs !== undefined ? { positionMs: Math.round(positionMs) } : {}),
+  });
+  if (!res) return 'error';
+  if (res.status === 404) return 'unavailable';
+  if (res.status === 429) return 'rate_limited';
+  if (res.status === 409) {
+    const code = await errorCode(res);
+    return code === 'no_active_device' || code === 'self' ? code : 'unknown_device';
+  }
+  return res.ok ? 'sent' : 'error';
+}
+
+export type TransferResult =
+  | 'ok' | 'pending' | 'noop' | 'target_offline' | 'nothing_playing'
+  | 'unknown_device' | 'rate_limited' | 'unavailable' | 'error';
+
+export async function transferPlayback(deviceId: string, toDeviceId: string, play = true): Promise<TransferResult> {
+  const res = await post('transfer', { deviceId, toDeviceId, play });
+  if (!res) return 'error';
+  if (res.status === 429) return 'rate_limited';
+  if (res.status === 404) {
+    return (await errorCode(res)) === 'target_offline' ? 'target_offline' : 'unavailable';
+  }
+  if (res.status === 409) {
+    return (await errorCode(res)) === 'nothing_playing' ? 'nothing_playing' : 'unknown_device';
+  }
+  if (!res.ok) return 'error';
+  const status = ((await res.json()) as { status: 'done' | 'pending' | 'noop' }).status;
+  return status === 'done' ? 'ok' : status;
+}
+
+export async function renameDevice(deviceId: string, name: string): Promise<boolean> {
+  const res = await post('device', { deviceId, name }, 'PATCH');
+  return !!res?.ok;
+}
+
+export async function fetchQueue(): Promise<{ queueVersion: number; index: number; songs: Song[] } | null> {
+  try {
+    const res = await apiFetch('connect/queue');
+    if (!res.ok) return null;
+    return (await res.json()) as { queueVersion: number; index: number; songs: Song[] };
+  } catch {
+    return null;
+  }
+}

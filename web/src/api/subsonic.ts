@@ -251,6 +251,19 @@ async function apiCall(
   return res.json();
 }
 
+/**
+ * Authenticated fetch against /api/v1 that hands back the raw Response — for streaming bodies and for
+ * callers that need to react to specific status codes (apiCall throws on any non-2xx instead).
+ */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const creds = _creds;
+  if (!creds) throw new Error('Not authenticated');
+  const base = creds.serverUrl.replace(/\/$/, '');
+  const headers = new Headers(init.headers);
+  if (_jwt) headers.set('Authorization', `Bearer ${_jwt}`);
+  return fetch(`${base}/api/v1/${path}`, { ...init, headers });
+}
+
 async function apiPut(path: string, body: unknown): Promise<void> {
   await apiCall('PUT', path, body);
 }

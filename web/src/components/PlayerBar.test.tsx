@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PlayerBar } from './PlayerBar';
 import { usePlayerStore } from '../store/player';
 import { useAuthStore } from '../store/auth';
+import { useConnectStore } from '../store/connect';
 import * as subsonic from '../api/subsonic';
 import type { Song } from '../api/types';
 
@@ -212,5 +213,47 @@ describe('PlayerBar', () => {
       // sheet's own top-right close button and the Lyrics toggle apply here.
       expect(sheet.getAllByTitle('Close')).toHaveLength(1);
     });
+  });
+});
+
+
+describe('PlayerBar with Connect', () => {
+  const ME = 'me-device-0001';
+  const PHONE = 'phone-device-01';
+  const devices = [
+    { id: ME, name: 'My PC', type: 'web' as const, online: true, unreachable: false, active: false },
+    { id: PHONE, name: 'Pixel', type: 'android' as const, online: true, unreachable: false, active: true },
+  ];
+
+  beforeEach(() => {
+    usePlayerStore.setState({ currentSong: song, playing: true, currentTime: 50, duration: 200, volume: 0.6 });
+  });
+
+  const volume = () => screen.getAllByLabelText('Volume')[0] as HTMLInputElement;
+
+  it('offers the device picker and, while this device is the one playing, no "playing on" line and a working volume', () => {
+    useConnectStore.setState({ status: 'online', deviceId: ME, devices, activeDeviceId: ME });
+    renderBar();
+
+    expect(screen.getAllByRole('button', { name: 'Connect to a device' }).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Playing on/)).not.toBeInTheDocument();
+    expect(volume()).toBeEnabled();
+  });
+
+  it('while another device plays: says so under the track, and disables the volume slider with an explanation', () => {
+    useConnectStore.setState({ status: 'online', deviceId: ME, devices, activeDeviceId: PHONE });
+    renderBar();
+
+    expect(screen.getAllByText('Playing on Pixel').length).toBeGreaterThan(0);
+    expect(volume()).toBeDisabled();
+    expect(volume().title).toMatch(/other device/i);
+  });
+
+  it('has no picker at all against a server without Connect', () => {
+    useConnectStore.setState({ status: 'unavailable', deviceId: ME, devices: [], activeDeviceId: null });
+    renderBar();
+
+    expect(screen.queryByRole('button', { name: 'Connect to a device' })).not.toBeInTheDocument();
+    expect(volume()).toBeEnabled();
   });
 });

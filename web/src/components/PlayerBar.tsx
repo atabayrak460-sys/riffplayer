@@ -13,6 +13,9 @@ import { useLyricsViewStore } from '../store/lyrics';
 import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { AddToPlaylistDialog } from './AddToPlaylistDialog';
 import { SongInfoDialog } from './SongInfoDialog';
+import { DevicePicker } from './DevicePicker';
+import { RemoteLabel } from './RemoteLabel';
+import { useConnectStore } from '../store/connect';
 
 // Same paths as SongRow.tsx's ICONS — kept local since the two components
 // don't share a parent that would make a common import obviously cheaper.
@@ -54,6 +57,8 @@ export function PlayerBar() {
   const toggleShuffle = usePlayerStore((s) => s.toggleShuffle);
   const playNext = usePlayerStore((s) => s.playNext);
   const addToQueue = usePlayerStore((s) => s.addToQueue);
+  // Another device is the one playing: this bar is only a remote (volume of that device isn't controllable yet).
+  const remoteActive = useConnectStore((s) => s.status === 'online' && s.activeDeviceId !== null && s.activeDeviceId !== s.deviceId);
 
   const navigate = useNavigate();
   const downloadState = useDownloadsStore((s) => s.trackState(currentSong?.id ?? ''));
@@ -229,9 +234,11 @@ export function PlayerBar() {
         max={1}
         step={0.02}
         value={volume}
+        disabled={remoteActive}
+        title={remoteActive ? 'Volume of the other device can\'t be changed from here yet' : undefined}
         onChange={(e) => setVolume(Number(e.target.value))}
         style={{ background: `linear-gradient(to right, #a78bfa ${volumePct}%, #3f3f46 ${volumePct}%)` }}
-        className="w-20 cursor-pointer"
+        className={`w-20 ${remoteActive ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
       />
     </div>
   );
@@ -276,6 +283,7 @@ export function PlayerBar() {
             >
               {currentSong.artist}
             </Link>
+            <RemoteLabel />
           </div>
           <StarButton starred={!!currentSong.starred} opts={{ id: currentSong.id }} />
           {moreOptionsButton}
@@ -289,6 +297,7 @@ export function PlayerBar() {
 
         {/* Right: volume + queue link */}
         <div className="flex items-center gap-3 w-48 justify-end flex-shrink-0">
+          <DevicePicker />
           <button
             onClick={toggleLyrics}
             title="Lyrics"
@@ -419,6 +428,7 @@ export function PlayerBar() {
                     >
                       {currentSong.artist}
                     </Link>
+                    <RemoteLabel />
                   </div>
                   <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-2">
                     <StarButton starred={!!currentSong.starred} opts={{ id: currentSong.id }} />
@@ -438,6 +448,7 @@ export function PlayerBar() {
             <div className="flex justify-center mt-2">{volumeSlider}</div>
 
             <div className="flex items-center justify-center gap-8 mt-3 pt-3 border-t border-zinc-800">
+              <DevicePicker />
               <button
                 onClick={toggleLyrics}
                 className={`flex items-center gap-2 text-sm transition-colors ${

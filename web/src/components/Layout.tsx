@@ -12,6 +12,7 @@ import { Toast } from './Toast';
 import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useDownloadsStore } from '../store/downloads';
+import { useConnectStore } from '../store/connect';
 import { useGlobalShortcuts } from '../lib/useGlobalShortcuts';
 
 export function Layout() {
@@ -31,6 +32,14 @@ export function Layout() {
   useEffect(() => {
     hydrateDownloads();
   }, [hydrateDownloads]);
+
+  // Keep this device connected to the user's other devices for as long as the app is open (Connect).
+  const startConnect = useConnectStore((s) => s.start);
+  const stopConnect = useConnectStore((s) => s.stop);
+  useEffect(() => {
+    startConnect();
+    return stopConnect;
+  }, [startConnect, stopConnect]);
 
   return (
     <div className="h-full flex flex-col bg-zinc-900">
