@@ -14,6 +14,7 @@ interface Props {
 export function LyricsPanel({ onClose, embedded = false }: Props) {
   const currentSong = usePlayerStore((s) => s.currentSong);
   const currentTime = usePlayerStore((s) => s.currentTime);
+  const seek = usePlayerStore((s) => s.seek);
   const activeLyricRef = useRef<HTMLParagraphElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -87,16 +88,28 @@ export function LyricsPanel({ onClose, embedded = false }: Props) {
           {lyrics &&
             lines.map((line, i) => {
               const isActive = i === activeIdx;
+              const className = `text-lg leading-relaxed transition-all duration-300 ${
+                isActive
+                  ? 'text-white font-semibold scale-105 origin-left'
+                  : 'text-zinc-500'
+              }`;
+              // Synced lines jump playback to their timestamp on click, and
+              // resume auto-scroll so the view follows the new position.
+              if (lyrics.synced) {
+                return (
+                  <p key={i} ref={isActive ? activeLyricRef : null}>
+                    <button
+                      type="button"
+                      onClick={() => { seek(line.start / 1000); setAutoScroll(true); }}
+                      className={`${className} block w-full text-left hover:text-white`}
+                    >
+                      {line.value || ' '}
+                    </button>
+                  </p>
+                );
+              }
               return (
-                <p
-                  key={i}
-                  ref={isActive ? activeLyricRef : null}
-                  className={`text-lg leading-relaxed transition-all duration-300 ${
-                    isActive
-                      ? 'text-white font-semibold scale-105 origin-left'
-                      : 'text-zinc-500'
-                  }`}
-                >
+                <p key={i} className={className}>
                   {line.value || ' '}
                 </p>
               );
