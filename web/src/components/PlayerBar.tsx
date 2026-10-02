@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
+import { useAuthStore } from '../store/auth';
+import { useToastStore } from '../store/toast';
+import { adminDeleteTrack } from '../api/subsonic';
 import { CoverArt } from './CoverArt';
 import { StarButton } from './StarButton';
 import { LyricsPanel } from './LyricsPanel';
@@ -54,6 +58,8 @@ export function PlayerBar() {
   const downloadState = useDownloadsStore((s) => s.trackState(currentSong?.id ?? ''));
   const requestDownload = useDownloadsStore((s) => s.requestDownload);
   const removeTrackDownload = useDownloadsStore((s) => s.removeTrackDownload);
+  const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
+  const qc = useQueryClient();
   const { menu, openAt, close } = useContextMenu();
 
   const seekRef = useRef<HTMLInputElement>(null);
@@ -87,6 +93,19 @@ export function PlayerBar() {
   const prevSong = queueIndex > 0 ? queue[queueIndex - 1] : null;
   const nextSong = queueIndex >= 0 && queueIndex < queue.length - 1 ? queue[queueIndex + 1] : null;
 
+  const deleteSong = () => {
+    if (!confirm(`Permanently delete "${currentSong.title}"? This deletes the file and cannot be undone.`)) return;
+    adminDeleteTrack(currentSong.id)
+      .then(() => {
+        useToastStore.getState().show(`Deleted "${currentSong.title}"`);
+        next();
+        qc.invalidateQueries();
+      })
+      .catch((e) => {
+        useToastStore.getState().show(e instanceof Error ? e.message : 'Failed to delete song');
+      });
+  };
+
   const menuItems: ContextMenuItem[] = [
     { label: 'Play next', icon: ICONS.playNext, onClick: () => playNext(currentSong) },
     { label: 'Add to queue', icon: ICONS.queue, onClick: () => addToQueue(currentSong) },
@@ -97,6 +116,7 @@ export function PlayerBar() {
     { label: 'Go to album', icon: ICONS.album, onClick: () => navigate(`/albums/${currentSong.albumId}`) },
     { label: 'Go to artist', icon: ICONS.artist, onClick: () => navigate(`/artists/${currentSong.artistId}`) },
     { label: 'Song info', icon: ICONS.info, onClick: () => setShowInfo(true) },
+    ...(isAdmin ? [{ label: 'Delete song', icon: ICONS.trash, onClick: deleteSong, danger: true }] : []),
   ];
 
   const moreOptionsButton = (

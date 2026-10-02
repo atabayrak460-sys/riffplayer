@@ -423,6 +423,11 @@ export async function adminAddLibrary(l: { name: string; path: string }): Promis
 export async function adminDeleteLibrary(id: number): Promise<void> {
   await apiCall('DELETE', `admin/libraries/${id}`);
 }
+
+/** Permanently deletes the track's file from disk along with its library entry. */
+export async function adminDeleteTrack(id: string): Promise<void> {
+  await apiCall('DELETE', `admin/tracks/${id}`);
+}
 export async function adminScanLibrary(id: number): Promise<void> {
   await apiCall('POST', `admin/libraries/${id}/scan`);
 }

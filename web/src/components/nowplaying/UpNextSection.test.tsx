@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { UpNextSection } from './UpNextSection';
 import { usePlayerStore } from '../../store/player';
 import type { Song } from '../../api/types';
@@ -14,10 +15,13 @@ function makeSong(id: string, title: string): Song {
 }
 
 function renderSection() {
+  const qc = new QueryClient();
   return render(
-    <MemoryRouter>
-      <UpNextSection />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <UpNextSection />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

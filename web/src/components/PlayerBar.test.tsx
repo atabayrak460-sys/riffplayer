@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PlayerBar } from './PlayerBar';
 import { usePlayerStore } from '../store/player';
+import { useAuthStore } from '../store/auth';
 import * as subsonic from '../api/subsonic';
 import type { Song } from '../api/types';
 
@@ -130,6 +131,20 @@ describe('PlayerBar', () => {
 
       expect(screen.getByText('Add to playlist')).toBeInTheDocument();
       expect(screen.getByText('Download')).toBeInTheDocument();
+    });
+
+    it('offers "Delete song" to an admin', () => {
+      useAuthStore.setState({ user: { id: 1, username: 'admin', role: 'admin' } });
+      renderBar();
+      fireEvent.click(screen.getByTitle('More options'));
+      expect(screen.getByText('Delete song')).toBeInTheDocument();
+    });
+
+    it('does not offer "Delete song" to a regular user', () => {
+      useAuthStore.setState({ user: { id: 2, username: 'bob', role: 'user' } });
+      renderBar();
+      fireEvent.click(screen.getByTitle('More options'));
+      expect(screen.queryByText('Delete song')).not.toBeInTheDocument();
     });
   });
 

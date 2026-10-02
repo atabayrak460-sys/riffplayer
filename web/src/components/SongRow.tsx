@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { usePlayerStore } from '../store/player';
 import { useDownloadsStore } from '../store/downloads';
+import { useAuthStore } from '../store/auth';
+import { useToastStore } from '../store/toast';
+import { adminDeleteTrack } from '../api/subsonic';
 import { StarButton } from './StarButton';
 import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { CoverArt } from './CoverArt';
@@ -67,8 +71,26 @@ export function SongRow({
   const { menu, handlers, openAt, close } = useContextMenu();
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
+  const qc = useQueryClient();
 
   const play = () => playSong(song, queue);
+
+  const deleteSong = () => {
+    if (!confirm(`Permanently delete "${song.title}"? This deletes the file and cannot be undone.`)) return;
+    adminDeleteTrack(song.id)
+      .then(() => {
+        useToastStore.getState().show(`Deleted "${song.title}"`);
+        // Could be showing up in any number of lists (album, playlist, All
+        // Songs, search, favorites, ...) — simplest to just refetch
+        // everything rather than track down every query key that might
+        // include it, for a rare, deliberate admin action.
+        qc.invalidateQueries();
+      })
+      .catch((e) => {
+        useToastStore.getState().show(e instanceof Error ? e.message : 'Failed to delete song');
+      });
+  };
 
   const menuItems: ContextMenuItem[] = [
     { label: 'Play next', icon: ICONS.playNext, onClick: () => playNext(song) },
@@ -80,6 +102,7 @@ export function SongRow({
     { label: 'Go to album', icon: ICONS.album, onClick: () => navigate(`/albums/${song.albumId}`) },
     { label: 'Go to artist', icon: ICONS.artist, onClick: () => navigate(`/artists/${song.artistId}`) },
     { label: 'Song info', icon: ICONS.info, onClick: () => setShowInfo(true) },
+    ...(isAdmin ? [{ label: 'Delete song', icon: ICONS.trash, onClick: deleteSong, danger: true }] : []),
   ];
 
   if (condensed) {
