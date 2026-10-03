@@ -248,14 +248,14 @@ describe('GET /connect/stream', () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
-  it('caps the number of devices per user with an in-stream error', async () => {
+  it('caps the number of devices per user, answering a real HTTP 429 (not a stream)', async () => {
     const token = await login();
     for (let i = 0; i < 10; i++) await openStream(token, `device-number-${String(i).padStart(2, '0')}`);
 
     const extra = await openStream(token, 'device-number-99');
 
-    const err = await extra.next('error');
-    expect(err.data).toEqual({ error: 'too_many_devices' });
+    expect(extra.status).toBe(429);
+    expect(extra.headers.get('content-type')).toContain('application/json');
   });
 });
 
@@ -492,5 +492,215 @@ describe('GET /connect/poll (fallback)', () => {
     const token = await login();
     expect((await poll(token, '&since=-3')).status).toBe(400);
     expect((await poll(token, '&since=abc')).status).toBe(400);
+  });
+});
+
+// ── Security review ──────────────────────────────────────────────────────────
+
+describe('security: credentials revoked while streams are open', () => {
+  const changeAdminPassword = async (password: string) => {
+    const { id } = getDb().prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id: number };
+    const res = await app.inject({ method: 'PATCH', url: `/api/v1/admin/users/${id}?${authParams()}`, payload: { password } });
+    expect(res.statusCode).toBe(200);
+  };
+
+  it('closes only the stream opened with the old token; a stream opened after the change stays up', async () => {
+    process.env.RIFFPLAYER_CONNECT_HEARTBEAT_MS = '40';
+    const oldToken = await login();
+    const stale = await openStream(oldToken, PC);
+    await stale.next('hello');
+
+    await changeAdminPassword('changed-pw');
+    const newToken = await login('admin', 'changed-pw');
+    const fresh = await openStream(newToken, PHONE);
+    await fresh.next('hello');
+
+    await stale.next('revoked');
+    await vi.waitFor(() => expect(stale.ended).toBe(true), { timeout: 3000, interval: 10 });
+    await new Promise((r) => setTimeout(r, 150)); // several heartbeats later...
+    expect(fresh.ended).toBe(false);
+    expect(fresh.events.some((e) => e.name === 'revoked')).toBe(false);
+    expect((await get(newToken, '/state')).body.devices.map((d: any) => d.id)).toEqual([PHONE]);
+  });
+
+  it('the heartbeat check alone also revokes just its own connection, never the user\'s newer streams', async () => {
+    process.env.RIFFPLAYER_CONNECT_HEARTBEAT_MS = '600';
+    process.env.RIFFPLAYER_CONNECT_REVOKE_CHECK_MS = '1000000000000'; // disable the delivery-time check: heartbeat only
+    const oldToken = await login();
+    const stale = await openStream(oldToken, PC);
+    await stale.next('hello');
+
+    await changeAdminPassword('changed-pw');
+    const newToken = await login('admin', 'changed-pw');
+    const fresh = await openStream(newToken, PHONE);
+    await fresh.next('hello');
+
+    await stale.next('revoked');
+    expect(fresh.ended).toBe(false);
+    expect((await get(newToken, '/state')).body.devices.map((d: any) => d.id)).toEqual([PHONE]);
+    delete process.env.RIFFPLAYER_CONNECT_REVOKE_CHECK_MS;
+  });
+
+  it('delivers nothing but "revoked" to a revoked stream, even between heartbeats', async () => {
+    process.env.RIFFPLAYER_CONNECT_HEARTBEAT_MS = '60000'; // heartbeat far away: only the delivery check can catch it
+    process.env.RIFFPLAYER_CONNECT_REVOKE_CHECK_MS = '0';
+    const oldToken = await login();
+    const stale = await openStream(oldToken, PC);
+    await stale.next('hello');
+    const before = stale.events.length;
+
+    await changeAdminPassword('changed-pw');
+    const newToken = await login('admin', 'changed-pw');
+    await openStream(newToken, 'secret-device-01'); // makes the server tell every device of the user about it
+
+    await stale.next('revoked');
+    const after = stale.events.slice(before);
+    expect(after.map((e) => e.name)).toEqual(['revoked']);
+    expect(JSON.stringify(after)).not.toContain('secret-device-01');
+    delete process.env.RIFFPLAYER_CONNECT_REVOKE_CHECK_MS;
+  });
+
+  it('a revoked token can no longer poll, command, report or transfer', async () => {
+    const oldToken = await login();
+    await openStream(oldToken, PC);
+    await changeAdminPassword('changed-pw');
+
+    for (const [method, path, body] of [
+      ['GET', '/poll?deviceId=pc-device-0001', undefined],
+      ['GET', '/state', undefined],
+      ['GET', '/queue', undefined],
+      ['POST', '/state', playing(PC)],
+      ['POST', '/command', { deviceId: PC, commandId: 'c', type: 'next' }],
+      ['POST', '/transfer', { deviceId: PC, toDeviceId: PHONE }],
+      ['PATCH', '/device', { deviceId: PC, name: 'x' }],
+    ] as const) {
+      const res = await fetch(`${base}/api/v1/connect${path}`, {
+        method,
+        headers: { authorization: `Bearer ${oldToken}`, 'content-type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      expect(res.status, `${method} ${path}`).toBe(401);
+    }
+  });
+});
+
+describe('security: authentication cannot be skipped', () => {
+  it('a stream request with wrong Subsonic credentials and no token is not a stream and registers nothing', async () => {
+    const token = await login();
+    const res = await fetch(`${base}/api/v1/connect/stream?deviceId=attacker-device-1&u=admin&t=00000000000000000000000000000000&s=abc&v=1.16.1&c=x&f=json`);
+
+    expect(res.headers.get('content-type') ?? '').not.toContain('text/event-stream');
+    res.body?.cancel().catch(() => undefined);
+    expect((await get(token, '/state')).body.devices).toEqual([]);
+  });
+
+  it('a garbage or forged bearer token is refused', async () => {
+    for (const token of ['garbage', 'a.b.c', '']) {
+      const res = await fetch(`${base}/api/v1/connect/stream?deviceId=attacker-device-1`, { headers: { authorization: `Bearer ${token}` } });
+      expect(res.status).toBe(401);
+    }
+  });
+
+  it('a token for a user that no longer exists is refused', async () => {
+    await createUser('mallory', 'mallory-pw');
+    const token = await login('mallory', 'mallory-pw');
+    getDb().prepare("DELETE FROM users WHERE username = 'mallory'").run();
+
+    const res = await fetch(`${base}/api/v1/connect/stream?deviceId=attacker-device-1`, { headers: { authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('security: a command goes to the device the sender saw playing', () => {
+  it('is refused with 409 target_changed when another device took over in the meantime', async () => {
+    const token = await login();
+    const pc = await openStream(token, PC);
+    const phone = await openStream(token, PHONE);
+    const tablet = await openStream(token, 'tablet-device-01');
+    await post(token, '/state', playing(PC));
+    await post(token, '/state', playing(PHONE, { queueIds: [String(trackIds[1])] })); // phone took over
+    await phone.next('state');
+    await pc.next('command', (d) => d.type === 'pause'); // the takeover's own "pause" for the PC
+    await new Promise((r) => setTimeout(r, 50));
+    pc.events.length = 0;
+    phone.events.length = 0;
+
+    const stale = await post(token, '/command', { deviceId: 'tablet-device-01', commandId: 'c1', type: 'next', targetDeviceId: PC });
+
+    expect(stale).toEqual({ status: 409, body: { error: 'target_changed' } });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(phone.events.some((e) => e.name === 'command')).toBe(false);
+    expect(pc.events.some((e) => e.name === 'command')).toBe(false);
+
+    const fresh = await post(token, '/command', { deviceId: 'tablet-device-01', commandId: 'c2', type: 'next', targetDeviceId: PHONE });
+    expect(fresh.status).toBe(202);
+    await phone.next('command', (d) => d.commandId === 'c2');
+    void tablet;
+  });
+
+  it('rejects a malformed targetDeviceId', async () => {
+    const token = await login();
+    await openStream(token, PC);
+    const r = await post(token, '/command', { deviceId: PC, commandId: 'c1', type: 'next', targetDeviceId: '../../x' });
+    expect(r.status).toBe(400);
+  });
+});
+
+describe('security: abuse limits', () => {
+  it('refuses oversized bodies on the small endpoints, and on /state beyond its own limit', async () => {
+    const token = await login();
+    await openStream(token, PC);
+    const big = 'x'.repeat(20 * 1024);
+
+    expect((await post(token, '/command', { deviceId: PC, commandId: 'c', type: 'next', pad: big })).status).toBe(413);
+    expect((await post(token, '/transfer', { deviceId: PC, toDeviceId: PHONE, pad: big })).status).toBe(413);
+    expect((await post(token, '/device', { deviceId: PC, name: 'x', pad: big }, 'PATCH')).status).toBe(413);
+    expect((await post(token, '/state', { ...playing(PC), pad: 'x'.repeat(300 * 1024) })).status).toBe(413);
+  });
+
+  it('rate limits the full-queue read (it resolves up to 5000 songs per call)', async () => {
+    const token = await login();
+    await openStream(token, PC);
+    await post(token, '/state', playing(PC));
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 30; i++) statuses.push((await get(token, '/queue')).status);
+
+    expect(statuses[0]).toBe(200);
+    expect(statuses).toContain(429);
+  });
+
+  it('rate limits renaming (every rename is broadcast to every device)', async () => {
+    const token = await login();
+    await openStream(token, PC);
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 20; i++) statuses.push((await post(token, '/device', { deviceId: PC, name: `n${i}` }, 'PATCH')).status);
+
+    expect(statuses[0]).toBe(200);
+    expect(statuses).toContain(429);
+  });
+
+  it('rate limits reconnecting, so a reconnect loop cannot flood the user\'s other devices', async () => {
+    const token = await login();
+    await openStream(token, PC);
+    const statuses: number[] = [];
+    for (let i = 0; i < 40; i++) statuses.push((await openStream(token, PHONE)).status);
+
+    expect(statuses[0]).toBe(200);
+    expect(statuses).toContain(429);
+  });
+
+  it('a stream with a hostile device name cannot inject markup or extra SSE fields', async () => {
+    const token = await login();
+    const viewer = await openStream(token, PC);
+    await viewer.next('hello');
+
+    await openStream(token, PHONE, `&name=${encodeURIComponent('Evil\nevent: command\ndata: {"type":"next"}\n\n‮gnp')}`);
+
+    const update = await viewer.next('devices', (d) => d.devices.length === 2);
+    const evil = update.data.devices.find((d: any) => d.id === PHONE);
+    expect(evil.name).not.toMatch(/[\n\r‮]/);
+    expect(viewer.events.some((e) => e.name === 'command')).toBe(false);
   });
 });

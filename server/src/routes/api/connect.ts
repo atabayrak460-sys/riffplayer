@@ -4,8 +4,9 @@ import { songAttrs, toJson, type SongRow } from '../subsonic/serialize.js';
 import { SONG_SELECT_LIST, SONG_FROM } from '../subsonic/endpoints/browse.js';
 import {
   ConnectHub, parseCommand, parseDeviceType, parseStateReport, sanitizeName, validDeviceId,
-  type ConnectEvent, type ResolvedSong,
+  type ResolvedSong,
 } from '../../connect/hub.js';
+import { createSseSink, attachCleanup } from '../../connect/sse.js';
 
 // RiffPlayer Connect: lets one user's devices see each other, mirror what is playing and control
 // it. The logic lives in connect/hub.ts; this file is the HTTP surface (SSE stream, long-poll
@@ -15,6 +16,14 @@ import {
 const heartbeatMs = () => Number(process.env.RIFFPLAYER_CONNECT_HEARTBEAT_MS) || 20_000;
 const tickMs = () => Number(process.env.RIFFPLAYER_CONNECT_TICK_MS) || 5_000;
 const pollHoldMs = () => Number(process.env.RIFFPLAYER_CONNECT_POLL_HOLD_MS) || 25_000;
+// How often an open stream re-checks that its token is still valid before delivering an event.
+const revokeCheckMs = () => {
+  const v = process.env.RIFFPLAYER_CONNECT_REVOKE_CHECK_MS;
+  return v !== undefined && v !== '' ? Number(v) : 1_000;
+};
+
+// The small JSON bodies (command, transfer, rename) never need more than this; /state has its own larger limit.
+const SMALL_BODY = 8 * 1024;
 
 const SQLITE_CHUNK = 500;
 
@@ -80,54 +89,77 @@ export async function connectPlugin(app: FastifyInstance): Promise<void> {
     // From here we write the response ourselves and keep it open.
     reply.hijack();
     const raw = reply.raw;
-    const headers = {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      // Tell nginx-style proxies (and Cloudflare) not to hold chunks back.
-      'X-Accel-Buffering': 'no',
-      'X-Content-Type-Options': 'nosniff',
-    };
-
+    let started = false;
     let heartbeat: NodeJS.Timeout | undefined;
-    const sink = {
-      send(seq: number, event: ConnectEvent) {
-        raw.write(`id: ${seq}\nevent: ${event.name}\ndata: ${JSON.stringify(event.data)}\n\n`);
-      },
-      end() {
-        if (heartbeat) clearInterval(heartbeat);
-        if (!raw.writableEnded) raw.end();
-      },
+    let connId = 0;
+
+    // Has this connection's token been revoked (password change, account removed)? Checked at most once a
+    // second, before every delivery, so a revoked stream receives nothing more than "revoked".
+    let lastCheck = 0;
+    let stale = false;
+    const isStale = () => {
+      const now = Date.now();
+      if (now - lastCheck >= revokeCheckMs()) {
+        lastCheck = now;
+        stale = tokenVersion(userId) !== versionAtConnect;
+      }
+      return stale;
     };
 
-    raw.writeHead(200, headers);
-    raw.write('retry: 3000\n\n');
+    const inner = createSseSink(raw, {
+      isStale,
+      onStale: () => hub.revokeConnection(userId, info.deviceId, connId),
+      onEnd: () => { if (heartbeat) clearInterval(heartbeat); },
+    });
+    // The status line and headers go out with the first event, so a refused connection can still get a real HTTP status.
+    const sink = {
+      send(seq: number, event: Parameters<typeof inner.send>[1]) {
+        if (!started) {
+          started = true;
+          raw.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            Connection: 'keep-alive',
+            // Tell nginx-style proxies (and Cloudflare) not to hold chunks back.
+            'X-Accel-Buffering': 'no',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          raw.write('retry: 3000\n\n');
+        }
+        inner.send(seq, event);
+      },
+      end: () => inner.end(),
+    };
+    // A socket error must never become an uncaught exception.
+    raw.on('error', () => {});
 
     const conn = hub.connectStream(userId, info, sink);
     if (!conn.ok) {
-      // Headers are out already, so the refusal is an event instead of a status code.
-      raw.write(`event: error\ndata: ${JSON.stringify({ error: 'too_many_devices' })}\n\n`);
-      raw.end();
+      raw.writeHead(429, { 'Content-Type': 'application/json' });
+      raw.end(JSON.stringify({ error: conn.reason }));
       return;
     }
+    connId = conn.connId;
 
-    // Heartbeat keeps proxies from timing the stream out, and doubles as the revocation check:
-    // a password change bumps token_version, which must close streams opened with the old token.
+    // Heartbeat keeps proxies from timing the stream out, and re-checks the token even while nothing is
+    // being sent (a password change bumps token_version, which must close streams opened with the old token).
     heartbeat = setInterval(() => {
       if (tokenVersion(userId) !== versionAtConnect) {
-        hub.revoke(userId);
+        hub.revokeConnection(userId, info.deviceId, connId);
         return;
       }
-      try {
-        raw.write(': ping\n\n');
-      } catch {
-        // a dead socket is cleaned up by the close handler below
+      if (!raw.writableEnded && !raw.destroyed) {
+        try {
+          raw.write(': ping\n\n');
+        } catch {
+          // a dead socket is cleaned up by the close handler below
+        }
       }
     }, heartbeatMs());
 
-    req.raw.on('close', () => {
+    attachCleanup(req.raw, () => {
       if (heartbeat) clearInterval(heartbeat);
-      hub.disconnect(userId, info.deviceId, conn.connId);
+      hub.disconnect(userId, info.deviceId, connId);
     });
   });
 
@@ -152,6 +184,7 @@ export async function connectPlugin(app: FastifyInstance): Promise<void> {
   app.get('/state', async (req: FastifyRequest) => hub.snapshot(req.subsonicUser!.id));
 
   app.get('/queue', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!hub.allowQueueRead(req.subsonicUser!.id)) return reply.code(429).send({ error: 'rate_limited' });
     const queue = hub.queue(req.subsonicUser!.id);
     if (!queue) return reply.code(404).send({ error: 'nothing_playing' });
     return queue;
@@ -175,19 +208,22 @@ export async function connectPlugin(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post('/command', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/command', { bodyLimit: SMALL_BODY }, async (req: FastifyRequest, reply: FastifyReply) => {
     const deviceId = deviceIdFrom(req.body);
     if (!deviceId) return bad(reply, DEVICE_ID_HELP);
     const cmd = parseCommand(req.body);
     if (typeof cmd === 'string') return bad(reply, cmd);
+    // The device the sender saw playing: the command is refused if another one has taken over since.
+    const target = (req.body as Record<string, unknown>).targetDeviceId;
+    if (target !== undefined && !validDeviceId(target)) return bad(reply, 'targetDeviceId is not a valid device id');
 
-    const r = hub.sendCommand(req.subsonicUser!.id, deviceId, cmd);
+    const r = hub.sendCommand(req.subsonicUser!.id, deviceId, cmd, target);
     if (r.ok) return reply.code(202).send({ delivered: true, duplicate: r.duplicate === true });
     if (r.reason === 'rate_limited') return reply.code(429).send({ error: 'rate_limited' });
     return reply.code(409).send({ error: r.reason });
   });
 
-  app.post('/transfer', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/transfer', { bodyLimit: SMALL_BODY }, async (req: FastifyRequest, reply: FastifyReply) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const deviceId = deviceIdFrom(body);
     if (!deviceId || !validDeviceId(body.toDeviceId)) return bad(reply, `${DEVICE_ID_HELP}; toDeviceId required too`);
@@ -202,12 +238,14 @@ export async function connectPlugin(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.patch('/device', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.patch('/device', { bodyLimit: SMALL_BODY }, async (req: FastifyRequest, reply: FastifyReply) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const deviceId = deviceIdFrom(body);
     if (!deviceId) return bad(reply, DEVICE_ID_HELP);
     if (typeof body.name !== 'string') return bad(reply, 'name required');
-    if (!hub.rename(req.subsonicUser!.id, deviceId, body.name)) return reply.code(404).send({ error: 'unknown_device' });
+    const r = hub.rename(req.subsonicUser!.id, deviceId, body.name);
+    if (r === 'unknown_device') return reply.code(404).send({ error: 'unknown_device' });
+    if (r === 'rate_limited') return reply.code(429).send({ error: 'rate_limited' });
     return { ok: true };
   });
 }

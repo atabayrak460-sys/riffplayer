@@ -5,6 +5,8 @@
 // nothing here owns a timer (the plugin calls tick()), so every rule is unit-testable.
 // See docs/CONNECT-DESIGN.md for the full design.
 
+import { randomUUID } from 'node:crypto';
+
 export type DeviceType = 'web' | 'android' | 'desktop';
 export const DEVICE_TYPES: readonly DeviceType[] = ['web', 'android', 'desktop'];
 
@@ -97,7 +99,14 @@ const RECENT_COMMANDS = 200;
 const LIMITS = {
   command: { max: 60, windowMs: 10_000 },
   state: { max: 120, windowMs: 10_000 },
+  // Each of these makes the server do work or tell every other device about it, so they are bounded too.
+  queue: { max: 20, windowMs: 10_000 }, // resolves up to MAX_QUEUE_IDS songs per call
+  rename: { max: 10, windowMs: 10_000 }, // broadcast to every device
+  connect: { max: 30, windowMs: 60_000 }, // every (re)connect is broadcast to every device
 } as const;
+
+/** No real track or seek is longer than this; anything bigger is a bug or an attack. */
+export const MAX_POSITION_MS = 7 * 24 * 3600 * 1000;
 
 type Bucket = keyof typeof LIMITS;
 
@@ -162,8 +171,13 @@ export function validDeviceId(v: unknown): v is string {
 
 export function sanitizeName(v: unknown, fallback = 'Unnamed device'): string {
   if (typeof v !== 'string') return fallback;
-  // eslint-disable-next-line no-control-regex
-  const cleaned = v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_NAME_LENGTH);
+  // Control characters, and the bidirectional-text overrides that can make one device's name pass for another's.
+  const cleaned = v
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '')
+    .trim()
+    .slice(0, MAX_NAME_LENGTH);
   return cleaned || fallback;
 }
 
@@ -185,7 +199,7 @@ export function parseStateReport(body: unknown): StateReport | string {
     queueIds = b.queueIds as string[];
   }
   if (!Number.isInteger(b.index) || (b.index as number) < 0) return 'index must be a non-negative integer';
-  if (!isFiniteNumber(b.positionMs) || b.positionMs < 0) return 'positionMs must be a non-negative number';
+  if (!isFiniteNumber(b.positionMs) || b.positionMs < 0 || b.positionMs > MAX_POSITION_MS) return 'positionMs must be a sane non-negative number';
   if (typeof b.playing !== 'boolean') return 'playing must be a boolean';
   if (!REPEAT_MODES.includes(b.repeat as RepeatMode)) return 'repeat must be off, all or one';
   if (typeof b.shuffle !== 'boolean') return 'shuffle must be a boolean';
@@ -213,7 +227,7 @@ export function parseCommand(body: unknown): CommandInput | string {
   if (typeof b.commandId !== 'string' || !b.commandId || b.commandId.length > 64) return 'commandId (string, max 64) required';
   if (!COMMAND_TYPES.includes(b.type as CommandType)) return `type must be one of ${COMMAND_TYPES.join(', ')}`;
   if (b.type === 'seek') {
-    if (!isFiniteNumber(b.positionMs) || b.positionMs < 0) return 'seek needs a non-negative positionMs';
+    if (!isFiniteNumber(b.positionMs) || b.positionMs < 0 || b.positionMs > MAX_POSITION_MS) return 'seek needs a sane non-negative positionMs';
     return { commandId: b.commandId, type: 'seek', positionMs: Math.round(b.positionMs) };
   }
   return { commandId: b.commandId, type: b.type as CommandType };
@@ -232,7 +246,6 @@ export class ConnectHub {
   private readonly maxDevices: number;
   private readonly idleStateMs: number;
   private nextConnId = 1;
-  private nextSystemCommand = 1;
 
   constructor(opts: HubOptions) {
     this.resolveSongs = opts.resolveSongs;
@@ -252,9 +265,9 @@ export class ConnectHub {
     userId: number,
     info: { deviceId: string; name: string; type: DeviceType },
     sink: StreamSink,
-  ): { ok: true; connId: number } | { ok: false; reason: 'too_many_devices' } {
+  ): { ok: true; connId: number } | { ok: false; reason: 'too_many_devices' | 'rate_limited' } {
     const device = this.register(userId, info, 'stream', sink);
-    if (!device) return { ok: false, reason: 'too_many_devices' };
+    if (typeof device === 'string') return { ok: false, reason: device };
     return { ok: true, connId: device.connId };
   }
 
@@ -275,28 +288,38 @@ export class ConnectHub {
     info: { deviceId: string; name: string; type: DeviceType },
     since: number | undefined,
     holdMs: number,
-  ): Promise<{ ok: true; events: { seq: number; event: ConnectEvent }[] } | { ok: false; reason: 'too_many_devices' }> {
-    let hub = this.users.get(userId);
+  ): Promise<{ ok: true; events: { seq: number; event: ConnectEvent }[] } | { ok: false; reason: 'too_many_devices' | 'rate_limited' }> {
+    const hub = this.users.get(userId);
     let device = hub?.devices.get(info.deviceId);
+    let registeredNow = false;
     // A stream-connected device can't also poll; a (re)started poller starts a new connection.
     if (!device || device.transport !== 'poll' || since === undefined) {
-      device = this.register(userId, info, 'poll') ?? undefined;
-      if (!device) return { ok: false, reason: 'too_many_devices' };
-      hub = this.users.get(userId)!;
+      const registered = this.register(userId, info, 'poll');
+      if (typeof registered === 'string') return { ok: false, reason: registered };
+      device = registered;
+      registeredNow = true;
     }
-    device.lastSeen = this.now();
-    // Stay registered while a request is waiting: only time spent *between* polls counts as absence.
-    const after = since ?? 0;
+    const polled = device;
+    polled.lastSeen = this.now();
+    // A device that had to be registered anew (its old registration timed out) numbers its events from 1
+    // again, so the caller's old `since` means nothing: start from the beginning.
+    const after = registeredNow ? 0 : (since ?? 0);
 
-    const pending = () => device!.buffer.filter((e) => e.seq > after);
+    const pending = () => polled.buffer.filter((e) => e.seq > after);
     if (pending().length === 0 && holdMs > 0) {
-      await new Promise<void>((resolve) => {
+      // Only one request per device waits at a time: a newer poll releases the older one at once, so a
+      // client can't pile up held requests.
+      polled.wake?.();
+      let release!: () => void;
+      const waiting = new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, holdMs);
-        device!.wake = () => { clearTimeout(timer); resolve(); };
+        release = () => { clearTimeout(timer); resolve(); };
       });
-      device.wake = undefined;
+      polled.wake = release;
+      await waiting;
+      if (polled.wake === release) polled.wake = undefined; // not if a newer poll already took over
     }
-    device.lastSeen = this.now();
+    polled.lastSeen = this.now();
     return { ok: true, events: pending() };
   }
 
@@ -332,7 +355,7 @@ export class ConnectHub {
         this.emit(previous, {
           name: 'command',
           data: {
-            commandId: `takeover-${this.nextSystemCommand++}`,
+            commandId: `takeover-${randomUUID()}`,
             type: 'pause',
             expiresAtMs: this.now() + this.commandTtlMs,
           },
@@ -361,14 +384,20 @@ export class ConnectHub {
     userId: number,
     fromDeviceId: string,
     cmd: CommandInput,
+    expectedActiveId?: string,
   ):
     | { ok: true; duplicate?: boolean }
-    | { ok: false; reason: 'unknown_device' | 'no_active_device' | 'self' | 'rate_limited' } {
+    | { ok: false; reason: 'unknown_device' | 'no_active_device' | 'self' | 'rate_limited' | 'target_changed' } {
     const hub = this.users.get(userId);
     if (!hub?.devices.has(fromDeviceId)) return { ok: false, reason: 'unknown_device' };
     if (!this.allow(hub, 'command')) return { ok: false, reason: 'rate_limited' };
 
     if (hub.recentCommands.includes(cmd.commandId)) return { ok: true, duplicate: true };
+    // The sender aimed at the device it saw playing; if another one took over since, the command must not
+    // land on the new one (a "next" meant for the PC would skip a track on the phone).
+    if (expectedActiveId !== undefined && hub.activeDeviceId !== expectedActiveId) {
+      return { ok: false, reason: 'target_changed' };
+    }
     const target = hub.activeDeviceId ? hub.devices.get(hub.activeDeviceId) : undefined;
     if (!target) return { ok: false, reason: 'no_active_device' };
     if (target.id === fromDeviceId) return { ok: false, reason: 'self' };
@@ -416,7 +445,7 @@ export class ConnectHub {
       this.emit(current, {
         name: 'command',
         data: {
-          commandId: `transfer-${this.nextSystemCommand++}`,
+          commandId: `transfer-${randomUUID()}`,
           type: 'pause',
           expiresAtMs: this.now() + this.commandTtlMs,
         },
@@ -428,13 +457,20 @@ export class ConnectHub {
     return { ok: true, status: 'done' };
   }
 
-  rename(userId: number, deviceId: string, name: string): boolean {
+  rename(userId: number, deviceId: string, name: string): 'ok' | 'unknown_device' | 'rate_limited' {
     const hub = this.users.get(userId);
     const device = hub?.devices.get(deviceId);
-    if (!hub || !device) return false;
+    if (!hub || !device) return 'unknown_device';
+    if (!this.allow(hub, 'rename')) return 'rate_limited';
     device.name = sanitizeName(name, device.name);
     this.broadcastDevices(hub);
-    return true;
+    return 'ok';
+  }
+
+  /** Whether this user may fetch the full queue now (it costs up to MAX_QUEUE_IDS song lookups). */
+  allowQueueRead(userId: number): boolean {
+    const hub = this.users.get(userId);
+    return hub ? this.allow(hub, 'queue') : true;
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────
@@ -512,6 +548,18 @@ export class ConnectHub {
     this.users.delete(userId);
   }
 
+  /**
+   * Tells one connection its credentials are no longer valid and drops it. Other connections of the same
+   * user — e.g. ones opened after a password change — are left alone.
+   */
+  revokeConnection(userId: number, deviceId: string, connId: number): void {
+    const hub = this.users.get(userId);
+    const device = hub?.devices.get(deviceId);
+    if (!hub || !device || device.connId !== connId) return;
+    this.emit(device, { name: 'revoked', data: {} });
+    this.removeDevice(hub, device);
+  }
+
   // ── Internals ──────────────────────────────────────────────────────────────
 
   private hubFor(userId: number): UserHub {
@@ -526,7 +574,7 @@ export class ConnectHub {
         queueVersion: 0,
         pending: null,
         recentCommands: [],
-        hits: { command: [], state: [] },
+        hits: { command: [], state: [], queue: [], rename: [], connect: [] },
         emptySince: null,
       };
       this.users.set(userId, hub);
@@ -539,13 +587,15 @@ export class ConnectHub {
     info: { deviceId: string; name: string; type: DeviceType },
     transport: 'stream' | 'poll',
     sink?: StreamSink,
-  ): Device | null {
+  ): Device | 'too_many_devices' | 'rate_limited' {
     const hub = this.hubFor(userId);
     const existing = hub.devices.get(info.deviceId);
-    if (!existing && hub.devices.size >= this.maxDevices) {
+    const refuse = (reason: 'too_many_devices' | 'rate_limited') => {
       if (hub.devices.size === 0) this.users.delete(userId);
-      return null;
-    }
+      return reason;
+    };
+    if (!existing && hub.devices.size >= this.maxDevices) return refuse('too_many_devices');
+    if (!this.allow(hub, 'connect')) return refuse('rate_limited');
     // The same device reconnecting replaces its previous connection.
     if (existing) {
       existing.sink?.end();
