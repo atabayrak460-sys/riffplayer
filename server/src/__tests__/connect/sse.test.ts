@@ -126,3 +126,23 @@ describe('attachCleanup', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('review: a stale connection that cannot be revoked yet', () => {
+  it('retries the revocation on the next delivery until the hook reports it acted', () => {
+    const raw = new FakeRaw();
+    let ready = false;
+    const onStale = vi.fn(() => ready);
+    const sink = createSseSink(raw, { isStale: () => true, onStale });
+
+    sink.send(1, { name: 'devices', data: { devices: [], activeDeviceId: null } }); // e.g. during connect, before the connection has an id
+    sink.send(2, { name: 'devices', data: { devices: [], activeDeviceId: null } });
+    expect(onStale).toHaveBeenCalledTimes(2);
+
+    ready = true;
+    sink.send(3, { name: 'devices', data: { devices: [], activeDeviceId: null } });
+    sink.send(4, { name: 'devices', data: { devices: [], activeDeviceId: null } });
+
+    expect(onStale).toHaveBeenCalledTimes(3); // acted once: not called again
+    expect(raw.written).toEqual([]); // and nothing but "revoked" was ever delivered
+  });
+});

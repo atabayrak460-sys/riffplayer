@@ -30,9 +30,12 @@ vi.mock('../lib/offlineDb', () => ({ getTrackAudioBlob: vi.fn() }));
 vi.mock('../api/subsonic', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/subsonic')>()),
   scrobble: vi.fn().mockResolvedValue(undefined),
+  savePlayQueue: vi.fn().mockResolvedValue(undefined),
+  getPlayQueue: vi.fn().mockResolvedValue(null),
 }));
 
 const api = await import('../api/connect');
+const subsonic = await import('../api/subsonic');
 const { useConnectStore } = await import('./connect');
 const { usePlayerStore, remote: remoteRegistry } = await import('./player');
 const { useAuthStore } = await import('./auth');
@@ -92,6 +95,8 @@ beforeEach(() => {
   vi.mocked(api.transferPlayback).mockResolvedValue('ok');
   vi.mocked(api.renameDevice).mockResolvedValue(true);
   vi.mocked(api.fetchQueue).mockResolvedValue(null);
+  vi.mocked(subsonic.savePlayQueue).mockResolvedValue(undefined);
+  vi.mocked(subsonic.getPlayQueue).mockResolvedValue(null);
   FakeAudio.instance.paused = true;
 });
 
@@ -245,6 +250,29 @@ describe('controlling the other device', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(api.sendCommand).toHaveBeenLastCalledWith(ME, 'play', undefined, OTHER);
     expect(usePlayerStore.getState().playing).toBe(true);
+  });
+
+  it('puts the play/pause button back when the command could not be delivered', async () => {
+    vi.mocked(api.sendCommand).mockResolvedValue('target_changed');
+
+    usePlayerStore.getState().togglePlay(); // optimistic pause
+    expect(usePlayerStore.getState().playing).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(usePlayerStore.getState().playing).toBe(true);
+    expect(connectState().remote?.playing).toBe(true);
+  });
+
+  it('does not undo a newer state that arrived while the command was in flight', async () => {
+    let finish!: (v: 'error') => void;
+    vi.mocked(api.sendCommand).mockReturnValue(new Promise((r) => { finish = r as never; }));
+
+    usePlayerStore.getState().togglePlay(); // optimistic pause
+    handle('state', remoteState({ playing: false, positionMs: 20_000, positionAtMs: Date.now() })); // the server's own news
+    finish('error');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(connectState().remote?.positionMs).toBe(20_000); // the server's state, not the pre-click one
   });
 
   it('keeps the shown position steady across an optimistic pause', async () => {
@@ -418,6 +446,36 @@ describe('load (handover to this device)', () => {
     expect(restoreQueue.mock.calls[0][0].map((s: Song) => s.id)).toEqual(['a', 'b', 'c']);
     expect(usePlayerStore.getState().repeatMode).toBe('all');
     expect(usePlayerStore.getState().shuffle).toBe(true);
+  });
+
+  it('retries a queue that could not be fetched at first (the device is already the active one by then)', async () => {
+    const restoreQueue = vi.fn();
+    usePlayerStore.setState({ restoreQueue });
+    vi.mocked(api.fetchQueue)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ queueVersion: 2, index: 0, songs: [song('a')] });
+
+    handle('load', load);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(restoreQueue).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(restoreQueue).toHaveBeenCalledTimes(1);
+    expect(useToastStore.getState().message).toBeNull();
+  });
+
+  it('tells the user when the queue cannot be fetched after several tries', async () => {
+    const restoreQueue = vi.fn();
+    usePlayerStore.setState({ restoreQueue });
+    vi.mocked(api.fetchQueue).mockResolvedValue(null);
+
+    handle('load', load);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(api.fetchQueue).toHaveBeenCalledTimes(3);
+    expect(restoreQueue).not.toHaveBeenCalled();
+    expect(useToastStore.getState().message).toBe("Couldn't load the queue from the other device");
   });
 
   it('survives a handover whose queue cannot be loaded', async () => {
@@ -775,6 +833,27 @@ describe('the connection loop', () => {
     expect(streams[0].aborted()).toBe(true);
   });
 
+  it('stop() followed at once by start() leaves exactly one connection loop (the old one must not wake up and carry on)', async () => {
+    const answers: ((r: Response) => void)[] = [];
+    vi.mocked(api.openStream).mockImplementation(() => new Promise<Response>((r) => answers.push(r)));
+
+    connectState().start();
+    await tick();
+    connectState().stop();
+    connectState().start();
+    await tick();
+    expect(api.openStream).toHaveBeenCalledTimes(2);
+
+    // the first, abandoned attempt now gets an answer: a stream that ends straight away
+    const stale = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
+    answers[0](new Response(stale, { status: 200 }));
+    await tick(10_000);
+
+    expect(api.openStream).toHaveBeenCalledTimes(2);
+    // ...and it must not have meddled with the new session either (it would mark the connection offline)
+    expect(connectState().status).toBe('connecting');
+  });
+
   it('an older server without /connect hides the feature and stops trying', async () => {
     vi.mocked(api.openStream).mockImplementation((_i, signal) => Promise.resolve(fakeStream(signal, 404).response));
     connectState().start();
@@ -963,6 +1042,219 @@ describe('the connection loop', () => {
 
       await tick(10_000);
       expect(vi.mocked(api.pollOnce).mock.calls.length).toBeGreaterThan(first);
+    });
+  });
+});
+
+// ── Resume where you left off ────────────────────────────────────────────────
+
+describe('resume where you left off', () => {
+  const saved = (over: Record<string, unknown> = {}) => ({
+    songs: [song('a'), song('b'), song('c')], current: 'b', positionMs: 83_000,
+    changed: new Date().toISOString(), ...over,
+  });
+  const noOneIsPlaying = () => handle('snapshot', { devices: [device(ME)], activeDeviceId: null, state: null });
+  type Restore = (songs: Song[], index: number, positionMs: number, play: boolean, counted?: boolean) => void;
+  let restoreQueue: Mock<Restore>;
+
+  beforeEach(() => {
+    startOnline();
+    restoreQueue = vi.fn<Restore>();
+    usePlayerStore.setState({ restoreQueue });
+  });
+
+  describe('loading', () => {
+    it('puts the saved queue back, paused, at the saved song and position — when nothing is playing anywhere', async () => {
+      vi.mocked(subsonic.getPlayQueue).mockResolvedValue(saved());
+
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(restoreQueue).toHaveBeenCalledTimes(1);
+      const [songs, index, positionMs, play, counted] = restoreQueue.mock.calls[0];
+      expect(songs.map((x: Song) => x.id)).toEqual(['a', 'b', 'c']);
+      expect([index, positionMs, play, counted]).toEqual([1, 83_000, false, false]);
+    });
+
+    it('starts at the first song when the saved current song is no longer in the queue', async () => {
+      vi.mocked(subsonic.getPlayQueue).mockResolvedValue(saved({ current: 'gone' }));
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(restoreQueue.mock.calls[0][1]).toBe(0);
+    });
+
+    it('does nothing when another device is already playing', async () => {
+      vi.mocked(subsonic.getPlayQueue).mockResolvedValue(saved());
+      otherIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(subsonic.getPlayQueue).not.toHaveBeenCalled();
+      expect(restoreQueue).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when this device already has a queue', async () => {
+      vi.mocked(subsonic.getPlayQueue).mockResolvedValue(saved());
+      usePlayerStore.setState({ queue: [song('local')], queueIndex: 0, currentSong: song('local') });
+
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(subsonic.getPlayQueue).not.toHaveBeenCalled();
+      expect(restoreQueue).not.toHaveBeenCalled();
+    });
+
+    it('only tries once per connection session (a later snapshot does not fetch again)', async () => {
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(subsonic.getPlayQueue).toHaveBeenCalledTimes(1);
+    });
+
+    it('does nothing when no queue was saved', async () => {
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(restoreQueue).not.toHaveBeenCalled();
+    });
+
+    it('ignores a queue saved more than 30 days ago', async () => {
+      vi.mocked(subsonic.getPlayQueue).mockResolvedValue(saved({ changed: new Date(Date.now() - 31 * 86_400_000).toISOString() }));
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(restoreQueue).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite something the user started while the saved queue was being fetched', async () => {
+      let finish!: (v: ReturnType<typeof saved>) => void;
+      vi.mocked(subsonic.getPlayQueue).mockReturnValue(new Promise((r) => { finish = r as never; }) as never);
+
+      noOneIsPlaying();
+      usePlayerStore.setState({ queue: [song('local')], queueIndex: 0, currentSong: song('local') });
+      finish(saved());
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(restoreQueue).not.toHaveBeenCalled();
+    });
+
+    it('survives a failing request', async () => {
+      vi.mocked(subsonic.getPlayQueue).mockRejectedValue(new Error('offline'));
+      expect(() => noOneIsPlaying()).not.toThrow();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(restoreQueue).not.toHaveBeenCalled();
+    });
+
+    it('is tried again after the connection is stopped and started', async () => {
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+      connectState().stop();
+      startOnline();
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(subsonic.getPlayQueue).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('saving', () => {
+    const play = (over: Record<string, unknown> = {}) =>
+      usePlayerStore.setState({
+        queue: [song('a'), song('b'), song('c')], queueIndex: 1, currentSong: song('b'), playing: true, currentTime: 12.3,
+        ...over,
+      });
+    const saves = () => vi.mocked(subsonic.savePlayQueue).mock.calls;
+
+    beforeEach(() => {
+      useConnectStore.setState({ activeDeviceId: ME });
+    });
+
+    it('saves the queue, the current song and the position once this device plays', async () => {
+      play();
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(saves()).toEqual([[['a', 'b', 'c'], 'b', 12_300]]);
+    });
+
+    it('saves at once when playback is paused or the track changes, even right after a save', async () => {
+      play();
+      await vi.advanceTimersByTimeAsync(250);
+
+      usePlayerStore.setState({ playing: false });
+      await vi.advanceTimersByTimeAsync(250);
+      expect(saves().length).toBe(2);
+
+      usePlayerStore.setState({ queueIndex: 2, currentSong: song('c') });
+      await vi.advanceTimersByTimeAsync(250);
+      expect(saves().length).toBe(3);
+      expect(saves()[2][1]).toBe('c');
+    });
+
+    it('does not save again for mere playback progress until ten seconds have passed', async () => {
+      play();
+      await vi.advanceTimersByTimeAsync(250);
+      expect(saves().length).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(saves().length).toBe(1);
+
+      usePlayerStore.setState({ currentTime: 22 });
+      await vi.advanceTimersByTimeAsync(2_000); // the 10 s drift report
+      expect(saves().length).toBe(2);
+      expect(saves()[1][2]).toBe(22_000);
+    });
+
+    it('saves nothing while another device is the one playing, or without a queue, or while offline', async () => {
+      otherIsPlaying();
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(saves()).toEqual([]);
+
+      useConnectStore.setState({ activeDeviceId: ME });
+      usePlayerStore.setState({ queue: [], currentSong: null, queueIndex: -1, playing: true });
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(saves()).toEqual([]);
+
+      useConnectStore.setState({ status: 'offline' });
+      play();
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(saves()).toEqual([]);
+    });
+
+    it('keeps the saved queue to a window around the current song (a huge queue would be slow to send and store)', async () => {
+      const queue = Array.from({ length: 800 }, (_, i) => song(`s${i}`));
+
+      play({ queue, queueIndex: 700, currentSong: queue[700] });
+      await vi.advanceTimersByTimeAsync(250);
+      let ids = saves().at(-1)![0];
+      expect(ids.length).toBe(150); // 650 .. 799
+      expect([ids[0], ids.at(-1)]).toEqual(['s650', 's799']);
+      expect(ids).toContain('s700');
+
+      play({ queue, queueIndex: 10, currentSong: queue[10] });
+      await vi.advanceTimersByTimeAsync(250);
+      ids = saves().at(-1)![0];
+      expect(ids.length).toBe(500);
+      expect(ids[0]).toBe('s0');
+      expect(ids).toContain('s10');
+    });
+
+    it('survives a failing save', async () => {
+      vi.mocked(subsonic.savePlayQueue).mockRejectedValue(new Error('offline'));
+      play();
+      await vi.advanceTimersByTimeAsync(250);
+      expect(saves().length).toBe(1);
+    });
+
+    it('does not immediately write back the queue it just restored', async () => {
+      vi.mocked(subsonic.getPlayQueue).mockResolvedValue(saved());
+      useConnectStore.setState({ activeDeviceId: null });
+      // the real restoreQueue loads the queue into the player straight away; emulate that
+      restoreQueue.mockImplementation((songs, index, positionMs) =>
+        usePlayerStore.setState({ queue: songs, queueIndex: index, currentSong: songs[index], playing: false, currentTime: positionMs / 1000 }),
+      );
+      noOneIsPlaying();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(saves()).toEqual([]);
     });
   });
 });

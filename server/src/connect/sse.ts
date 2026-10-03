@@ -22,7 +22,8 @@ export interface SseSinkOptions {
   onOverflow?: () => void;
   /** True once the connection's credentials were revoked — nothing but the "revoked" event may be sent then. */
   isStale?: () => boolean;
-  onStale?: () => void;
+  /** Revoke the connection. Return false if that is not possible yet (it is retried on the next delivery). */
+  onStale?: () => boolean | void;
   onEnd?: () => void;
 }
 
@@ -37,10 +38,7 @@ export function createSseSink(raw: SseTarget, options: SseSinkOptions = {}): Str
     send(seq: number, event: ConnectEvent): void {
       if (raw.writableEnded || raw.destroyed) return; // a write after the end would throw
       if (event.name !== 'revoked' && options.isStale?.()) {
-        if (!staleHandled) {
-          staleHandled = true;
-          options.onStale?.();
-        }
+        if (!staleHandled) staleHandled = options.onStale?.() !== false;
         return;
       }
       if (raw.writableLength > maxBuffered) {

@@ -10,6 +10,7 @@ import { usePlayerStore, remote as remoteRegistry, currentPlayCounted, type Remo
 import { useAuthStore } from './auth';
 import { useToastStore } from './toast';
 import * as api from '../api/connect';
+import { savePlayQueue, getPlayQueue } from '../api/subsonic';
 import type { CommandInstruction, DeviceInfo, DeviceIdentity, LoadInstruction, PublicState, Snapshot } from '../api/connect';
 import { SseParser, backoffMs, defaultDeviceName, newId, positionNow } from '../lib/connectProtocol';
 
@@ -44,13 +45,22 @@ const SEEK_DEBOUNCE_MS = 150;
 const DRIFT_REPORT_MS = 10_000;
 const MIRROR_TICK_MS = 250;
 const SEEK_JUMP_SECONDS = 1.5;
+// Resume where you left off: the queue saved on the server is a window around the current song, written
+// when something meaningful changes and otherwise at most every ~10 s while playing.
+const RESUME_WINDOW = 500;
+const RESUME_LOOKBEHIND = 50;
+const RESUME_MAX_AGE_MS = 30 * 24 * 3600 * 1000;
+// a little under the 10 s drift report, so that report always saves while playing
+const SAVE_EVERY_MS = 9_000;
 /** How long mirroring yields after the user starts a track here, while the takeover reaches the server. */
 const TAKEOVER_GRACE_MS = 8_000;
+/** Fetching the queue of a handover: tries, and the waits between them. */
+const LOAD_ATTEMPTS = 3;
+const LOAD_RETRY_MS = [500, 1_500];
 
 // ── Identity (persisted) ─────────────────────────────────────────────────────
 
 const ID_KEY = 'riffplayer-device-id';
-const TAB_KEY = 'riffplayer-tab-id';
 const NAME_KEY = 'riffplayer-device-name';
 
 function readStorage(storage: () => Storage, key: string): string | null {
@@ -61,8 +71,9 @@ function writeStorage(storage: () => Storage, key: string, value: string): void 
 }
 
 /**
- * Stable per browser (localStorage) plus a per-tab part (sessionStorage): two tabs of one browser must be
- * two devices, otherwise they would keep replacing each other's connection.
+ * Stable per browser (localStorage) plus a part that is new on every page load: two tabs of one browser must
+ * be two devices, otherwise they would keep replacing each other's connection. (Not kept in sessionStorage:
+ * "Duplicate tab" copies that, which would give both tabs the same id.)
  */
 function loadDeviceId(): string {
   let browserId = readStorage(() => localStorage, ID_KEY);
@@ -70,12 +81,7 @@ function loadDeviceId(): string {
     browserId = newId();
     writeStorage(() => localStorage, ID_KEY, browserId);
   }
-  let tabId = readStorage(() => sessionStorage, TAB_KEY);
-  if (!tabId) {
-    tabId = newId().slice(0, 8);
-    writeStorage(() => sessionStorage, TAB_KEY, tabId);
-  }
-  return `${browserId}-${tabId}`.slice(0, 64);
+  return `${browserId}-${newId().slice(0, 8)}`.slice(0, 64);
 }
 
 function loadDeviceName(): string {
@@ -85,6 +91,8 @@ function loadDeviceName(): string {
 // ── Module-level runtime (not reactive) ──────────────────────────────────────
 
 let running = false;
+/** Bumped by every start() and stop(): a connection loop that finds it changed belongs to a previous session and ends. */
+let generation = 0;
 let abort: AbortController | null = null;
 let wakeSleep: (() => void) | null = null;
 let serverOffsetMs = 0;
@@ -106,6 +114,8 @@ let takeoverUntil = 0;
 
 let lastQueueKey: string | null = null;
 let forceQueue = true;
+let resumeTried = false;
+let lastSave: { key: string; index: number; playing: boolean; at: number } | null = null;
 const seenCommands = new Set<string>();
 let lastLocal = { time: 0, at: 0 };
 
@@ -209,10 +219,11 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
       case 'unavailable':
         get().stop();
         set({ status: 'unavailable' });
-        break;
+        return;
       default:
         break; // not_active / rate_limited / unknown_device / error: nothing useful to do
     }
+    saveResume();
   }
 
   function onLocalChange(s: ReturnType<typeof usePlayerStore.getState>, prev: ReturnType<typeof usePlayerStore.getState>): void {
@@ -230,6 +241,50 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
       s.queue !== prev.queue || s.queueIndex !== prev.queueIndex || s.playing !== prev.playing ||
       s.repeatMode !== prev.repeatMode || s.shuffle !== prev.shuffle;
     if ((changed || jumped) && shouldReport()) scheduleReport();
+  }
+
+  // ── Resume where you left off ────────────────────────────────────────────────
+
+  /** The part of the queue worth saving: a window around the current song. */
+  function resumeWindow(): { ids: string[]; key: string } {
+    const p = usePlayerStore.getState();
+    const start = Math.max(0, p.queueIndex - RESUME_LOOKBEHIND);
+    const ids = p.queue.slice(start, start + RESUME_WINDOW).map((s) => s.id);
+    return { ids, key: ids.join(',') };
+  }
+
+  /** Remembers the current queue on the server so any device can pick it up later (only the player saves). */
+  function saveResume(): void {
+    if (isRemote() || get().status !== 'online') return;
+    const p = usePlayerStore.getState();
+    if (p.queue.length === 0 || p.currentSong === null) return;
+    const { ids, key } = resumeWindow();
+    const now = Date.now();
+    const changed =
+      !lastSave || lastSave.key !== key || lastSave.index !== p.queueIndex || lastSave.playing !== p.playing;
+    if (!changed && !(p.playing && now - lastSave!.at >= SAVE_EVERY_MS)) return;
+    lastSave = { key, index: p.queueIndex, playing: p.playing, at: now };
+    savePlayQueue(ids, p.currentSong.id, p.currentTime * 1000).catch(() => {/* best-effort */});
+  }
+
+  /** If nobody is playing and this device has nothing loaded, show the last queue again — paused. */
+  async function maybeResume(): Promise<void> {
+    if (resumeTried) return;
+    resumeTried = true;
+    try {
+      const saved = await getPlayQueue();
+      if (!saved) return;
+      if (saved.changed && Date.now() - Date.parse(saved.changed) > RESUME_MAX_AGE_MS) return;
+      // Something may have started while the request was in flight.
+      if (usePlayerStore.getState().queue.length > 0 || get().activeDeviceId !== null) return;
+      const index = Math.max(0, saved.songs.findIndex((s) => s.id === saved.current));
+      usePlayerStore.getState().restoreQueue(saved.songs, index, saved.positionMs, false, false);
+      // What was just restored is already what the server has: don't write it straight back.
+      const { key } = resumeWindow();
+      lastSave = { key, index, playing: false, at: Date.now() };
+    } catch {
+      // No saved queue to resume from; nothing else to do.
+    }
   }
 
   // ── Acting on what the server tells us ───────────────────────────────────────
@@ -257,8 +312,17 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
 
   async function handleLoad(load: LoadInstruction): Promise<void> {
     try {
-      const queue = await api.fetchQueue();
-      if (!queue || queue.songs.length === 0) return;
+      // By now the server already considers this device the active one, so a queue that fails to arrive
+      // would strand the handover: try a few times before giving up.
+      let queue: Awaited<ReturnType<typeof api.fetchQueue>> = null;
+      for (let attempt = 0; attempt < LOAD_ATTEMPTS && !queue?.songs.length; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, LOAD_RETRY_MS[attempt - 1]));
+        queue = await api.fetchQueue();
+      }
+      if (!queue?.songs.length) {
+        useToastStore.getState().show("Couldn't load the queue from the other device");
+        return;
+      }
       const previous = get().remote;
       usePlayerStore.setState({ repeatMode: previous?.repeat ?? 'off', shuffle: previous?.shuffle ?? false });
       // We are the player now: the next local state report carries the whole queue again.
@@ -283,6 +347,7 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
         // (Re)connected: let the server know our queue again (it may have restarted).
         forceQueue = true;
         if (shouldReport()) scheduleReport(0);
+        if (s.activeDeviceId === null && usePlayerStore.getState().queue.length === 0) void maybeResume();
         break;
       }
       case 'devices': {
@@ -315,10 +380,11 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
 
   // ── Commands this device sends while it is only a remote ─────────────────────
 
-  async function sendRemoteCommand(type: Parameters<RemoteController['command']>[0], positionMs?: number): Promise<void> {
+  /** Resolves to whether the command was delivered. */
+  async function sendRemoteCommand(type: Parameters<RemoteController['command']>[0], positionMs?: number): Promise<boolean> {
     // Aimed at the device we believe is playing; the server refuses it if another one has taken over.
     const result = await api.sendCommand(get().deviceId, type, positionMs, get().activeDeviceId ?? undefined);
-    if (result === 'sent') return;
+    if (result === 'sent') return true;
     const active = get().devices.find((d) => d.id === get().activeDeviceId);
     useToastStore.getState().show(
       result === 'target_changed'
@@ -327,6 +393,7 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
           ? `${active?.name ?? 'That device'} isn't reachable right now`
           : 'Couldn\'t reach the server',
     );
+    return false;
   }
 
   const controller: RemoteController = {
@@ -339,12 +406,20 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
         return;
       }
       // Flip play/pause at once so the button answers instantly; the real state follows.
-      if ((type === 'play' || type === 'pause') && get().remote) {
-        const r = get().remote!;
-        set({ remote: { ...r, playing: type === 'play', positionMs: positionNow(r, serverNow()), positionAtMs: serverNow() } });
+      const before = get().remote;
+      let optimistic: PublicState | null = null;
+      if ((type === 'play' || type === 'pause') && before) {
+        optimistic = { ...before, playing: type === 'play', positionMs: positionNow(before, serverNow()), positionAtMs: serverNow() };
+        set({ remote: optimistic });
         applyMirror();
       }
-      void sendRemoteCommand(type, positionMs);
+      void sendRemoteCommand(type, positionMs).then((delivered) => {
+        // Not delivered: put the button back — unless the server has told us something newer in the meantime.
+        if (!delivered && optimistic && get().remote === optimistic) {
+          set({ remote: before });
+          applyMirror();
+        }
+      });
     },
   };
 
@@ -410,10 +485,10 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
     return 'ended';
   }
 
-  async function connectionLoop(): Promise<void> {
+  async function connectionLoop(mine: number): Promise<void> {
     let attempt = 0;
     let silentStreams = 0;
-    while (running) {
+    while (running && mine === generation) {
       const ctrl = new AbortController();
       abort = ctrl;
       if (get().status !== 'online') set({ status: 'connecting' });
@@ -425,7 +500,7 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
       } catch {
         outcome = 'ended';
       }
-      if (!running) return;
+      if (!running || mine !== generation) return; // stopped (and maybe restarted) while we were waiting
 
       if (outcome === 'unavailable') {
         // An older server without /connect: hide the feature and stop trying.
@@ -449,6 +524,7 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
       await sleep(backoffMs(attempt));
       attempt++;
     }
+    // (falling out of the loop: stop() was called, or a newer loop took over)
   }
 
   // ── Public API ───────────────────────────────────────────────────────────────
@@ -467,6 +543,8 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
       running = true;
       forceQueue = true;
       lastQueueKey = null;
+      resumeTried = false;
+      lastSave = null;
       lastLocal = { time: usePlayerStore.getState().currentTime, at: Date.now() };
       set({ status: 'connecting', transport: 'stream' });
 
@@ -486,11 +564,12 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
         document.removeEventListener('visibilitychange', onVisible);
       };
 
-      void connectionLoop();
+      void connectionLoop(++generation);
     },
 
     stop: () => {
       running = false;
+      generation++;
       abort?.abort();
       abort = null;
       wakeSleep?.();

@@ -70,7 +70,10 @@ async function get<T>(path: string, extra: Record<string, string> = {}): Promise
   const params = authParams(creds);
   for (const [k, v] of Object.entries(extra)) params.set(k, v);
 
-  const res = await fetch(`${base}/rest/${path}?${params}`);
+  return parseSubsonic<T>(await fetch(`${base}/rest/${path}?${params}`));
+}
+
+async function parseSubsonic<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json() as Record<string, unknown>;
   const sr = json['subsonic-response'] as Record<string, unknown>;
@@ -79,6 +82,52 @@ async function get<T>(path: string, extra: Record<string, string> = {}): Promise
     throw new Error((err?.message as string) ?? 'Subsonic error');
   }
   return sr as T;
+}
+
+/** Subsonic call with a JSON body (auth still in the query) — for payloads too long for a URL. */
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const creds = _creds;
+  if (!creds) throw new Error('Not authenticated');
+  const base = creds.serverUrl.replace(/\/$/, '');
+  return parseSubsonic<T>(
+    await fetch(`${base}/rest/${path}?${authParams(creds)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+// ── Saved play queue (resume where you left off) ────────────────────────────
+
+/**
+ * Stores the queue on the server (one per user) so any device can pick it up later. The ids go in a JSON
+ * body: a queue of hundreds of songs would not fit in a URL.
+ */
+export async function savePlayQueue(ids: string[], currentId: string | undefined, positionMs: number): Promise<void> {
+  await postJson('savePlayQueue.view', {
+    id: ids,
+    ...(currentId !== undefined ? { current: currentId } : {}),
+    position: String(Math.round(positionMs)),
+  });
+}
+
+export interface SavedPlayQueue {
+  songs: Song[];
+  current?: string;
+  positionMs: number;
+  /** ISO time the queue was last saved. */
+  changed?: string;
+}
+
+/** The saved queue, or null when there is none (or it is empty). */
+export async function getPlayQueue(): Promise<SavedPlayQueue | null> {
+  const r = await get<{
+    playQueue?: { entry?: Song[]; current?: string; position?: number; changed?: string };
+  }>('getPlayQueue.view');
+  const q = r.playQueue;
+  if (!q?.entry?.length) return null;
+  return { songs: q.entry, current: q.current, positionMs: q.position ?? 0, changed: q.changed };
 }
 
 // ── Ping ────────────────────────────────────────────────────────────────────

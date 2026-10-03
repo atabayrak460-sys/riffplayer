@@ -905,3 +905,30 @@ describe('security: long-poll robustness', () => {
     expect(result).not.toBe('slept through it');
   });
 });
+
+// ── Code review follow-up ────────────────────────────────────────────────────
+
+describe('review: transfers away from a device that is already paused', () => {
+  it('complete at once — the paused device sends no final report, so waiting for one only stalls the handover', () => {
+    const pc = join(U1, PC);
+    const phone = join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report({ positionMs: 9_000, playing: true }));
+    hub.reportState(U1, PC, report({ queueIds: undefined, positionMs: 10_000, playing: false })); // then paused
+    pc.probe.clear();
+    phone.probe.clear();
+
+    expect(hub.transfer(U1, PHONE, PHONE, true)).toEqual({ ok: true, status: 'done' });
+
+    expect(phone.probe.of('load')[0].data).toMatchObject({ index: 0, positionMs: 10_000, play: true });
+    expect(hub.snapshot(U1).activeDeviceId).toBe(PHONE);
+    expect(pc.probe.of('command')).toEqual([]); // nothing to pause
+  });
+
+  it('still wait (briefly) for a device that is playing', () => {
+    join(U1, PC);
+    join(U1, PHONE, 'android');
+    hub.reportState(U1, PC, report({ playing: true }));
+
+    expect(hub.transfer(U1, PHONE, PHONE, true)).toEqual({ ok: true, status: 'pending' });
+  });
+});

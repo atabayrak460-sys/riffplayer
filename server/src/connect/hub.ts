@@ -440,7 +440,9 @@ export class ConnectHub {
     const current = hub.activeDeviceId ? hub.devices.get(hub.activeDeviceId) : undefined;
     hub.pending = { toDeviceId, play, deadline: this.now() + this.transferWaitMs };
 
-    if (current) {
+    // Only a device that is actually playing has a "final position" worth waiting for. A paused one is
+    // frozen already and would send no report at all, so waiting would just stall the handover.
+    if (current && hub.state.playing) {
       // Ask the old device to stop; its next state report (or the deadline) completes the transfer.
       this.emit(current, {
         name: 'command',

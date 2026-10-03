@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   setCredentials, addSongToPlaylist, renamePlaylist, setPlaylistDescription,
   createPlaylistWithName, getAllSongs, setJwt, clearCredentials,
-  changeMyPassword, adminDeleteTrack,
+  changeMyPassword, adminDeleteTrack, savePlayQueue, getPlayQueue,
 } from './subsonic';
 
 function mockOkResponse(payload: Record<string, unknown> = { status: 'ok', searchResult3: { song: [] } }) {
@@ -175,5 +175,63 @@ describe('REST /api/v1 calls (changeMyPassword, adminDeleteTrack)', () => {
 
     await expect(changeMyPassword('a', 'b')).rejects.toThrow('Not authenticated');
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('savePlayQueue / getPlayQueue (resume where you left off)', () => {
+  it('savePlayQueue POSTs the ids as a JSON body (a long queue would not fit in a URL), auth in the query', async () => {
+    vi.mocked(fetch).mockResolvedValue(mockOkResponse({ status: 'ok' }));
+
+    await savePlayQueue(['3', '1', '2'], '1', 83_500);
+
+    const { url, init } = (() => {
+      const [u, i] = vi.mocked(fetch).mock.calls.at(-1) as [string, RequestInit];
+      return { url: new URL(u), init: i };
+    })();
+    expect(url.pathname).toBe('/rest/savePlayQueue.view');
+    expect(url.searchParams.get('u')).toBe('admin');
+    expect(url.searchParams.has('id')).toBe(false);
+    expect(init.method).toBe('POST');
+    expect(new Headers(init.headers).get('Content-Type')).toBe('application/json');
+    expect(JSON.parse(init.body as string)).toEqual({ id: ['3', '1', '2'], current: '1', position: '83500' });
+  });
+
+  it('savePlayQueue omits `current` when there is none, and rounds the position', async () => {
+    vi.mocked(fetch).mockResolvedValue(mockOkResponse({ status: 'ok' }));
+
+    await savePlayQueue(['1'], undefined, 1234.6);
+
+    const body = JSON.parse((vi.mocked(fetch).mock.calls.at(-1)![1] as RequestInit).body as string);
+    expect(body).toEqual({ id: ['1'], position: '1235' });
+  });
+
+  it('savePlayQueue throws when the server refuses', async () => {
+    vi.mocked(fetch).mockResolvedValue(mockOkResponse({ status: 'failed', error: { message: 'nope' } }));
+    await expect(savePlayQueue(['1'], '1', 0)).rejects.toThrow('nope');
+  });
+
+  it('getPlayQueue returns the saved songs, current id and position', async () => {
+    vi.mocked(fetch).mockResolvedValue(mockOkResponse({
+      status: 'ok',
+      playQueue: { current: '2', position: 42_000, changed: '2026-10-03T10:00:00Z', entry: [{ id: '1' }, { id: '2' }] },
+    }));
+
+    expect(await getPlayQueue()).toEqual({
+      songs: [{ id: '1' }, { id: '2' }], current: '2', positionMs: 42_000, changed: '2026-10-03T10:00:00Z',
+    });
+  });
+
+  it('getPlayQueue is null when nothing was saved (the server answers a bare ok)', async () => {
+    vi.mocked(fetch).mockResolvedValue(mockOkResponse({ status: 'ok' }));
+    expect(await getPlayQueue()).toBeNull();
+  });
+
+  it('getPlayQueue is null for an empty saved queue, and tolerates a missing position', async () => {
+    vi.mocked(fetch).mockResolvedValue(mockOkResponse({ status: 'ok', playQueue: { entry: [] } }));
+    expect(await getPlayQueue()).toBeNull();
+
+    vi.mocked(fetch).mockResolvedValue(mockOkResponse({ status: 'ok', playQueue: { entry: [{ id: '1' }] } }));
+    expect((await getPlayQueue())?.positionMs).toBe(0);
   });
 });

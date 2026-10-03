@@ -14,7 +14,8 @@ import { createSseSink, attachCleanup } from '../../connect/sse.js';
 
 // Read at call time (not import time) so tests can shorten them.
 const heartbeatMs = () => Number(process.env.RIFFPLAYER_CONNECT_HEARTBEAT_MS) || 20_000;
-const tickMs = () => Number(process.env.RIFFPLAYER_CONNECT_TICK_MS) || 5_000;
+// Housekeeping granularity: transfer deadlines and the unreachable grace period are checked this often.
+const tickMs = () => Number(process.env.RIFFPLAYER_CONNECT_TICK_MS) || 1_000;
 const pollHoldMs = () => Number(process.env.RIFFPLAYER_CONNECT_POLL_HOLD_MS) || 25_000;
 // How often an open stream re-checks that its token is still valid before delivering an event.
 const revokeCheckMs = () => {
@@ -108,7 +109,12 @@ export async function connectPlugin(app: FastifyInstance): Promise<void> {
 
     const inner = createSseSink(raw, {
       isStale,
-      onStale: () => hub.revokeConnection(userId, info.deviceId, connId),
+      onStale: () => {
+        // During connect the connection has no id yet: say so and let the next delivery try again.
+        if (connId === 0) return false;
+        hub.revokeConnection(userId, info.deviceId, connId);
+        return true;
+      },
       onEnd: () => { if (heartbeat) clearInterval(heartbeat); },
     });
     // The status line and headers go out with the first event, so a refused connection can still get a real HTTP status.
