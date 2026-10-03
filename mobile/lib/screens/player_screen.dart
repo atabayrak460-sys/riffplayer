@@ -10,6 +10,7 @@ import '../widgets/cover_art.dart';
 import '../widgets/lyrics_view.dart';
 import '../widgets/nowplaying/album_tracks_section.dart';
 import '../widgets/nowplaying/artist_tracks_section.dart';
+import '../widgets/device_picker.dart';
 import '../widgets/nowplaying/up_next_section.dart';
 
 String _fmt(Duration d) {
@@ -171,6 +172,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             style: TextStyle(fontSize: 14, color: Color(0xFF71717A))),
         centerTitle: true,
         actions: [
+          const DevicePickerButton(),
           IconButton(
             icon: const Icon(Icons.queue_music),
             tooltip: 'Queue',
@@ -315,6 +317,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                             overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
+                                        const RemoteLabel(),
                                       ],
                                     ),
                                   ),

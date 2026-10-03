@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../api/types.dart';
 import '../providers/providers.dart';
 import '../utils/snackbar.dart';
+import '../widgets/device_picker.dart';
 
 const _transcodeFormats = [
   (null, 'Original format'),
@@ -82,6 +83,8 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 16),
             const _PasswordSection(),
+            const SizedBox(height: 24),
+            const DeviceNameSection(),
             const SizedBox(height: 24),
           ],
           meAsync.when(

@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:riffplayer_mobile/api/types.dart';
+import 'package:riffplayer_mobile/connect/connect_models.dart' show CommandType;
+import 'package:riffplayer_mobile/connect/remote_controller.dart';
 import 'package:riffplayer_mobile/providers/providers.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
@@ -19,8 +21,25 @@ Song _song(String id, {String? starred}) => Song(
       starred: starred,
     );
 
+class _FakeRemote implements RemoteController {
+  @override
+  bool isRemote = true;
+  final commands = <(CommandType, int?)>[];
+  int localStarts = 0;
+
+  @override
+  void command(CommandType type, {int? positionMs}) =>
+      commands.add((type, positionMs));
+
+  @override
+  void onLocalStart() => localStarts++;
+}
+
 void main() {
-  setUpAll(registerMockFallbackValues);
+  setUpAll(() {
+    registerMockFallbackValues();
+    registerFallbackValue(Duration.zero);
+  });
 
   late MockAudioHandler handler;
   late MockSubsonicClient client;
@@ -647,6 +666,283 @@ void main() {
           pos: const Duration(minutes: 3));
 
       verifyNever(() => client.scrobble(any(), submission: true));
+    });
+  });
+
+  group('RiffPlayer Connect hooks', () {
+    late _FakeRemote remote;
+    late StreamController<Duration> position;
+    late StreamController<bool> playing;
+
+    setUp(() {
+      remote = _FakeRemote();
+      position = StreamController<Duration>();
+      playing = StreamController<bool>();
+      addTearDown(position.close);
+      addTearDown(playing.close);
+      when(() => handler.positionStream).thenAnswer((_) => position.stream);
+      when(() => handler.playingStream).thenAnswer((_) => playing.stream);
+      when(() => handler.play()).thenAnswer((_) async {});
+      when(() => handler.pause()).thenAnswer((_) async {});
+      when(() => handler.seek(any())).thenAnswer((_) async {});
+      when(() => handler.playQueue(any(), any(),
+          position: any(named: 'position'),
+          autoplay: any(named: 'autoplay'))).thenAnswer((_) async {});
+      notifier = PlayerNotifier(handler)..remote = remote;
+    });
+
+    group(
+        'while another device is playing, the transport actions become commands',
+        () {
+      test('play, pause, next and previous', () {
+        notifier.play();
+        notifier.pause();
+        notifier.next();
+        notifier.previous();
+
+        expect(remote.commands.map((c) => c.$1), [
+          CommandType.play,
+          CommandType.pause,
+          CommandType.next,
+          CommandType.previous,
+        ]);
+        verifyNever(() => handler.play());
+        verifyNever(() => handler.pause());
+        verifyNever(() => handler.skipToNext());
+        verifyNever(() => handler.skipToPrevious());
+      });
+
+      test('seek sends milliseconds and shows the new position at once', () {
+        notifier.seek(const Duration(seconds: 42, milliseconds: 500));
+
+        expect(remote.commands, [(CommandType.seek, 42500)]);
+        expect(notifier.state.position,
+            const Duration(seconds: 42, milliseconds: 500));
+        verifyNever(() => handler.seek(any()));
+      });
+
+      test('acts locally as usual when this device is not just a remote', () {
+        remote.isRemote = false;
+
+        notifier.play();
+        notifier.pause();
+        notifier.next();
+        notifier.previous();
+        notifier.seek(const Duration(seconds: 5));
+
+        expect(remote.commands, isEmpty);
+        verify(() => handler.play()).called(1);
+        verify(() => handler.pause()).called(1);
+        verify(() => handler.skipToNext()).called(1);
+        verify(() => handler.skipToPrevious()).called(1);
+        verify(() => handler.seek(const Duration(seconds: 5))).called(1);
+      });
+
+      test('pauseLocal silences the local player and is never forwarded', () {
+        notifier.pauseLocal();
+
+        verify(() => handler.pause()).called(1);
+        expect(remote.commands, isEmpty);
+      });
+    });
+
+    test(
+        'starting a track tells the remote controller (a takeover is on its way)',
+        () async {
+      await notifier.playSong(_song('a'), client, downloads);
+      expect(remote.localStarts, 1);
+    });
+
+    group('mirror mode', () {
+      void mirror({Song? song, bool isPlaying = true}) =>
+          notifier.applyRemoteMirror(
+            song: song ?? _song('r'),
+            playing: isPlaying,
+            position: const Duration(seconds: 10),
+            duration: const Duration(seconds: 200),
+            repeat: LoopMode.all,
+            shuffle: true,
+          );
+
+      test('shows the other device\'s playback as a one-track queue', () {
+        mirror();
+
+        final s = notifier.state;
+        expect(notifier.isMirroring, isTrue);
+        expect(s.currentSong?.id, 'r');
+        expect((
+          s.playing,
+          s.position,
+          s.duration,
+          s.repeatMode,
+          s.shuffle
+        ), (
+          true,
+          const Duration(seconds: 10),
+          const Duration(seconds: 200),
+          LoopMode.all,
+          true
+        ));
+      });
+
+      test('an empty mirror (no song) shows no current song', () {
+        notifier.applyRemoteMirror(
+          song: null,
+          playing: false,
+          position: Duration.zero,
+          duration: Duration.zero,
+          repeat: LoopMode.off,
+          shuffle: false,
+        );
+        expect(notifier.state.currentSong, isNull);
+        expect(notifier.state.queue, isEmpty);
+      });
+
+      test(
+          'events from the silenced local player cannot overwrite what is mirrored',
+          () async {
+        mirror();
+
+        position.add(const Duration(seconds: 99));
+        playing.add(false);
+        await pumpEventQueue();
+
+        expect(notifier.state.position, const Duration(seconds: 10));
+        expect(notifier.state.playing, isTrue);
+      });
+
+      test(
+          'leaving the mirror hands the state back to the local player and clears what was shown',
+          () async {
+        mirror();
+        notifier.leaveRemoteMirror();
+
+        expect(notifier.isMirroring, isFalse);
+        expect(notifier.state.currentSong, isNull);
+
+        position.add(const Duration(seconds: 7));
+        await pumpEventQueue();
+        expect(notifier.state.position, const Duration(seconds: 7));
+      });
+
+      test(
+          'leaving with clear: false keeps what was shown until the local player replaces it',
+          () {
+        mirror();
+        notifier.leaveRemoteMirror(clear: false);
+
+        expect(notifier.isMirroring, isFalse);
+        expect(notifier.state.currentSong?.id, 'r');
+      });
+
+      test('leaving when not mirroring changes nothing', () {
+        notifier.leaveRemoteMirror();
+        expect(notifier.isMirroring, isFalse);
+      });
+    });
+
+    group('restoreQueue (handover from another device)', () {
+      final songs = [_song('a'), _song('b'), _song('c')];
+
+      Future<void> restore(
+              {int index = 1,
+              bool play = true,
+              bool counted = false,
+              List<Song>? queue}) =>
+          notifier.restoreQueue(
+            queue ?? songs,
+            index,
+            const Duration(seconds: 83),
+            play: play,
+            counted: counted,
+            client: client,
+            downloads: downloads,
+          );
+
+      test('loads the queue at the position and starts playing', () async {
+        await restore();
+
+        final s = notifier.state;
+        expect(s.queue.map((x) => x.id), ['a', 'b', 'c']);
+        expect(s.currentIndex, 1);
+        expect(s.position, const Duration(seconds: 83));
+        verify(() => handler.playQueue(any(), 1,
+            position: const Duration(seconds: 83), autoplay: true)).called(1);
+        verify(() => client.scrobble('b', submission: false)).called(1);
+      });
+
+      test(
+          'with play: false it loads and positions the track without starting it or sending "now playing"',
+          () async {
+        await restore(play: false);
+
+        verify(() => handler.playQueue(any(), 1,
+            position: const Duration(seconds: 83), autoplay: false)).called(1);
+        verifyNever(() => client.scrobble(any(), submission: false));
+      });
+
+      test('leaves mirror mode', () async {
+        notifier.applyRemoteMirror(
+          song: _song('r'),
+          playing: true,
+          position: Duration.zero,
+          duration: Duration.zero,
+          repeat: LoopMode.off,
+          shuffle: false,
+        );
+        await restore();
+        expect(notifier.isMirroring, isFalse);
+      });
+
+      test('clamps an out-of-range index and ignores an empty queue', () async {
+        await restore(index: 99);
+        expect(notifier.state.currentIndex, 2);
+
+        await restore(queue: const []);
+        expect(notifier.state.queue.length, 3);
+      });
+
+      test('remembers whether the play was already counted', () async {
+        expect(notifier.currentPlayCounted, isFalse);
+
+        await restore(counted: true);
+        expect(notifier.currentPlayCounted, isTrue);
+
+        await restore(counted: false);
+        expect(notifier.currentPlayCounted, isFalse);
+      });
+
+      test(
+          'a play counted elsewhere is not submitted again when playback passes the threshold here',
+          () async {
+        await restore(counted: true);
+        clearInteractions(client);
+
+        position.add(const Duration(seconds: 90));
+        await pumpEventQueue();
+
+        verifyNever(() => client.scrobble(any(), submission: true));
+      });
+
+      test(
+          'an uncounted play is counted once it passes the threshold, and then reports itself as counted',
+          () async {
+        await restore(counted: false);
+        clearInteractions(client);
+
+        position.add(const Duration(seconds: 90));
+        await pumpEventQueue();
+
+        verify(() => client.scrobble('b', submission: true)).called(1);
+        expect(notifier.currentPlayCounted, isTrue);
+      });
+    });
+
+    test('applyModes sets repeat and shuffle on the player', () async {
+      await notifier.applyModes(repeat: LoopMode.one, shuffle: true);
+
+      verify(() => handler.setLoopMode(LoopMode.one)).called(1);
+      verify(() => handler.setShuffleModeEnabled(true)).called(1);
     });
   });
 }

@@ -6,6 +6,8 @@ import '../api/subsonic.dart';
 import '../services/auth_service.dart';
 import '../services/download_service.dart';
 import '../audio/audio_handler.dart';
+import '../connect/connect_models.dart' show CommandType;
+import '../connect/remote_controller.dart';
 
 // ── Services ──────────────────────────────────────────────────────────────────
 
@@ -131,6 +133,15 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   // runs; once that covers the rest of the track plus the threshold into the
   // next pass, it counts as another play.
   final DateTime Function() _now;
+
+  /// Set by RiffPlayer Connect: while another device is playing, the transport actions below become
+  /// remote commands instead of driving the local player.
+  RemoteController? remote;
+
+  /// True while the state shown is another device's playback (Connect mirror mode); the local player's
+  /// own event streams are then ignored so they can't overwrite it.
+  bool _remoteMirror = false;
+  bool get isMirroring => _remoteMirror;
   DateTime? _lastTickAt;
   int _listenedSinceSubmitMs = 0;
   int _submitPositionMs = 0;
@@ -163,16 +174,20 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       : _now = now ?? DateTime.now,
         super(const PlayerState()) {
     _handler.positionStream.listen((pos) {
+      if (_remoteMirror) return;
       state = state.copyWith(position: pos);
       _maybeScrobble(pos);
     });
     _handler.durationStream.listen((dur) {
+      if (_remoteMirror) return;
       state = state.copyWith(duration: dur ?? Duration.zero);
     });
     _handler.playingStream.listen((playing) {
+      if (_remoteMirror) return;
       state = state.copyWith(playing: playing);
     });
     _handler.currentIndexStream.listen((idx) {
+      if (_remoteMirror) return;
       state = state.copyWith(currentIndex: idx ?? -1);
       _queuedCount = 0;
       _listenedSinceSubmitMs = 0;
@@ -186,9 +201,11 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       }
     });
     _handler.shuffleModeEnabledStream.listen((enabled) {
+      if (_remoteMirror) return;
       state = state.copyWith(shuffle: enabled);
     });
     _handler.loopModeStream.listen((mode) {
+      if (_remoteMirror) return;
       state = state.copyWith(repeatMode: mode);
     });
   }
@@ -200,6 +217,8 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     List<Song>? queue,
     int? queueIndex,
   }) async {
+    // Starting something here while another device plays is a takeover (Connect).
+    remote?.onLocalStart();
     final songs = queue ?? [song];
     final idx = queueIndex ?? songs.indexWhere((s) => s.id == song.id);
     final resolvedIndex = idx < 0 ? 0 : idx;
@@ -382,11 +401,120 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     state = state.copyWith(queue: newQueue);
   }
 
-  void play() => _handler.play();
-  void pause() => _handler.pause();
-  void seek(Duration pos) => _handler.seek(pos);
-  void next() => _handler.skipToNext();
-  void previous() => _handler.skipToPrevious();
+  void play() {
+    final r = remote;
+    if (r != null && r.isRemote) return r.command(CommandType.play);
+    _handler.play();
+  }
+
+  void pause() {
+    final r = remote;
+    if (r != null && r.isRemote) return r.command(CommandType.pause);
+    _handler.pause();
+  }
+
+  void seek(Duration pos) {
+    final r = remote;
+    if (r != null && r.isRemote) {
+      state = state.copyWith(
+          position: pos); // show it at once; the real position follows
+      return r.command(CommandType.seek, positionMs: pos.inMilliseconds);
+    }
+    _handler.seek(pos);
+  }
+
+  void next() {
+    final r = remote;
+    if (r != null && r.isRemote) return r.command(CommandType.next);
+    _handler.skipToNext();
+  }
+
+  void previous() {
+    final r = remote;
+    if (r != null && r.isRemote) return r.command(CommandType.previous);
+    _handler.skipToPrevious();
+  }
+
+  // ── RiffPlayer Connect ──────────────────────────────────────────────────────
+
+  /// Silences the local player without touching the queue (never forwarded).
+  void pauseLocal() => _handler.pause();
+
+  /// Shows another device's playback in place of the local one.
+  void applyRemoteMirror({
+    required Song? song,
+    required bool playing,
+    required Duration position,
+    required Duration duration,
+    required LoopMode repeat,
+    required bool shuffle,
+  }) {
+    _remoteMirror = true;
+    state = PlayerState(
+      queue: song == null ? const [] : [song],
+      currentIndex: song == null ? -1 : 0,
+      playing: playing,
+      position: position,
+      duration: duration,
+      shuffle: shuffle,
+      repeatMode: repeat,
+    );
+  }
+
+  /// Goes back to showing the local player (the mirrored state is dropped unless [clear] is false).
+  void leaveRemoteMirror({bool clear = true}) {
+    if (!_remoteMirror) return;
+    _remoteMirror = false;
+    if (clear) state = const PlayerState();
+  }
+
+  /// Repeat/shuffle taken over from the device that was playing.
+  Future<void> applyModes(
+      {required LoopMode repeat, required bool shuffle}) async {
+    await _handler.setLoopMode(repeat);
+    await _handler.setShuffleModeEnabled(shuffle);
+  }
+
+  /// Whether the track now loaded has already been counted as a play (scrobbled) — handed to the
+  /// device that takes over so a transfer mid-song doesn't count the same listen twice.
+  bool get currentPlayCounted {
+    final song = state.currentSong;
+    return song != null && _scrobbledSongId == song.id;
+  }
+
+  /// Loads a queue handed over from another device, at [position], playing only if [play].
+  Future<void> restoreQueue(
+    List<Song> songs,
+    int index,
+    Duration position, {
+    required bool play,
+    required bool counted,
+    required SubsonicClient client,
+    required DownloadService downloads,
+  }) async {
+    if (songs.isEmpty) return;
+    final i = index.clamp(0, songs.length - 1);
+    final sources = await Future.wait(
+      songs.map((s) => buildAudioSource(s, client, downloads)),
+    );
+    _remoteMirror = false;
+    state = state.copyWith(
+      queue: songs,
+      currentIndex: i,
+      position: position,
+      playing: false,
+    );
+    _scrobbleClient = client;
+    _scrobbledSongId = counted ? songs[i].id : null;
+    _listenedSinceSubmitMs = 0;
+    _lastPosition = position;
+    _queuedCount = 0;
+    if (play) {
+      _nowPlayingSongId = songs[i].id;
+      client.scrobble(songs[i].id, submission: false).ignore();
+    }
+    await _handler.playQueue(sources, i, position: position, autoplay: play);
+  }
 
   void toggleShuffle() => _handler.setShuffleModeEnabled(!state.shuffle);
 

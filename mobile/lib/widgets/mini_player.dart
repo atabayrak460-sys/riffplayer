@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../api/subsonic.dart';
 import '../api/types.dart';
 import '../providers/providers.dart';
+import '../connect/connect_provider.dart';
+import 'device_picker.dart';
 import 'cover_art.dart';
 
 // Swipe-left/right thresholds for skipping tracks — a swipe past either one
@@ -100,6 +102,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer>
     if (song == null) return const SizedBox.shrink();
 
     final client = ref.read(apiClientProvider);
+    final remote = remoteLabel(ref.watch(connectProvider));
     final nextSong =
         currentIndex + 1 < queue.length ? queue[currentIndex + 1] : null;
     final prevSong = currentIndex > 0 ? queue[currentIndex - 1] : null;
@@ -165,7 +168,9 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer>
                                   child: Transform.translate(
                                     offset: Offset(dx, 0),
                                     child: _MiniSongInfo(
-                                        song: song, client: client),
+                                        song: song,
+                                        client: client,
+                                        remoteText: remote?.text),
                                   ),
                                 ),
                               ],
@@ -212,7 +217,10 @@ class _MiniSongInfo extends StatelessWidget {
   final Song song;
   final SubsonicClient? client;
 
-  const _MiniSongInfo({required this.song, required this.client});
+  /// "Playing on <device>" while another device is the one playing.
+  final String? remoteText;
+
+  const _MiniSongInfo({required this.song, required this.client, this.remoteText});
 
   @override
   Widget build(BuildContext context) {
@@ -245,7 +253,7 @@ class _MiniSongInfo extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
               Text(
-                song.artist,
+                remoteText == null ? song.artist : '${song.artist} · $remoteText',
                 style: const TextStyle(
                   color: Color(0xFF71717A),
                   fontSize: 12,

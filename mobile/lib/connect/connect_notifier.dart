@@ -1,0 +1,734 @@
+// RiffPlayer Connect — the Android client's side of multi-device control (docs/CONNECT-DESIGN.md).
+//
+// While the user is signed in this keeps a live connection to /api/v1/connect (an SSE stream, with a
+// long-poll fallback), mirrors what the *active* device plays into the normal player state, forwards the
+// transport actions as commands while another device is playing, executes commands/handovers when this
+// device is the one playing, and reports this device's playback so the others can mirror it.
+// It is the Dart counterpart of web/src/store/connect.ts and follows the same rules.
+
+import 'dart:async';
+import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:just_audio/just_audio.dart' show LoopMode;
+import '../api/subsonic.dart';
+import '../api/types.dart';
+import '../providers/providers.dart';
+import '../services/download_service.dart';
+import 'connect_api.dart';
+import 'connect_models.dart';
+import 'connect_prefs.dart';
+import 'remote_controller.dart';
+
+enum ConnectStatus { idle, connecting, online, offline, unavailable }
+
+const _keep = Object();
+
+class ConnectState {
+  final ConnectStatus status;
+
+  /// True once streams proved to be buffered somewhere on the path and long-polling is used instead.
+  final bool polling;
+  final String deviceId;
+  final String deviceName;
+  final List<DeviceInfo> devices;
+  final String? activeDeviceId;
+
+  /// What the active device last reported (also while it is this device).
+  final PublicState? remote;
+
+  const ConnectState({
+    this.status = ConnectStatus.idle,
+    this.polling = false,
+    this.deviceId = '',
+    this.deviceName = '',
+    this.devices = const [],
+    this.activeDeviceId,
+    this.remote,
+  });
+
+  ConnectState copyWith({
+    ConnectStatus? status,
+    bool? polling,
+    String? deviceId,
+    String? deviceName,
+    List<DeviceInfo>? devices,
+    Object? activeDeviceId = _keep,
+    Object? remote = _keep,
+  }) =>
+      ConnectState(
+        status: status ?? this.status,
+        polling: polling ?? this.polling,
+        deviceId: deviceId ?? this.deviceId,
+        deviceName: deviceName ?? this.deviceName,
+        devices: devices ?? this.devices,
+        activeDeviceId: identical(activeDeviceId, _keep)
+            ? this.activeDeviceId
+            : activeDeviceId as String?,
+        remote: identical(remote, _keep) ? this.remote : remote as PublicState?,
+      );
+
+  /// Another device is the one playing.
+  bool get remoteActive =>
+      status == ConnectStatus.online &&
+      activeDeviceId != null &&
+      activeDeviceId != deviceId;
+
+  DeviceInfo? get activeDevice {
+    for (final d in devices) {
+      if (d.id == activeDeviceId) return d;
+    }
+    return null;
+  }
+}
+
+/// Timings, overridable so tests need not wait in real time.
+class ConnectTimings {
+  final Duration helloTimeout;
+  final Duration silenceTimeout;
+  final Duration healthyAfter;
+  final Duration reportDebounce;
+  final Duration seekDebounce;
+  final Duration driftReport;
+  final Duration mirrorTick;
+  final Duration takeoverGrace;
+  final Duration backgroundGrace;
+  final double seekJumpSeconds;
+
+  const ConnectTimings({
+    this.helloTimeout = const Duration(seconds: 8),
+    this.silenceTimeout = const Duration(seconds: 45),
+    this.healthyAfter = const Duration(seconds: 30),
+    this.reportDebounce = const Duration(milliseconds: 250),
+    this.seekDebounce = const Duration(milliseconds: 150),
+    this.driftReport = const Duration(seconds: 10),
+    this.mirrorTick = const Duration(milliseconds: 250),
+    this.takeoverGrace = const Duration(seconds: 8),
+    this.backgroundGrace = const Duration(minutes: 3),
+    this.seekJumpSeconds = 1.5,
+  });
+}
+
+enum _Outcome { ended, silent, unavailable }
+
+class ConnectNotifier extends StateNotifier<ConnectState>
+    implements RemoteController {
+  final PlayerNotifier _player;
+  final DownloadService _downloads;
+  final ConnectPrefs _prefs;
+  final Future<void> Function() _onRevoked;
+  final void Function(String message) _showMessage;
+  final ConnectApi Function(Credentials) _apiFactory;
+  final SubsonicClient Function(Credentials) _clientFactory;
+  final DateTime Function() _now;
+
+  /// Source of the reconnect jitter; injectable so tests get fixed delays.
+  final double Function()? _random;
+  final ConnectTimings _t;
+
+  ConnectNotifier({
+    required PlayerNotifier player,
+    required DownloadService downloads,
+    required ConnectPrefs prefs,
+    required Future<void> Function() onRevoked,
+    required void Function(String message) showMessage,
+    ConnectApi Function(Credentials)? apiFactory,
+    SubsonicClient Function(Credentials)? clientFactory,
+    DateTime Function()? now,
+    double Function()? random,
+    ConnectTimings timings = const ConnectTimings(),
+  })  : _player = player,
+        _downloads = downloads,
+        _prefs = prefs,
+        _onRevoked = onRevoked,
+        _showMessage = showMessage,
+        _apiFactory = apiFactory ?? HttpConnectApi.new,
+        _clientFactory = clientFactory ?? SubsonicClient.new,
+        _now = now ?? DateTime.now,
+        _random = random,
+        _t = timings,
+        super(const ConnectState());
+
+  // ── Runtime (not part of the observable state) ───────────────────────────────
+
+  Credentials? _creds;
+  ConnectApi? _api;
+  SubsonicClient? _client;
+  bool _running = false;
+  CancelToken? _cancel;
+  Timer? _sleepTimer;
+  Completer<void>? _sleeper;
+  int _serverOffsetMs = 0;
+
+  Timer? _reportTimer;
+  Timer? _driftTimer;
+  Timer? _mirrorTimer;
+  Timer? _seekTimer;
+  Timer? _suspendTimer;
+  StreamSubscription<PlayerState>? _playerSub;
+  bool _suspended = false;
+  bool _foreground = true;
+
+  /// True while a command from another device is being executed here (it must act locally, never forward).
+  bool _executingLocal = false;
+  DateTime _takeoverUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  String? _lastQueueKey;
+  bool _forceQueue = true;
+  final List<String> _seenCommands = [];
+  PlayerState _prevPlayer = const PlayerState();
+  int _lastLocalMs = 0;
+  DateTime _lastLocalAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _mirrorActive = false;
+
+  /// The queue list the mirror last wrote into the player. While the player still holds exactly that
+  /// object, what it shows is another device's track, not something this device is playing — it must
+  /// never be reported back as this device's own queue.
+  List<Song>? _mirrorQueue;
+
+  int get _serverNowMs => _now().millisecondsSinceEpoch + _serverOffsetMs;
+
+  DeviceIdentity get _identity => DeviceIdentity(
+      deviceId: state.deviceId,
+      name: state.deviceName,
+      type: DeviceType.android);
+
+  // ── RemoteController ─────────────────────────────────────────────────────────
+
+  @override
+  bool get isRemote => !_executingLocal && state.remoteActive;
+
+  @override
+  void command(CommandType type, {int? positionMs}) {
+    if (type == CommandType.seek) {
+      // Dragging the slider fires continuously: send only where it comes to rest.
+      _seekTimer?.cancel();
+      _seekTimer = Timer(_t.seekDebounce,
+          () => _sendRemoteCommand(CommandType.seek, positionMs));
+      return;
+    }
+    // Flip play/pause at once so the button answers instantly; the real state follows.
+    final r = state.remote;
+    if ((type == CommandType.play || type == CommandType.pause) && r != null) {
+      state = state.copyWith(
+        remote: r.copyWith(
+          playing: type == CommandType.play,
+          positionMs: positionNowMs(r, _serverNowMs),
+          positionAtMs: _serverNowMs,
+        ),
+      );
+      _applyMirror();
+    }
+    _sendRemoteCommand(type, positionMs);
+  }
+
+  @override
+  void onLocalStart() {
+    if (!isRemote) return;
+    // The mirror must not put the other device's track back over the one just started here.
+    _takeoverUntil = _now().add(_t.takeoverGrace);
+    _player.leaveRemoteMirror(clear: false);
+  }
+
+  Future<void> _sendRemoteCommand(CommandType type, int? positionMs) async {
+    final api = _api;
+    if (api == null) return;
+    final result =
+        await api.sendCommand(state.deviceId, type, positionMs: positionMs);
+    if (result == CommandResult.sent) return;
+    final active = state.activeDevice;
+    _showMessage(
+      result == CommandResult.noActiveDevice ||
+              result == CommandResult.unknownDevice
+          ? "${active?.name ?? 'That device'} isn't reachable right now"
+          : "Couldn't reach the server",
+    );
+  }
+
+  // ── Mirror: show the remote device's playback through the normal player state ──
+
+  void _applyMirror() {
+    final r = state.remote;
+    if (r == null || _now().isBefore(_takeoverUntil)) return;
+    if (!_mirrorActive) {
+      _mirrorActive = true;
+      _player.pauseLocal();
+    }
+    final durationMs = r.durationMs ?? ((r.song?.duration ?? 0) * 1000);
+    _player.applyRemoteMirror(
+      song: r.song,
+      playing: r.playing,
+      position: Duration(milliseconds: positionNowMs(r, _serverNowMs)),
+      duration: Duration(milliseconds: durationMs),
+      repeat: r.repeat,
+      shuffle: r.shuffle,
+    );
+    _mirrorQueue = _player.state.queue;
+  }
+
+  void _startMirror() {
+    _applyMirror();
+    _mirrorTimer ??= Timer.periodic(_t.mirrorTick, (_) => _applyMirror());
+  }
+
+  void _stopMirror() {
+    _mirrorTimer?.cancel();
+    _mirrorTimer = null;
+    _mirrorActive = false;
+    if (_player.isMirroring) _player.leaveRemoteMirror();
+  }
+
+  void _syncMirror() {
+    if (isRemote && state.remote != null) {
+      _startMirror();
+    } else {
+      // This device is the player now (or nobody is): any takeover is settled.
+      _takeoverUntil = DateTime.fromMillisecondsSinceEpoch(0);
+      _stopMirror();
+    }
+  }
+
+  // ── Reporting this device's playback ─────────────────────────────────────────
+
+  bool _shouldReport() {
+    if (state.status != ConnectStatus.online) return false;
+    final p = _player.state;
+    if (p.queue.isEmpty) return false;
+    if (_player.isMirroring || identical(p.queue, _mirrorQueue)) return false;
+    // While another device plays, only a local "play" (taking over) is worth reporting.
+    return isRemote ? p.playing : true;
+  }
+
+  void _scheduleReport([Duration? delay]) {
+    _reportTimer?.cancel();
+    _reportTimer = Timer(delay ?? _t.reportDebounce, () => _sendReport());
+  }
+
+  Future<void> _sendReport({bool retried = false}) async {
+    final api = _api;
+    if (api == null || !_shouldReport()) return;
+    final p = _player.state;
+    final ids = p.queue.map((s) => s.id).toList();
+    final key = ids.join(',');
+    final withQueue = _forceQueue || key != _lastQueueKey;
+
+    final result = await api.reportState(StateReport(
+      deviceId: state.deviceId,
+      queueIds: withQueue ? ids : null,
+      index: p.currentIndex < 0 ? 0 : p.currentIndex,
+      positionMs: p.position.inMilliseconds,
+      playing: p.playing,
+      repeat: p.repeatMode,
+      shuffle: p.shuffle,
+      counted: _player.currentPlayCounted,
+    ));
+
+    switch (result) {
+      case ReportResult.ok:
+      case ReportResult.okTakeover:
+        if (withQueue) {
+          _lastQueueKey = key;
+          _forceQueue = false;
+        }
+      case ReportResult.needQueue:
+        _forceQueue = true;
+        if (!retried) await _sendReport(retried: true);
+      case ReportResult.unavailable:
+        stop();
+        state = state.copyWith(status: ConnectStatus.unavailable);
+      case ReportResult.notActive:
+      case ReportResult.unknownDevice:
+      case ReportResult.rateLimited:
+      case ReportResult.error:
+        break; // nothing useful to do
+    }
+  }
+
+  void _onPlayerChange(PlayerState s) {
+    final prev = _prevPlayer;
+    _prevPlayer = s;
+    if (_player.isMirroring) return; // that is the mirror writing, not the user
+    final now = _now();
+
+    // Starting a track here while another device plays is a takeover in progress.
+    if (isRemote &&
+        s.currentSong?.id != prev.currentSong?.id &&
+        s.queue.isNotEmpty) {
+      _takeoverUntil = now.add(_t.takeoverGrace);
+    }
+
+    // A jump in the position that time alone doesn't explain is a seek, worth telling the others about.
+    final posMs = s.position.inMilliseconds;
+    final expected = _lastLocalMs +
+        (prev.playing ? now.difference(_lastLocalAt).inMilliseconds : 0);
+    final jumped = posMs != prev.position.inMilliseconds &&
+        (posMs - expected).abs() > _t.seekJumpSeconds * 1000;
+    _lastLocalMs = posMs;
+    _lastLocalAt = now;
+
+    final changed = !identical(s.queue, prev.queue) ||
+        s.currentIndex != prev.currentIndex ||
+        s.playing != prev.playing ||
+        s.repeatMode != prev.repeatMode ||
+        s.shuffle != prev.shuffle;
+    if ((changed || jumped) && _shouldReport()) _scheduleReport();
+
+    // Keeping the connection alive in the background only makes sense while music plays.
+    if (s.playing != prev.playing) _updateSuspendTimer();
+  }
+
+  // ── Acting on what the server tells us ───────────────────────────────────────
+
+  void _execCommand(CommandInstruction c) {
+    if (_seenCommands.contains(c.commandId)) return;
+    _seenCommands.add(c.commandId);
+    if (_seenCommands.length > 100) _seenCommands.removeAt(0);
+    if (c.expiresAtMs < _serverNowMs) return;
+
+    _executingLocal = true;
+    try {
+      final playing = _player.state.playing;
+      switch (c.type) {
+        case CommandType.play:
+          if (!playing) _player.play();
+        case CommandType.pause:
+          if (playing) _player.pause();
+        case CommandType.next:
+          _player.next();
+        case CommandType.previous:
+          _player.previous();
+        case CommandType.seek:
+          _player.seek(Duration(milliseconds: c.positionMs ?? 0));
+      }
+    } finally {
+      _executingLocal = false;
+    }
+  }
+
+  Future<void> _handleLoad(LoadInstruction load) async {
+    final api = _api;
+    final client = _client;
+    if (api == null || client == null) return;
+    final queue = await api.fetchQueue();
+    if (queue == null || queue.songs.isEmpty) return;
+    final previous = state.remote;
+    await _player.applyModes(
+        repeat: previous?.repeat ?? LoopMode.off,
+        shuffle: previous?.shuffle ?? false);
+    // We are the player now: the next local state report carries the whole queue again.
+    _forceQueue = true;
+    await _player.restoreQueue(
+      queue.songs,
+      queue.index,
+      Duration(milliseconds: load.positionMs),
+      play: load.play,
+      counted: load.counted,
+      client: client,
+      downloads: _downloads,
+    );
+  }
+
+  /// Entry point for server events — public so tests can drive the notifier without a network.
+  void handle(String name, Object? data) {
+    switch (name) {
+      case 'hello':
+        _serverOffsetMs = ((data as Map)['serverTimeMs'] as num).toInt() -
+            _now().millisecondsSinceEpoch;
+        state = state.copyWith(status: ConnectStatus.online);
+      case 'snapshot':
+        final s = Snapshot.fromJson(Map<String, dynamic>.from(data! as Map));
+        state = state.copyWith(
+            devices: s.devices,
+            activeDeviceId: s.activeDeviceId,
+            remote: s.state);
+        _syncMirror();
+        // (Re)connected: let the server know our queue again (it may have restarted).
+        _forceQueue = true;
+        if (_shouldReport()) _scheduleReport(Duration.zero);
+      case 'devices':
+        final m = Map<String, dynamic>.from(data! as Map);
+        state = state.copyWith(
+            devices: devicesFromJson(m['devices']),
+            activeDeviceId: m['activeDeviceId'] as String?);
+        _syncMirror();
+      case 'state':
+        final s = PublicState.fromJson(Map<String, dynamic>.from(data! as Map));
+        state = state.copyWith(remote: s, activeDeviceId: s.activeDeviceId);
+        _syncMirror();
+      case 'command':
+        final c = CommandInstruction.tryParse(
+            Map<String, dynamic>.from(data! as Map));
+        if (c != null) _execCommand(c);
+      case 'load':
+        _handleLoad(
+            LoadInstruction.fromJson(Map<String, dynamic>.from(data! as Map)));
+      case 'revoked':
+        _onRevoked();
+      case 'error':
+        // e.g. too_many_devices: stay quiet, the reconnect loop backs off
+        state = state.copyWith(status: ConnectStatus.offline);
+    }
+  }
+
+  // ── Connection loop ──────────────────────────────────────────────────────────
+
+  Future<void> _sleep(Duration d) {
+    final completer = Completer<void>();
+    _sleeper = completer;
+    _sleepTimer = Timer(d, () {
+      if (!completer.isCompleted) completer.complete();
+    });
+    return completer.future;
+  }
+
+  void _wake() {
+    _sleepTimer?.cancel();
+    final s = _sleeper;
+    if (s != null && !s.isCompleted) s.complete();
+  }
+
+  Future<_Outcome> _runStream(CancelToken cancel) async {
+    final api = _api!;
+    final open = await api.openStream(_identity, cancel);
+    if (open.status == 404) return _Outcome.unavailable;
+    if (open.status != 200 || open.text == null) return _Outcome.ended;
+
+    final parser = SseParser();
+    var gotHello = false;
+    var silent = false;
+    var lastData = _now();
+    final helloTimer = Timer(_t.helloTimeout, () {
+      if (!gotHello) {
+        silent = true;
+        cancel.cancel();
+      }
+    });
+    final watchdog = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (_now().difference(lastData) > _t.silenceTimeout) {
+        silent = true;
+        cancel.cancel();
+      }
+    });
+    try {
+      await for (final text in open.text!) {
+        lastData = _now();
+        for (final item in parser.push(text)) {
+          if (item is! SseEvent) continue;
+          if (item.name == 'hello') gotHello = true;
+          handle(item.name, item.data);
+        }
+      }
+    } catch (_) {
+      // cancelled or the connection dropped: reported through the return value
+    } finally {
+      helloTimer.cancel();
+      watchdog.cancel();
+    }
+    return silent ? _Outcome.silent : _Outcome.ended;
+  }
+
+  Future<_Outcome> _runPoll(CancelToken cancel) async {
+    final api = _api!;
+    int? since;
+    try {
+      while (_running && !cancel.isCancelled) {
+        final r = await api.pollOnce(_identity, since, cancel);
+        if (r.status == 404) return _Outcome.unavailable;
+        if (r.status != 200) return _Outcome.ended;
+        for (final e in r.events) {
+          since = e.seq;
+          handle(e.name, e.data);
+        }
+      }
+    } catch (_) {
+      // cancelled or the connection dropped
+    }
+    return _Outcome.ended;
+  }
+
+  Future<void> _connectionLoop() async {
+    var attempt = 0;
+    var silentStreams = 0;
+    while (_running) {
+      final cancel = CancelToken();
+      _cancel = cancel;
+      if (state.status != ConnectStatus.online) {
+        state = state.copyWith(status: ConnectStatus.connecting);
+      }
+      final startedAt = _now();
+
+      _Outcome outcome;
+      try {
+        outcome =
+            state.polling ? await _runPoll(cancel) : await _runStream(cancel);
+      } catch (_) {
+        outcome = _Outcome.ended;
+      }
+      if (!_running) return;
+
+      if (outcome == _Outcome.unavailable) {
+        // An older server without /connect: hide the feature and stop trying.
+        stop();
+        state = state.copyWith(status: ConnectStatus.unavailable);
+        return;
+      }
+
+      if (outcome == _Outcome.silent) {
+        // Nothing (not even the heartbeat) came through: something on the path buffers streams.
+        silentStreams++;
+        if (silentStreams >= 2) state = state.copyWith(polling: true);
+      } else {
+        silentStreams = 0;
+      }
+
+      // A connection that lasted a while was healthy: the next failure starts the backoff over at ~1 s.
+      if (_now().difference(startedAt) >= _t.healthyAfter) attempt = 0;
+      _stopMirror();
+      state = state.copyWith(status: ConnectStatus.offline);
+      await _sleep(backoff(attempt, _random));
+      attempt++;
+    }
+  }
+
+  // ── Lifecycle ────────────────────────────────────────────────────────────────
+
+  /// Loads (or creates) this device's identity. Safe to call more than once.
+  Future<void> init() async {
+    if (state.deviceId.isNotEmpty) return;
+    var id = await _prefs.deviceId();
+    if (id == null || id.isEmpty) {
+      id = newDeviceId();
+      await _prefs.saveDeviceId(id);
+    }
+    final name = await _prefs.deviceName() ??
+        defaultDeviceName(await _prefs.deviceModel());
+    if (mounted) state = state.copyWith(deviceId: id, deviceName: name);
+  }
+
+  /// Signed in: connect with these credentials.
+  Future<void> start(Credentials credentials) async {
+    if (_running) return;
+    await init();
+    if (!mounted || _running) return;
+    _running = true;
+    _suspended = false;
+    _creds = credentials;
+    _api = _apiFactory(credentials);
+    _client = _clientFactory(credentials);
+    _forceQueue = true;
+    _lastQueueKey = null;
+    _prevPlayer = _player.state;
+    _lastLocalMs = _player.state.position.inMilliseconds;
+    _lastLocalAt = _now();
+    state = state.copyWith(status: ConnectStatus.connecting, polling: false);
+
+    _player.remote = this;
+    _playerSub = _player.stream.listen(_onPlayerChange);
+    _driftTimer = Timer.periodic(_t.driftReport, (_) {
+      if (state.status == ConnectStatus.online &&
+          !isRemote &&
+          _player.state.playing) {
+        _sendReport();
+      }
+    });
+    _connectionLoop();
+  }
+
+  /// Signed out (or the feature is unavailable): disconnect and forget everything.
+  void stop() {
+    _running = false;
+    _suspended = false;
+    _cancel?.cancel();
+    _cancel = null;
+    _wake();
+    _reportTimer?.cancel();
+    _driftTimer?.cancel();
+    _seekTimer?.cancel();
+    _suspendTimer?.cancel();
+    _reportTimer = _driftTimer = _seekTimer = _suspendTimer = null;
+    _takeoverUntil = DateTime.fromMillisecondsSinceEpoch(0);
+    _stopMirror();
+    _mirrorQueue = null;
+    _playerSub?.cancel();
+    _playerSub = null;
+    if (identical(_player.remote, this)) _player.remote = null;
+    _api = null;
+    _client = null;
+    if (mounted) {
+      state = state.copyWith(
+          status: ConnectStatus.idle,
+          devices: const [],
+          activeDeviceId: null,
+          remote: null);
+    }
+  }
+
+  /// The app moved to (or came back from) the background. Connections are only kept alive in the
+  /// background while music is playing, so a paused phone doesn't hold a radio awake for nothing.
+  void setForeground(bool foreground) {
+    _foreground = foreground;
+    if (foreground) {
+      _suspendTimer?.cancel();
+      _suspendTimer = null;
+      final creds = _creds;
+      if (_suspended && creds != null) {
+        _suspended = false;
+        start(creds);
+      }
+    } else {
+      _updateSuspendTimer();
+    }
+  }
+
+  void _updateSuspendTimer() {
+    if (!_running) return;
+    final keepAlive = _foreground || _player.state.playing;
+    if (keepAlive) {
+      _suspendTimer?.cancel();
+      _suspendTimer = null;
+    } else {
+      _suspendTimer ??= Timer(_t.backgroundGrace, _suspend);
+    }
+  }
+
+  void _suspend() {
+    final creds = _creds;
+    if (creds == null || !_running) return;
+    stop();
+    _creds = creds;
+    _suspended = true;
+  }
+
+  Future<void> transferTo(String deviceId) async {
+    final api = _api;
+    if (api == null) return;
+    final result = await api.transfer(state.deviceId, deviceId);
+    final message = switch (result) {
+      TransferResult.targetOffline => 'That device is offline',
+      TransferResult.nothingPlaying =>
+        'Nothing has been played yet — start something first',
+      TransferResult.rateLimited => 'Slow down a little',
+      TransferResult.error => "Couldn't reach the server",
+      _ => null,
+    };
+    if (message != null) _showMessage(message);
+  }
+
+  /// "Continue here" / "Play here".
+  Future<void> transferHere() => transferTo(state.deviceId);
+
+  Future<void> renameThisDevice(String name) async {
+    final clean = name.trim();
+    final capped = clean.length > 40 ? clean.substring(0, 40) : clean;
+    if (capped.isEmpty) return;
+    state = state.copyWith(deviceName: capped);
+    await _prefs.saveDeviceName(capped);
+    if (state.status == ConnectStatus.online) {
+      await _api?.renameDevice(state.deviceId, capped);
+    }
+  }
+
+  @override
+  void dispose() {
+    stop();
+    super.dispose();
+  }
+}

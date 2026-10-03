@@ -1,0 +1,1463 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:dio/dio.dart';
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:just_audio/just_audio.dart' show LoopMode;
+import 'package:mocktail/mocktail.dart';
+import 'package:riffplayer_mobile/api/types.dart';
+import 'package:riffplayer_mobile/connect/connect_api.dart';
+import 'package:riffplayer_mobile/connect/connect_models.dart';
+import 'package:riffplayer_mobile/connect/connect_notifier.dart';
+import 'package:riffplayer_mobile/connect/connect_prefs.dart';
+import 'package:riffplayer_mobile/providers/providers.dart';
+
+import '../helpers/mocks.dart';
+
+const me = 'me-device-0001';
+const other = 'other-device-01';
+const creds =
+    Credentials(serverUrl: 'http://srv', username: 'u', password: 'p');
+
+Song song(String id, {String? title, int? duration = 200}) => Song(
+      id: id,
+      title: title ?? 'Song $id',
+      artist: 'Artist',
+      artistId: 'ar1',
+      album: 'Album',
+      albumId: 'al1',
+      suffix: 'mp3',
+      duration: duration,
+    );
+
+Map<String, dynamic> songJson(String id,
+        {String? title, int? duration = 200}) =>
+    {
+      'id': id,
+      'title': title ?? 'Song $id',
+      'artist': 'Artist',
+      'artistId': 'ar1',
+      'album': 'Album',
+      'albumId': 'al1',
+      'suffix': 'mp3',
+      'duration': duration,
+    };
+
+Map<String, dynamic> deviceJson(String id,
+        {String? name,
+        bool online = true,
+        bool unreachable = false,
+        bool active = false}) =>
+    {
+      'id': id,
+      'name': name ?? (id == me ? 'My PC' : 'Phone'),
+      'type': 'android',
+      'online': online,
+      'unreachable': unreachable,
+      'active': active,
+    };
+
+// ── Fakes ──────────────────────────────────────────────────────────────────────
+
+class FakePrefs implements ConnectPrefs {
+  String? id;
+  String? name;
+  String? model = 'Pixel 8';
+  int idSaves = 0;
+
+  @override
+  Future<String?> deviceId() async => id;
+  @override
+  Future<void> saveDeviceId(String v) async {
+    id = v;
+    idSaves++;
+  }
+
+  @override
+  Future<String?> deviceName() async => name;
+  @override
+  Future<void> saveDeviceName(String v) async => name = v;
+  @override
+  Future<String?> deviceModel() async => model;
+}
+
+class FakeConnectApi implements ConnectApi {
+  final reports = <StateReport>[];
+  final commands = <(CommandType, int?)>[];
+  final transfers = <(String, String)>[];
+  final renames = <(String, String)>[];
+  final identities = <DeviceIdentity>[];
+  final pollSinces = <int?>[];
+  final streams = <StreamController<String>>[];
+  final pollQueue = <PollResult>[];
+
+  ReportResult reportResult = ReportResult.ok;
+  CommandResult commandResult = CommandResult.sent;
+  TransferResult transferResult = TransferResult.ok;
+  QueueResult? queue;
+  int openStatus = 200;
+  Object? openError;
+  bool hang = true;
+  int openCalls = 0;
+
+  @override
+  Future<StreamOpen> openStream(
+      DeviceIdentity identity, CancelToken cancel) async {
+    openCalls++;
+    identities.add(identity);
+    if (openError != null) throw openError!;
+    if (hang) return Completer<StreamOpen>().future;
+    if (openStatus != 200) return StreamOpen(openStatus, null);
+    final c = StreamController<String>();
+    streams.add(c);
+    cancel.whenCancel.then((_) {
+      if (!c.isClosed) {
+        c.addError(DioException.requestCancelled(
+            requestOptions: RequestOptions(), reason: 'cancelled'));
+        c.close();
+      }
+    });
+    return StreamOpen(200, c.stream);
+  }
+
+  @override
+  Future<PollResult> pollOnce(
+      DeviceIdentity identity, int? since, CancelToken cancel) async {
+    pollSinces.add(since);
+    if (pollQueue.isEmpty) return Completer<PollResult>().future;
+    return pollQueue.removeAt(0);
+  }
+
+  @override
+  Future<ReportResult> reportState(StateReport report) async {
+    reports.add(report);
+    return reportResult;
+  }
+
+  @override
+  Future<CommandResult> sendCommand(String deviceId, CommandType type,
+      {int? positionMs}) async {
+    commands.add((type, positionMs));
+    return commandResult;
+  }
+
+  @override
+  Future<TransferResult> transfer(String deviceId, String toDeviceId,
+      {bool play = true}) async {
+    transfers.add((deviceId, toDeviceId));
+    return transferResult;
+  }
+
+  @override
+  Future<bool> renameDevice(String deviceId, String name) async {
+    renames.add((deviceId, name));
+    return true;
+  }
+
+  @override
+  Future<QueueResult?> fetchQueue() async => queue;
+}
+
+/// A real [PlayerNotifier] whose state tests can set directly, as if the audio player had changed it.
+class TestPlayer extends PlayerNotifier {
+  TestPlayer(super.handler);
+  void setPlayerState(PlayerState s) => state = s;
+}
+
+class Harness {
+  final FakeAsync async;
+  final base = DateTime(2026, 1, 1);
+  final handler = MockAudioHandler();
+  final client = MockSubsonicClient();
+  final downloads = MockDownloadService();
+  final api = FakeConnectApi();
+  final prefs = FakePrefs();
+  final messages = <String>[];
+  int revoked = 0;
+  late final TestPlayer player;
+  late final ConnectNotifier connect;
+
+  Harness(this.async, {ConnectTimings timings = const ConnectTimings()}) {
+    when(() => handler.positionStream).thenAnswer((_) => const Stream.empty());
+    when(() => handler.durationStream).thenAnswer((_) => const Stream.empty());
+    when(() => handler.playingStream).thenAnswer((_) => const Stream.empty());
+    when(() => handler.currentIndexStream)
+        .thenAnswer((_) => const Stream.empty());
+    when(() => handler.shuffleModeEnabledStream)
+        .thenAnswer((_) => const Stream.empty());
+    when(() => handler.loopModeStream).thenAnswer((_) => const Stream.empty());
+    when(() => handler.pause()).thenAnswer((_) async {});
+    when(() => handler.play()).thenAnswer((_) async {});
+    when(() => handler.seek(any())).thenAnswer((_) async {});
+    when(() => handler.skipToNext()).thenAnswer((_) async {});
+    when(() => handler.skipToPrevious()).thenAnswer((_) async {});
+    when(() => handler.setLoopMode(any())).thenAnswer((_) async {});
+    when(() => handler.setShuffleModeEnabled(any())).thenAnswer((_) async {});
+    when(() => handler.playQueue(any(), any(),
+        position: any(named: 'position'),
+        autoplay: any(named: 'autoplay'))).thenAnswer((_) async {});
+    when(() => downloads.localPath(any())).thenAnswer((_) async => null);
+    when(() => client.streamUrl(any())).thenReturn('http://test/stream');
+    when(() => client.scrobble(any(), submission: any(named: 'submission')))
+        .thenAnswer((_) async {});
+
+    player = TestPlayer(handler);
+    connect = ConnectNotifier(
+      player: player,
+      downloads: downloads,
+      prefs: prefs,
+      onRevoked: () async => revoked++,
+      showMessage: messages.add,
+      apiFactory: (_) => api,
+      clientFactory: (_) => client,
+      now: () => base.add(async.elapsed),
+      random: () =>
+          0.5, // no jitter: reconnect delays are exactly 1 s, 2 s, 4 s...
+      timings: timings,
+    );
+  }
+
+  int get nowMs => base.add(async.elapsed).millisecondsSinceEpoch;
+  ConnectState get state => connect.state;
+
+  void tick([Duration d = Duration.zero]) {
+    async.elapse(d);
+    async.flushMicrotasks();
+  }
+
+  /// Starts and (with a hanging server) marks the connection online by hand.
+  void startOnline() {
+    prefs.id = me;
+    prefs.name = 'My PC';
+    api.hang = true;
+    connect.start(creds);
+    tick();
+    handle('hello', {'serverTimeMs': nowMs, 'you': me});
+  }
+
+  void handle(String name, Object? data) {
+    connect.handle(name, data);
+    async.flushMicrotasks();
+  }
+
+  Map<String, dynamic> remoteJson({
+    bool playing = true,
+    int positionMs = 10000,
+    int? positionAtMs,
+    int? durationMs = 200000,
+    String repeat = 'off',
+    bool shuffle = false,
+    Map<String, dynamic>? song,
+  }) =>
+      {
+        'activeDeviceId': other,
+        'playing': playing,
+        'song': song ?? songJson('r1', title: 'Remote Song'),
+        'index': 0,
+        'queueLength': 3,
+        'queueVersion': 1,
+        'positionMs': positionMs,
+        'positionAtMs': positionAtMs ?? nowMs,
+        'durationMs': durationMs,
+        'repeat': repeat,
+        'shuffle': shuffle,
+        'counted': false,
+      };
+
+  /// Snapshot in which `other` is the one playing.
+  void otherIsPlaying({Map<String, dynamic>? remote}) {
+    handle('snapshot', {
+      'devices': [deviceJson(me), deviceJson(other, active: true)],
+      'activeDeviceId': other,
+      'state': remote ?? remoteJson(),
+    });
+  }
+
+  void meIsActive() {
+    handle('devices', {
+      'devices': [deviceJson(me, active: true), deviceJson(other)],
+      'activeDeviceId': me,
+    });
+  }
+
+  void playLocally(
+      {int index = 0,
+      bool playing = true,
+      Duration position = const Duration(milliseconds: 12300),
+      List<Song>? queue}) {
+    player.setPlayerState(PlayerState(
+      queue: queue ?? [song('a'), song('b')],
+      currentIndex: index,
+      playing: playing,
+      position: position,
+      duration: const Duration(seconds: 200),
+    ));
+    async.flushMicrotasks();
+  }
+
+  /// Lets [d] pass the way a healthy connection would: the server's heartbeat reaches every open stream.
+  void idle(Duration d) {
+    var left = d;
+    while (left > Duration.zero) {
+      final step = left > const Duration(seconds: 20)
+          ? const Duration(seconds: 20)
+          : left;
+      tick(step);
+      left -= step;
+      for (final c in api.streams) {
+        if (!c.isClosed) c.add(': ping\n\n');
+      }
+    }
+    async.flushMicrotasks();
+  }
+
+  void dispose() {
+    connect.dispose();
+    player.dispose();
+  }
+}
+
+/// A test that runs on virtual time with a ready [Harness].
+void fakeTest(String description, void Function(Harness h) body,
+    {ConnectTimings timings = const ConnectTimings()}) {
+  test(description, () {
+    fakeAsync((async) {
+      final h = Harness(async, timings: timings);
+      body(h);
+      h.dispose();
+    });
+  });
+}
+
+String sse(String name, Object data, [int id = 1]) =>
+    'id: $id\nevent: $name\ndata: ${jsonEncode(data)}\n\n';
+
+void main() {
+  setUpAll(() {
+    registerMockFallbackValues();
+    registerFallbackValue(Duration.zero);
+  });
+
+  // ── Identity ───────────────────────────────────────────────────────────────
+
+  group('identity', () {
+    fakeTest(
+        'creates and remembers a device id, and names the device after the phone model',
+        (h) {
+      h.connect.init();
+      h.tick();
+
+      expect(h.state.deviceId, startsWith('android-'));
+      expect(h.prefs.id, h.state.deviceId);
+      expect(h.state.deviceName, 'Pixel 8');
+    });
+
+    fakeTest('reuses a stored id and name', (h) {
+      h.prefs.id = 'stored-device-id';
+      h.prefs.name = 'Kitchen phone';
+      h.connect.init();
+      h.tick();
+
+      expect((h.state.deviceId, h.state.deviceName),
+          ('stored-device-id', 'Kitchen phone'));
+      expect(h.prefs.idSaves, 0);
+    });
+
+    fakeTest('falls back to a generic name when the model is unknown', (h) {
+      h.prefs.model = null;
+      h.connect.init();
+      h.tick();
+      expect(h.state.deviceName, 'Android phone');
+    });
+
+    fakeTest(
+        'rename trims, caps at 40 characters, remembers it and tells the server',
+        (h) {
+      h.startOnline();
+
+      h.connect.renameThisDevice('  ${'x' * 60}  ');
+      h.tick();
+
+      expect(h.state.deviceName, 'x' * 40);
+      expect(h.prefs.name, 'x' * 40);
+      expect(h.api.renames, [(me, 'x' * 40)]);
+    });
+
+    fakeTest('rename works offline too, and ignores a blank name', (h) {
+      h.prefs.id = me;
+      h.connect.init();
+      h.tick();
+
+      h.connect.renameThisDevice('Kitchen phone');
+      h.connect.renameThisDevice('   ');
+      h.tick();
+
+      expect(h.state.deviceName, 'Kitchen phone');
+      expect(h.api.renames, isEmpty);
+    });
+  });
+
+  // ── Events → state ─────────────────────────────────────────────────────────
+
+  group('events', () {
+    fakeTest('hello marks the device online', (h) {
+      h.startOnline();
+      expect(h.state.status, ConnectStatus.online);
+    });
+
+    fakeTest('snapshot stores devices, the active device and the remote state',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      expect(h.state.devices.map((d) => d.id), [me, other]);
+      expect(h.state.activeDeviceId, other);
+      expect(h.state.remote?.song?.title, 'Remote Song');
+      expect(h.state.remoteActive, isTrue);
+      expect(h.state.activeDevice?.name, 'Phone');
+    });
+
+    fakeTest('devices and state events update their parts', (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      h.handle('devices', {
+        'devices': [
+          deviceJson(me),
+          deviceJson(other, name: 'Renamed', active: true)
+        ],
+        'activeDeviceId': other,
+      });
+      expect(h.state.devices[1].name, 'Renamed');
+
+      h.handle(
+          'state',
+          h.remoteJson(
+              positionMs: 50000, song: songJson('r2', title: 'Next One')));
+      expect(h.state.remote?.song?.title, 'Next One');
+    });
+
+    fakeTest('revoked signs the user out', (h) {
+      h.startOnline();
+      h.handle('revoked', {});
+      expect(h.revoked, 1);
+    });
+
+    fakeTest(
+        'a server error event (e.g. too many devices) marks the connection offline',
+        (h) {
+      h.startOnline();
+      h.handle('error', {'error': 'too_many_devices'});
+      expect(h.state.status, ConnectStatus.offline);
+    });
+
+    fakeTest('ignores events it does not know, and commands of an unknown type',
+        (h) {
+      h.startOnline();
+      h.handle('from-the-future', {'a': 1});
+      h.handle('command', {
+        'commandId': 'x',
+        'type': 'self-destruct',
+        'expiresAtMs': h.nowMs + 5000
+      });
+
+      verifyNever(() => h.handler.skipToNext());
+    });
+  });
+
+  // ── Mirror mode ────────────────────────────────────────────────────────────
+
+  group('mirror mode', () {
+    fakeTest(
+        'shows what the other device plays through the normal player state and silences the local player',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying(remote: h.remoteJson(repeat: 'all', shuffle: true));
+
+      final p = h.player.state;
+      expect(p.currentSong?.title, 'Remote Song');
+      expect(p.playing, isTrue);
+      expect(p.position.inSeconds, 10);
+      expect(p.duration, const Duration(seconds: 200));
+      expect((p.repeatMode, p.shuffle), (LoopMode.all, true));
+      expect(p.queue.length, 1);
+      expect(h.player.isMirroring, isTrue);
+      verify(() => h.handler.pause()).called(1);
+    });
+
+    fakeTest(
+        'keeps the position moving while the other device plays, and not while it is paused',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying(remote: h.remoteJson(positionMs: 10000));
+      h.tick(const Duration(seconds: 3));
+      expect(h.player.state.position.inSeconds, 13);
+
+      h.handle('state', h.remoteJson(playing: false, positionMs: 13000));
+      h.tick(const Duration(seconds: 5));
+      expect(h.player.state.position.inSeconds, 13);
+      expect(h.player.state.playing, isFalse);
+    });
+
+    fakeTest('does not run past the end of the track', (h) {
+      h.startOnline();
+      h.otherIsPlaying(remote: h.remoteJson(positionMs: 199000));
+      h.tick(const Duration(seconds: 10));
+      expect(h.player.state.position, const Duration(seconds: 200));
+    });
+
+    fakeTest('falls back to the song\'s own duration when the report has none',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying(
+          remote: h.remoteJson(
+              durationMs: null, song: songJson('r1', duration: 321)));
+      expect(h.player.state.duration, const Duration(seconds: 321));
+    });
+
+    fakeTest('stops mirroring once this device is the one playing', (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.meIsActive();
+
+      expect(h.player.isMirroring, isFalse);
+      h.playLocally();
+      h.tick(const Duration(seconds: 3));
+      expect(h.player.state.currentSong?.id, 'a');
+    });
+  });
+
+  // ── Transport actions while only a remote ──────────────────────────────────
+
+  group('controlling the other device', () {
+    fakeTest('pause/play go to the other device, and the button flips at once',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      h.player.pause();
+      h.tick();
+      expect(h.api.commands.last.$1, CommandType.pause);
+      expect(h.player.state.playing, isFalse);
+      expect(h.state.remote?.playing, isFalse);
+
+      h.player.play();
+      h.tick();
+      expect(h.api.commands.last.$1, CommandType.play);
+      expect(h.player.state.playing, isTrue);
+      verifyNever(() => h.handler.play());
+    });
+
+    fakeTest('keeps the shown position steady across an optimistic pause', (h) {
+      h.startOnline();
+      h.otherIsPlaying(remote: h.remoteJson(positionMs: 10000));
+      h.tick(const Duration(seconds: 4));
+
+      h.player.pause();
+      h.tick(const Duration(seconds: 1));
+
+      expect(h.player.state.position.inSeconds, 14);
+    });
+
+    fakeTest('next and previous go to the other device, not the local player',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      h.player.next();
+      h.player.previous();
+      h.tick();
+
+      expect(h.api.commands.map((c) => c.$1),
+          [CommandType.next, CommandType.previous]);
+      verifyNever(() => h.handler.skipToNext());
+      verifyNever(() => h.handler.skipToPrevious());
+    });
+
+    fakeTest('a slider drag sends only the position where it comes to rest',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      h.player.seek(const Duration(seconds: 30));
+      h.tick(const Duration(milliseconds: 50));
+      h.player.seek(const Duration(seconds: 60));
+      h.tick(const Duration(milliseconds: 50));
+      h.player.seek(const Duration(seconds: 90));
+      expect(h.api.commands, isEmpty);
+
+      h.tick(const Duration(milliseconds: 150));
+
+      expect(h.api.commands, [(CommandType.seek, 90000)]);
+      verifyNever(() => h.handler.seek(any()));
+    });
+
+    fakeTest(
+        'says so when the other device cannot be reached, and when the server cannot',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      h.api.commandResult = CommandResult.noActiveDevice;
+      h.player.next();
+      h.tick();
+      expect(h.messages.last, "Phone isn't reachable right now");
+
+      h.api.commandResult = CommandResult.error;
+      h.player.next();
+      h.tick();
+      expect(h.messages.last, "Couldn't reach the server");
+    });
+
+    fakeTest('acts locally again when this device is the one playing', (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.meIsActive();
+
+      h.player.next();
+      h.player.seek(const Duration(seconds: 5));
+      h.tick(const Duration(milliseconds: 500));
+
+      expect(h.api.commands, isEmpty);
+      verify(() => h.handler.skipToNext()).called(1);
+      verify(() => h.handler.seek(const Duration(seconds: 5))).called(1);
+    });
+
+    fakeTest('acts locally while the connection is down', (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.handle('error', {'error': 'x'});
+
+      h.player.next();
+      h.tick();
+
+      expect(h.api.commands, isEmpty);
+      verify(() => h.handler.skipToNext()).called(1);
+    });
+  });
+
+  // ── Commands executed here ─────────────────────────────────────────────────
+
+  group('commands from another device', () {
+    Map<String, dynamic> cmd(Harness h, String type,
+            {int? positionMs, int? expiresIn = 5000, String? id}) =>
+        {
+          'commandId': id ?? 'c-${h.nowMs}-$type',
+          'type': type,
+          if (positionMs != null) 'positionMs': positionMs,
+          'expiresAtMs': h.nowMs + (expiresIn ?? 5000),
+        };
+
+    fakeTest('next, previous and seek are executed on the local player', (h) {
+      h.startOnline();
+      h.handle('command', cmd(h, 'next'));
+      h.handle('command', cmd(h, 'previous'));
+      h.handle('command', cmd(h, 'seek', positionMs: 42000));
+
+      verify(() => h.handler.skipToNext()).called(1);
+      verify(() => h.handler.skipToPrevious()).called(1);
+      verify(() => h.handler.seek(const Duration(seconds: 42))).called(1);
+    });
+
+    fakeTest(
+        'play only starts a paused player and pause only stops a playing one',
+        (h) {
+      h.startOnline();
+      h.playLocally(playing: true);
+      h.handle('command', cmd(h, 'play'));
+      verifyNever(() => h.handler.play());
+      h.handle('command', cmd(h, 'pause'));
+      verify(() => h.handler.pause()).called(1);
+
+      h.playLocally(playing: false);
+      h.handle('command', cmd(h, 'pause', id: 'p2'));
+      verifyNever(() => h.handler.play());
+      h.handle('command', cmd(h, 'play', id: 'p3'));
+      verify(() => h.handler.play()).called(1);
+    });
+
+    fakeTest('runs a command once even if it is delivered twice', (h) {
+      h.startOnline();
+      final c = cmd(h, 'next');
+      h.handle('command', c);
+      h.handle('command', c);
+      verify(() => h.handler.skipToNext()).called(1);
+    });
+
+    fakeTest('ignores a command that has expired', (h) {
+      h.startOnline();
+      h.handle('command', cmd(h, 'next', expiresIn: -1));
+      verifyNever(() => h.handler.skipToNext());
+    });
+
+    fakeTest(
+        'never forwards a command back out, even if this device already looks like a remote',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      h.handle('command', cmd(h, 'next'));
+
+      verify(() => h.handler.skipToNext()).called(1);
+      expect(h.api.commands, isEmpty);
+      expect(h.connect.isRemote, isTrue); // and back to normal afterwards
+    });
+  });
+
+  // ── Receiving a handover ───────────────────────────────────────────────────
+
+  group('load (handover to this device)', () {
+    Map<String, dynamic> load({bool play = true, bool counted = true}) => {
+          'queueVersion': 2,
+          'index': 1,
+          'positionMs': 83000,
+          'play': play,
+          'counted': counted
+        };
+
+    fakeTest(
+        'fetches the queue and plays it at the given position, keeping the other device\'s repeat/shuffle',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying(remote: h.remoteJson(repeat: 'all', shuffle: true));
+      h.api.queue = QueueResult(
+          queueVersion: 2, index: 1, songs: [song('a'), song('b'), song('c')]);
+
+      h.handle('load', load());
+      h.tick();
+
+      verify(() => h.handler.setLoopMode(LoopMode.all)).called(1);
+      verify(() => h.handler.setShuffleModeEnabled(true)).called(1);
+      verify(() => h.handler.playQueue(any(), 1,
+          position: const Duration(seconds: 83), autoplay: true)).called(1);
+      expect(h.player.state.queue.map((s) => s.id), ['a', 'b', 'c']);
+      expect(h.player.state.currentIndex, 1);
+      expect(h.player.isMirroring, isFalse);
+    });
+
+    fakeTest(
+        'a play the other device already counted is not counted again here',
+        (h) {
+      h.startOnline();
+      h.api.queue =
+          QueueResult(queueVersion: 2, index: 1, songs: [song('a'), song('b')]);
+
+      h.handle('load', load(counted: true));
+      h.tick();
+      expect(h.player.currentPlayCounted, isTrue);
+
+      h.handle('load', load(counted: false));
+      h.tick();
+      expect(h.player.currentPlayCounted, isFalse);
+    });
+
+    fakeTest('loads without playing when the handover says so', (h) {
+      h.startOnline();
+      h.api.queue = QueueResult(queueVersion: 2, index: 0, songs: [song('a')]);
+
+      h.handle('load', load(play: false));
+      h.tick();
+
+      verify(() => h.handler.playQueue(any(), 0,
+          position: const Duration(seconds: 83), autoplay: false)).called(1);
+      verifyNever(() => h.client.scrobble(any(), submission: false));
+    });
+
+    fakeTest('does nothing when the server has no queue to give', (h) {
+      h.startOnline();
+      h.api.queue = null;
+
+      h.handle('load', load());
+      h.tick();
+
+      verifyNever(() => h.handler.playQueue(any(), any(),
+          position: any(named: 'position'), autoplay: any(named: 'autoplay')));
+    });
+  });
+
+  // ── Reporting this device's playback ───────────────────────────────────────
+
+  group('reporting local playback', () {
+    fakeTest('reports what is playing, with the whole queue the first time',
+        (h) {
+      h.startOnline();
+      h.playLocally();
+      h.tick(const Duration(milliseconds: 250));
+
+      expect(h.api.reports.length, 1);
+      final r = h.api.reports.single;
+      expect(r.deviceId, me);
+      expect(r.queueIds, ['a', 'b']);
+      expect((r.index, r.positionMs, r.playing, r.repeat, r.shuffle, r.counted),
+          (0, 12300, true, LoopMode.off, false, false));
+    });
+
+    fakeTest('leaves the queue out of later reports until it changes', (h) {
+      h.startOnline();
+      h.playLocally();
+      h.tick(const Duration(milliseconds: 250));
+      h.playLocally(playing: false, queue: h.player.state.queue);
+      h.tick(const Duration(milliseconds: 250));
+
+      expect(h.api.reports[1].playing, isFalse);
+      expect(h.api.reports[1].queueIds, isNull);
+
+      h.playLocally(queue: [song('a'), song('b'), song('c')]);
+      h.tick(const Duration(milliseconds: 250));
+      expect(h.api.reports[2].queueIds, ['a', 'b', 'c']);
+    });
+
+    fakeTest('coalesces a burst of changes into one report', (h) {
+      h.startOnline();
+      final queue = [song('a'), song('b')];
+      h.playLocally(queue: queue);
+      h.playLocally(index: 1, queue: queue);
+      h.playLocally(index: 1, queue: queue, playing: false);
+      h.tick(const Duration(milliseconds: 250));
+
+      expect(h.api.reports.length, 1);
+      expect((h.api.reports.single.index, h.api.reports.single.playing),
+          (1, false));
+    });
+
+    fakeTest(
+        'resends once with the queue when the server asks for it, and does not loop',
+        (h) {
+      h.startOnline();
+      h.playLocally();
+      h.tick(const Duration(milliseconds: 250));
+      h.api.reports.clear();
+      h.api.reportResult = ReportResult.needQueue;
+
+      h.playLocally(playing: false, queue: h.player.state.queue);
+      h.tick(const Duration(milliseconds: 250));
+
+      expect(h.api.reports.length, 2);
+      expect(h.api.reports[1].queueIds, ['a', 'b']);
+    });
+
+    fakeTest('sends nothing for an empty queue or while the connection is down',
+        (h) {
+      h.startOnline();
+      h.player.setPlayerState(const PlayerState(playing: true));
+      h.tick(const Duration(milliseconds: 250));
+      expect(h.api.reports, isEmpty);
+
+      h.handle('error', {'error': 'x'});
+      h.playLocally();
+      h.tick(const Duration(milliseconds: 250));
+      expect(h.api.reports, isEmpty);
+    });
+
+    fakeTest(
+        'a paused bystander stays quiet, but starting playback here takes over from the other device',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.tick(const Duration(seconds: 1));
+      expect(h.api.reports,
+          isEmpty); // mirroring is not "the user doing something"
+
+      h.connect.onLocalStart();
+      h.playLocally(playing: false, queue: [song('a')]);
+      h.tick(const Duration(milliseconds: 250));
+      expect(h.api.reports, isEmpty);
+
+      h.playLocally(queue: [song('a')]);
+      h.tick(const Duration(milliseconds: 250));
+      expect(h.api.reports.length, 1);
+      expect(h.api.reports.single.playing, isTrue);
+      expect(h.api.reports.single.queueIds, ['a']);
+    });
+
+    fakeTest('reports a seek, but not ordinary playback progress', (h) {
+      h.startOnline();
+      h.meIsActive();
+      h.playLocally(position: const Duration(seconds: 10));
+      h.tick(const Duration(milliseconds: 250));
+      h.api.reports.clear();
+
+      final queue =
+          h.player.state.queue; // position updates keep the same queue object
+      for (var i = 1; i <= 8; i++) {
+        h.tick(const Duration(milliseconds: 250));
+        h.playLocally(
+            position: Duration(milliseconds: 10000 + i * 250), queue: queue);
+      }
+      h.tick(const Duration(milliseconds: 250));
+      expect(h.api.reports, isEmpty);
+
+      h.playLocally(position: const Duration(seconds: 120), queue: queue);
+      h.tick(const Duration(milliseconds: 250));
+      expect(h.api.reports.length, 1);
+      expect(h.api.reports.single.positionMs, 120000);
+    });
+
+    fakeTest(
+        're-reports every ten seconds while playing here (drift correction), not while paused',
+        (h) {
+      h.startOnline();
+      h.meIsActive();
+      h.playLocally();
+      h.tick(const Duration(milliseconds: 250));
+      h.api.reports.clear();
+
+      h.tick(const Duration(seconds: 10));
+      expect(h.api.reports.length, 1);
+
+      h.playLocally(playing: false, queue: h.player.state.queue);
+      h.tick(const Duration(milliseconds: 250));
+      h.api.reports.clear();
+      h.tick(const Duration(seconds: 20));
+      expect(h.api.reports, isEmpty);
+    });
+
+    fakeTest(
+        'never reports another device\'s track back as its own queue (and so never steals playback by accident)',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.tick(const Duration(seconds: 1));
+
+      expect(h.api.reports, isEmpty);
+      expect(h.player.state.queue.single.id,
+          'r1'); // it is shown, just never reported
+    });
+
+    fakeTest(
+        'a stale mirrored state is not reported between "the user started a track here" and the player actually starting it',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.connect.onLocalStart();
+
+      // the silenced local player emits a position event while playSong() is still preparing the queue
+      h.player.setPlayerState(h.player.state.copyWith(position: Duration.zero));
+      h.tick(const Duration(milliseconds: 500));
+
+      expect(h.api.reports, isEmpty);
+    });
+
+    fakeTest(
+        'does not keep re-reporting a queue it is only mirroring while another device plays',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      h.tick(const Duration(seconds: 35));
+
+      expect(h.api.reports, isEmpty);
+    });
+
+    fakeTest(
+        'reports the queue again after a (re)connect, since the server may have restarted',
+        (h) {
+      h.startOnline();
+      h.meIsActive();
+      h.playLocally();
+      h.tick(const Duration(milliseconds: 250));
+      h.api.reports.clear();
+
+      h.handle('snapshot', {
+        'devices': [deviceJson(me, active: true)],
+        'activeDeviceId': me,
+        'state': null
+      });
+      h.tick();
+
+      expect(h.api.reports.length, 1);
+      expect(h.api.reports.single.queueIds, ['a', 'b']);
+    });
+
+    fakeTest('gives up cleanly against a server without Connect', (h) {
+      h.startOnline();
+      h.api.reportResult = ReportResult.unavailable;
+      h.playLocally();
+      h.tick(const Duration(milliseconds: 250));
+
+      expect(h.state.status, ConnectStatus.unavailable);
+      expect(h.player.remote, isNull);
+    });
+  });
+
+  // ── Takeover ───────────────────────────────────────────────────────────────
+
+  group('taking over from another device', () {
+    fakeTest(
+        'starting a track here leaves mirror mode, and the mirror does not put the other track back while the takeover is in flight',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      expect(h.player.isMirroring, isTrue);
+
+      h.connect.onLocalStart();
+      expect(h.player.isMirroring, isFalse);
+      h.playLocally(queue: [song('a')]);
+
+      h.tick(const Duration(seconds: 2));
+      expect(h.player.state.currentSong?.id, 'a');
+      expect(h.player.isMirroring, isFalse);
+
+      // confirmed: this device is now the active one and mirroring stays off
+      h.meIsActive();
+      h.tick(const Duration(seconds: 10));
+      expect(h.player.state.currentSong?.id, 'a');
+    });
+
+    fakeTest(
+        'if the takeover is never confirmed (e.g. the player never started) the mirror resumes after a few seconds',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.connect.onLocalStart();
+      h.playLocally(queue: [song('a')], playing: false);
+
+      h.tick(const Duration(seconds: 7));
+      expect(h.player.state.currentSong?.id, 'a');
+
+      h.tick(const Duration(seconds: 2));
+      expect(h.player.state.currentSong?.title, 'Remote Song');
+      expect(h.player.isMirroring, isTrue);
+    });
+
+    fakeTest(
+        'between "the user started a track here" and the player actually setting it up, the mirror stays off',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      // playSong() is still building the queue: nothing local has been set yet
+      h.connect.onLocalStart();
+      h.tick(const Duration(seconds: 2));
+
+      expect(h.player.isMirroring, isFalse);
+    });
+
+    fakeTest('onLocalStart is a no-op when this device is not just a remote',
+        (h) {
+      h.startOnline();
+      h.meIsActive();
+      h.playLocally();
+
+      h.connect.onLocalStart();
+      h.tick(const Duration(seconds: 2));
+
+      expect(h.player.state.currentSong?.id, 'a');
+    });
+  });
+
+  // ── Transfer ───────────────────────────────────────────────────────────────
+
+  group('transfer', () {
+    fakeTest(
+        'transferTo asks the server to move playback from this device to the chosen one',
+        (h) {
+      h.startOnline();
+      h.connect.transferTo(other);
+      h.tick();
+      expect(h.api.transfers, [(me, other)]);
+    });
+
+    fakeTest('transferHere ("Continue here") targets this device', (h) {
+      h.startOnline();
+      h.connect.transferHere();
+      h.tick();
+      expect(h.api.transfers, [(me, me)]);
+    });
+
+    final explained = {
+      TransferResult.targetOffline: 'That device is offline',
+      TransferResult.nothingPlaying:
+          'Nothing has been played yet — start something first',
+      TransferResult.rateLimited: 'Slow down a little',
+      TransferResult.error: "Couldn't reach the server",
+    };
+    explained.forEach((result, message) {
+      fakeTest('explains a $result result', (h) {
+        h.startOnline();
+        h.api.transferResult = result;
+        h.connect.transferTo(other);
+        h.tick();
+        expect(h.messages, [message]);
+      });
+    });
+
+    for (final result in [
+      TransferResult.ok,
+      TransferResult.pending,
+      TransferResult.noop
+    ]) {
+      fakeTest('stays quiet on $result', (h) {
+        h.startOnline();
+        h.api.transferResult = result;
+        h.connect.transferTo(other);
+        h.tick();
+        expect(h.messages, isEmpty);
+      });
+    }
+  });
+
+  // ── The connection itself ──────────────────────────────────────────────────
+
+  group('the connection loop', () {
+    String hello(Harness h) =>
+        sse('hello', {'serverTimeMs': h.nowMs, 'you': me});
+
+    void begin(Harness h) {
+      h.prefs.id = me;
+      h.prefs.name = 'My PC';
+      h.api.hang = false;
+      h.connect.start(creds);
+      h.tick();
+    }
+
+    fakeTest(
+        'opens a stream with this device\'s identity and goes online on hello',
+        (h) {
+      begin(h);
+      expect(h.state.status, ConnectStatus.connecting);
+      expect(h.api.identities.single.deviceId, me);
+      expect((h.api.identities.single.name, h.api.identities.single.type),
+          ('My PC', DeviceType.android));
+
+      h.api.streams[0].add(hello(h));
+      h.tick();
+
+      expect(h.state.status, ConnectStatus.online);
+    });
+
+    fakeTest('handles events split across network chunks', (h) {
+      begin(h);
+      final snapshot = sse(
+          'snapshot',
+          {
+            'devices': [deviceJson(me), deviceJson(other)],
+            'activeDeviceId': null,
+            'state': null
+          },
+          2);
+
+      h.api.streams[0].add(hello(h));
+      h.api.streams[0].add(snapshot.substring(0, 20));
+      h.tick();
+      expect(h.state.devices, isEmpty);
+      h.api.streams[0].add(snapshot.substring(20));
+      h.tick();
+
+      expect(h.state.devices.map((d) => d.id), [me, other]);
+    });
+
+    fakeTest('stops mirroring when the connection drops', (h) {
+      begin(h);
+      h.api.streams[0].add(hello(h));
+      h.api.streams[0].add(sse(
+          'snapshot',
+          {
+            'devices': [deviceJson(me), deviceJson(other, active: true)],
+            'activeDeviceId': other,
+            'state': h.remoteJson(),
+          },
+          2));
+      h.tick();
+      expect(h.player.isMirroring, isTrue);
+
+      h.api.streams[0].close();
+      h.tick();
+
+      expect(h.state.status, ConnectStatus.offline);
+      expect(h.player.isMirroring, isFalse);
+    });
+
+    fakeTest(
+        'registers itself as the remote controller while running and removes itself on stop',
+        (h) {
+      begin(h);
+      expect(h.player.remote, same(h.connect));
+
+      h.connect.stop();
+
+      expect(h.player.remote, isNull);
+      expect(h.state.status, ConnectStatus.idle);
+      expect(h.state.devices, isEmpty);
+    });
+
+    fakeTest(
+        'stop cancels the open stream, and starting twice does not open two',
+        (h) {
+      begin(h);
+      h.connect.start(creds);
+      h.tick();
+      expect(h.api.openCalls, 1);
+
+      h.connect.stop();
+      h.tick();
+
+      expect(h.api.streams[0].isClosed, isTrue);
+    });
+
+    fakeTest(
+        'an older server without /connect hides the feature and stops trying',
+        (h) {
+      h.api.openStatus = 404;
+      begin(h);
+      h.tick(const Duration(seconds: 60));
+
+      expect(h.state.status, ConnectStatus.unavailable);
+      expect(h.player.remote, isNull);
+      expect(h.api.openCalls, 1);
+    });
+
+    fakeTest('reconnects after the stream ends, waiting about a second first',
+        (h) {
+      begin(h);
+      h.api.streams[0].add(hello(h));
+      h.tick();
+
+      h.api.streams[0].close();
+      h.tick();
+      expect(h.state.status, ConnectStatus.offline);
+      expect(h.api.openCalls, 1);
+
+      h.tick(const Duration(milliseconds: 1300));
+      expect(h.api.openCalls, 2);
+    });
+
+    fakeTest('backs off further while the server stays unreachable', (h) {
+      h.api.openError = DioException(
+          requestOptions: RequestOptions(),
+          type: DioExceptionType.connectionError);
+      begin(h);
+      expect(h.api.openCalls, 1);
+
+      h.tick(const Duration(milliseconds: 1300)); // ~1 s
+      expect(h.api.openCalls, 2);
+      h.tick(const Duration(
+          milliseconds: 1300)); // second wait is ~2 s, so nothing yet
+      expect(h.api.openCalls, 2);
+      h.tick(const Duration(milliseconds: 1500));
+      expect(h.api.openCalls, 3);
+    });
+
+    fakeTest(
+        'after earlier failures, one healthy connection brings the next retry back to about a second',
+        (h) {
+      h.api.openError = DioException(
+          requestOptions: RequestOptions(),
+          type: DioExceptionType.connectionError);
+      begin(h);
+      h.tick(const Duration(milliseconds: 1300));
+      h.tick(const Duration(milliseconds: 2600));
+      h.api.openError = null;
+      h.tick(const Duration(seconds: 5));
+      expect(h.api.streams.length, 1);
+
+      h.api.streams[0].add(hello(h));
+      for (var i = 0; i < 3; i++) {
+        h.tick(const Duration(seconds: 20));
+        h.api.streams[0].add(': ping\n\n');
+      }
+      final calls = h.api.openCalls;
+      h.api.streams[0].close();
+      h.tick();
+      h.tick(const Duration(milliseconds: 1300));
+
+      expect(h.api.openCalls, calls + 1);
+    });
+
+    fakeTest(
+        'aborts a stream that never says hello, and after two such attempts switches to long-polling',
+        (h) {
+      begin(h);
+
+      h.tick(const Duration(milliseconds: 8100)); // first silent stream aborted
+      expect(h.api.streams[0].isClosed, isTrue);
+      expect(h.state.polling, isFalse);
+
+      h.tick(const Duration(milliseconds: 1300)); // reconnects
+      expect(h.api.openCalls, 2);
+      h.tick(
+          const Duration(milliseconds: 8100)); // second silent stream aborted
+
+      expect(h.state.polling, isTrue);
+      h.tick(const Duration(milliseconds: 2500));
+      expect(h.api.pollSinces, isNotEmpty);
+    });
+
+    fakeTest(
+        'a stream that goes quiet for 45 seconds (not even heartbeats) is treated as dead',
+        (h) {
+      begin(h);
+      h.api.streams[0].add(hello(h));
+      h.tick();
+
+      h.tick(const Duration(seconds: 50));
+
+      expect(h.api.streams[0].isClosed, isTrue);
+    });
+
+    fakeTest('heartbeats keep a quiet stream alive', (h) {
+      begin(h);
+      h.api.streams[0].add(hello(h));
+      for (var i = 0; i < 6; i++) {
+        h.tick(const Duration(seconds: 20));
+        h.api.streams[0].add(': ping\n\n');
+      }
+      h.tick();
+
+      expect(h.api.streams[0].isClosed, isFalse);
+      expect(h.state.status, ConnectStatus.online);
+    });
+
+    group('long-poll mode', () {
+      PolledEvent ev(int seq, String name, Object data) =>
+          PolledEvent(seq, name, data);
+
+      void enterPollMode(Harness h) {
+        begin(h);
+        h.tick(const Duration(milliseconds: 8100));
+        h.tick(const Duration(milliseconds: 1300));
+        h.tick(const Duration(milliseconds: 8100));
+        expect(h.state.polling, isTrue);
+      }
+
+      fakeTest(
+          'registers with a first poll and keeps asking for events after the last sequence number it saw',
+          (h) {
+        h.api.pollQueue.addAll([
+          PollResult(200, [
+            ev(1, 'hello', {'serverTimeMs': h.nowMs, 'you': me}),
+            ev(2, 'snapshot', {
+              'devices': [deviceJson(me)],
+              'activeDeviceId': null,
+              'state': null
+            }),
+          ]),
+          PollResult(200, [
+            ev(3, 'devices', {
+              'devices': [deviceJson(me), deviceJson(other)],
+              'activeDeviceId': null
+            }),
+          ]),
+        ]);
+
+        enterPollMode(h);
+        h.tick(const Duration(milliseconds: 2500));
+
+        expect(h.api.pollSinces, [null, 2, 3]);
+        expect(h.state.status, ConnectStatus.online);
+        expect(h.state.devices.map((d) => d.id), [me, other]);
+      });
+
+      fakeTest('a server without /connect ends polling and hides the feature',
+          (h) {
+        h.api.pollQueue.add(const PollResult(404, []));
+        enterPollMode(h);
+        h.tick(const Duration(milliseconds: 2500));
+
+        expect(h.state.status, ConnectStatus.unavailable);
+      });
+
+      fakeTest(
+          'a refused poll (e.g. rate limited) goes offline and is retried later',
+          (h) {
+        h.api.pollQueue.add(const PollResult(429, []));
+        enterPollMode(h);
+        h.tick(const Duration(milliseconds: 2500));
+        expect(h.state.status, ConnectStatus.offline);
+        final first = h.api.pollSinces.length;
+
+        h.tick(const Duration(seconds: 10));
+        expect(h.api.pollSinces.length, greaterThan(first));
+      });
+    });
+  });
+
+  // ── Background ─────────────────────────────────────────────────────────────
+
+  group('the app in the background', () {
+    void begin(Harness h) {
+      h.prefs.id = me;
+      h.prefs.name = 'My PC';
+      h.api.hang = false;
+      h.connect.start(creds);
+      h.tick();
+      h.api.streams[0].add(sse('hello', {'serverTimeMs': h.nowMs, 'you': me}));
+      h.tick();
+    }
+
+    fakeTest(
+        'a paused phone in the background disconnects after a few minutes, and reconnects on return',
+        (h) {
+      begin(h);
+
+      h.connect.setForeground(false);
+      h.idle(const Duration(minutes: 2));
+      expect(h.state.status, ConnectStatus.online);
+
+      h.idle(const Duration(minutes: 2));
+      expect(h.state.status, ConnectStatus.idle);
+      expect(h.api.streams[0].isClosed, isTrue);
+
+      h.connect.setForeground(true);
+      h.tick();
+      expect(h.api.openCalls, 2);
+      expect(h.state.status, ConnectStatus.connecting);
+    });
+
+    fakeTest('stays connected in the background while music plays', (h) {
+      begin(h);
+      h.playLocally(playing: true);
+
+      h.connect.setForeground(false);
+      h.idle(const Duration(minutes: 10));
+
+      expect(h.state.status, ConnectStatus.online);
+    });
+
+    fakeTest(
+        'starts the countdown when playback stops while in the background, and stops it when playback resumes',
+        (h) {
+      begin(h);
+      h.playLocally(playing: true);
+      h.connect.setForeground(false);
+      h.idle(const Duration(minutes: 10));
+
+      h.playLocally(playing: false, queue: h.player.state.queue);
+      h.idle(const Duration(minutes: 2));
+      expect(h.state.status, ConnectStatus.online);
+
+      h.playLocally(playing: true, queue: h.player.state.queue);
+      h.idle(const Duration(minutes: 10));
+      expect(h.state.status, ConnectStatus.online);
+
+      h.playLocally(playing: false, queue: h.player.state.queue);
+      h.idle(const Duration(minutes: 4));
+      expect(h.state.status, ConnectStatus.idle);
+    });
+
+    fakeTest('coming back before the countdown ends cancels it', (h) {
+      begin(h);
+      h.connect.setForeground(false);
+      h.idle(const Duration(minutes: 2));
+      h.connect.setForeground(true);
+      h.idle(const Duration(minutes: 10));
+
+      expect(h.state.status, ConnectStatus.online);
+      expect(h.api.openCalls, 1);
+    });
+
+    fakeTest(
+        'a signed-out app is not reconnected when it returns to the foreground',
+        (h) {
+      begin(h);
+      h.connect.setForeground(false);
+      h.idle(const Duration(minutes: 4));
+      h.connect.stop();
+
+      h.connect.setForeground(true);
+      h.tick();
+
+      expect(h.api.openCalls, 1);
+    });
+  });
+}

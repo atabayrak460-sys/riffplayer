@@ -95,15 +95,25 @@ class RiffPlayerAudioHandler extends BaseAudioHandler
 
   // ── Queue management ────────────────────────────────────────────────────────
 
-  /// Replace the queue and start playing from [initialIndex].
-  Future<void> playQueue(List<AudioSource> sources, int initialIndex) async {
+  /// Replace the queue and start playing from [initialIndex] (at [position], or paused when
+  /// [autoplay] is false — used when playback is handed over from another device).
+  Future<void> playQueue(
+    List<AudioSource> sources,
+    int initialIndex, {
+    Duration position = Duration.zero,
+    bool autoplay = true,
+  }) async {
     _queue = ConcatenatingAudioSource(children: sources);
     await _player.setAudioSource(
       _queue!,
       initialIndex: initialIndex,
-      initialPosition: Duration.zero,
+      initialPosition: position,
     );
-    await _player.play();
+    if (autoplay) {
+      await _player.play();
+    } else {
+      await _player.pause();
+    }
   }
 
   /// Insert a track at [index] in the queue.

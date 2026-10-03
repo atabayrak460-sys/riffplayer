@@ -1,0 +1,310 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../connect/connect_models.dart';
+import '../connect/connect_notifier.dart';
+import '../connect/connect_provider.dart';
+
+const _muted = Color(0xFF71717A);
+
+/// This device first, then whichever is playing, then the rest online, then the ones that are gone.
+List<DeviceInfo> sortDevices(List<DeviceInfo> devices, String thisId) {
+  int rank(DeviceInfo d) =>
+      d.id == thisId ? 0 : (d.active ? 1 : (d.online ? 2 : 3));
+  final sorted = [...devices];
+  sorted.sort((a, b) {
+    final byRank = rank(a).compareTo(rank(b));
+    return byRank != 0
+        ? byRank
+        : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  });
+  return sorted;
+}
+
+String deviceTypeLabel(DeviceType t) => switch (t) {
+      DeviceType.web => 'Web',
+      DeviceType.android => 'Android',
+      DeviceType.desktop => 'Desktop',
+    };
+
+String deviceSubtitle(DeviceInfo d, String thisId) {
+  final parts = [deviceTypeLabel(d.type)];
+  if (d.id == thisId) parts.add('This device');
+  if (d.active && d.online) parts.add('Playing');
+  if (!d.online) parts.add(d.unreachable ? 'Unreachable' : 'Reconnecting…');
+  return parts.join(' · ');
+}
+
+/// Speaker button that opens the device list (Spotify-Connect style). Hidden until connected, and
+/// against an older server that has no Connect.
+class DevicePickerButton extends ConsumerWidget {
+  const DevicePickerButton({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(connectProvider.select((s) => s.status));
+    final remoteActive =
+        ref.watch(connectProvider.select((s) => s.remoteActive));
+    if (status == ConnectStatus.idle || status == ConnectStatus.unavailable) {
+      return const SizedBox.shrink();
+    }
+    return IconButton(
+      icon: Icon(
+        Icons.speaker_group_outlined,
+        color: remoteActive ? Theme.of(context).colorScheme.primary : null,
+      ),
+      tooltip: 'Connect to a device',
+      onPressed: () => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: const Color(0xFF18181B),
+        showDragHandle: true,
+        builder: (_) => const DevicePickerSheet(),
+      ),
+    );
+  }
+}
+
+class DevicePickerSheet extends ConsumerWidget {
+  const DevicePickerSheet({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(connectProvider);
+    final list = sortDevices(s.devices, s.deviceId);
+    final others = list.where((d) => d.id != s.deviceId);
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                'CONNECT TO A DEVICE',
+                style: TextStyle(
+                    color: _muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2),
+              ),
+            ),
+            if (s.status != ConnectStatus.online)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  s.status == ConnectStatus.connecting
+                      ? 'Connecting…'
+                      : 'Not connected — trying again',
+                  style: const TextStyle(color: Colors.amber, fontSize: 12),
+                ),
+              ),
+            for (final d in list) _DeviceTile(device: d, state: s),
+            if (s.status == ConnectStatus.online && others.isEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text(
+                  'Open RiffPlayer on another device to see it here.',
+                  style: TextStyle(color: _muted, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DeviceTile extends ConsumerWidget {
+  final DeviceInfo device;
+  final ConnectState state;
+
+  const _DeviceTile({required this.device, required this.state});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isThis = device.id == state.deviceId;
+    final playing = device.active && device.online;
+    final disabled = !device.online && !isThis;
+    final accent = Theme.of(context).colorScheme.primary;
+
+    return ListTile(
+      enabled: !disabled,
+      leading: Icon(
+        switch (device.type) {
+          DeviceType.android => Icons.smartphone,
+          DeviceType.desktop => Icons.computer,
+          DeviceType.web => Icons.language,
+        },
+        color: playing ? accent : _muted,
+      ),
+      title: Text(
+        device.name,
+        style: TextStyle(
+            color: playing ? accent : Colors.white,
+            fontWeight: playing ? FontWeight.w600 : null),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(deviceSubtitle(device, state.deviceId),
+          style: const TextStyle(color: _muted, fontSize: 12)),
+      trailing: isThis && !device.active && state.remoteActive
+          ? const Text('Play here',
+              style: TextStyle(color: Colors.white70, fontSize: 12))
+          : null,
+      onTap: disabled
+          ? null
+          : () {
+              Navigator.of(context).pop();
+              if (playing) return; // already the one playing
+              ref.read(connectProvider.notifier).transferTo(device.id);
+            },
+    );
+  }
+}
+
+/// What to say under the track while another device plays — null when this device is the player.
+/// Kept separate from the widget so it is easy to test.
+({String text, bool unreachable})? remoteLabel(ConnectState s) {
+  final d = s.activeDevice;
+  if (!s.remoteActive || d == null) return null;
+  if (d.unreachable) {
+    return (text: '${d.name} is unreachable', unreachable: true);
+  }
+  return (
+    text: d.online ? 'Playing on ${d.name}' : '${d.name} · reconnecting…',
+    unreachable: false
+  );
+}
+
+/// "Playing on <device>" — or "<device> is unreachable · Continue here" once that device is gone.
+class RemoteLabel extends ConsumerWidget {
+  final TextAlign align;
+  const RemoteLabel({super.key, this.align = TextAlign.start});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final label = remoteLabel(ref.watch(connectProvider));
+    if (label == null) return const SizedBox.shrink();
+    final color = label.unreachable
+        ? Colors.amber
+        : Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        alignment: align == TextAlign.center
+            ? WrapAlignment.center
+            : WrapAlignment.start,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(label.text, style: TextStyle(color: color, fontSize: 12)),
+          if (label.unreachable) ...[
+            const Text(' · ',
+                style: TextStyle(color: Colors.amber, fontSize: 12)),
+            GestureDetector(
+              onTap: () => ref.read(connectProvider.notifier).transferHere(),
+              child: const Text(
+                'Continue here',
+                style: TextStyle(
+                    color: Colors.amber,
+                    fontSize: 12,
+                    decoration: TextDecoration.underline),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Settings → "This device": the name other devices show in the device picker.
+class DeviceNameSection extends ConsumerStatefulWidget {
+  const DeviceNameSection({super.key});
+
+  @override
+  ConsumerState<DeviceNameSection> createState() => _DeviceNameSectionState();
+}
+
+class _DeviceNameSectionState extends ConsumerState<DeviceNameSection> {
+  late final TextEditingController _controller;
+  bool _saved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller =
+        TextEditingController(text: ref.read(connectProvider).deviceName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = ref.watch(connectProvider.select((s) => s.status));
+    final current = ref.watch(connectProvider.select((s) => s.deviceName));
+    // The stored name may arrive after this section was first built.
+    if (_controller.text.isEmpty && current.isNotEmpty && !_saved) {
+      _controller.text = current;
+    }
+    if (status == ConnectStatus.unavailable) return const SizedBox.shrink();
+
+    final typed = _controller.text.trim();
+    final changed = typed.isNotEmpty && typed != current;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'THIS DEVICE',
+          style: TextStyle(
+              color: _muted,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.2),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'The name your other devices show in the device picker, so you can send music here or control it from them.',
+          style: TextStyle(color: _muted, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                maxLength: 40,
+                decoration: const InputDecoration(
+                    labelText: 'Device name', counterText: ''),
+                onChanged: (_) => setState(() => _saved = false),
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton(
+              onPressed: changed
+                  ? () async {
+                      await ref
+                          .read(connectProvider.notifier)
+                          .renameThisDevice(_controller.text);
+                      if (mounted) setState(() => _saved = true);
+                    }
+                  : null,
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+        if (_saved)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text('Saved', style: TextStyle(color: _muted, fontSize: 12)),
+          ),
+      ],
+    );
+  }
+}

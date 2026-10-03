@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'providers/providers.dart';
+import 'connect/connect_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/home_page_screen.dart';
@@ -38,7 +39,8 @@ class RiffPlayerApp extends ConsumerStatefulWidget {
   ConsumerState<RiffPlayerApp> createState() => _RiffPlayerAppState();
 }
 
-class _RiffPlayerAppState extends ConsumerState<RiffPlayerApp> {
+class _RiffPlayerAppState extends ConsumerState<RiffPlayerApp>
+    with WidgetsBindingObserver {
   final _authRefresh = _AuthRefreshNotifier();
   late final GoRouter _router;
 
@@ -46,6 +48,18 @@ class _RiffPlayerAppState extends ConsumerState<RiffPlayerApp> {
   void initState() {
     super.initState();
     ref.listenManual(authProvider, (_, __) => _authRefresh.notify());
+
+    // RiffPlayer Connect follows the session: connected while signed in, gone on sign-out.
+    WidgetsBinding.instance.addObserver(this);
+    ref.listenManual(authProvider, (_, next) {
+      final creds = next.valueOrNull;
+      final connect = ref.read(connectProvider.notifier);
+      if (creds != null) {
+        connect.start(creds);
+      } else {
+        connect.stop();
+      }
+    }, fireImmediately: true);
 
     _router = GoRouter(
       initialLocation: '/login',
@@ -128,7 +142,15 @@ class _RiffPlayerAppState extends ConsumerState<RiffPlayerApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    ref
+        .read(connectProvider.notifier)
+        .setForeground(lifecycle == AppLifecycleState.resumed);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _authRefresh.dispose();
     super.dispose();
   }
@@ -139,6 +161,7 @@ class _RiffPlayerAppState extends ConsumerState<RiffPlayerApp> {
       title: 'RiffPlayer',
       theme: buildTheme(),
       routerConfig: _router,
+      scaffoldMessengerKey: rootMessengerKey,
       debugShowCheckedModeBanner: false,
     );
   }
