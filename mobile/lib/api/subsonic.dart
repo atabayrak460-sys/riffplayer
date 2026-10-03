@@ -18,11 +18,12 @@ class SubsonicClient {
   late final String _salt = _randomSalt();
   late final String _token = _computeToken(credentials.password, _salt);
 
-  SubsonicClient(this.credentials)
-      : _dio = Dio(BaseOptions(
-          connectTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 30),
-        ));
+  SubsonicClient(this.credentials, {Dio? dio})
+      : _dio = dio ??
+            Dio(BaseOptions(
+              connectTimeout: const Duration(seconds: 10),
+              receiveTimeout: const Duration(seconds: 30),
+            ));
 
   // ── Auth helpers ────────────────────────────────────────────────────────────
 
@@ -273,6 +274,46 @@ class SubsonicClient {
       _get('updatePlaylist.view',
           {'playlistId': playlistId, 'comment': comment});
 
+  // ── Saved play queue (resume where you left off) ────────────────────────────
+
+  /// Stores the queue on the server (one per user) so any device can pick it up later. The ids go in a
+  /// JSON body: a queue of hundreds of songs would not fit in a URL.
+  Future<void> savePlayQueue(
+    List<String> ids, {
+    String? current,
+    int positionMs = 0,
+  }) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      _url('savePlayQueue.view'),
+      queryParameters: _authParams(),
+      data: {
+        'id': ids,
+        if (current != null) 'current': current,
+        'position': positionMs.toString(),
+      },
+    );
+    final sr = response.data?['subsonic-response'] as Map<String, dynamic>?;
+    if (sr == null || sr['status'] != 'ok') {
+      final err = sr?['error'] as Map<String, dynamic>?;
+      throw Exception(err?['message'] ?? 'Subsonic error');
+    }
+  }
+
+  /// The saved queue, or null when there is none (or it is empty).
+  Future<SavedPlayQueue?> getPlayQueue() async {
+    final r = await _get('getPlayQueue.view');
+    final q = r['playQueue'] as Map<String, dynamic>?;
+    final entries = q?['entry'] as List<dynamic>? ?? [];
+    if (q == null || entries.isEmpty) return null;
+    return SavedPlayQueue(
+      songs:
+          entries.map((s) => Song.fromJson(s as Map<String, dynamic>)).toList(),
+      current: q['current'] as String?,
+      positionMs: (q['position'] as num?)?.toInt() ?? 0,
+      changed: DateTime.tryParse(q['changed'] as String? ?? ''),
+    );
+  }
+
   Future<void> addSongToPlaylist(String playlistId, String songId) => _get(
         'updatePlaylist.view',
         {'playlistId': playlistId, 'songIdToAdd': songId},
@@ -511,4 +552,21 @@ class SubsonicClient {
       cancelToken: cancelToken,
     );
   }
+}
+
+/// A queue saved on the server by whichever device was playing last.
+class SavedPlayQueue {
+  final List<Song> songs;
+  final String? current;
+  final int positionMs;
+
+  /// When it was last saved (UTC), if the server said.
+  final DateTime? changed;
+
+  const SavedPlayQueue({
+    required this.songs,
+    required this.current,
+    required this.positionMs,
+    required this.changed,
+  });
 }

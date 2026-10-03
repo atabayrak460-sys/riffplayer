@@ -1,7 +1,8 @@
 # RiffPlayer Connect — Phase 1 design
 
-> **Approved by the owner 2026-10-03.** Status: **P1a (server) implemented** — `server/src/connect/hub.ts`,
-> `server/src/routes/api/connect.ts`; P1b–P1e pending. Scope decisions are in §1 and §14.
+> **Approved by the owner 2026-10-03.** Status: **Phase 1 implemented** — server (`server/src/connect/`,
+> `server/src/routes/api/connect.ts`), web (`web/src/store/connect.ts`), Android (`mobile/lib/connect/`), security
+> review done (§15). Scope decisions are in §1 and §14.
 
 A "Spotify Connect"-style feature: several of one user's devices (web tab, Android app, later a
 desktop app) see each other, show what is playing, and can **control** it and **hand playback over**
@@ -239,11 +240,11 @@ doesn't count the current track a second time (server-side `logPlay` also dedupe
 
 | Step | Content |
 |---|---|
-| **P1a** ✔ | Server: `ConnectHub`, `/connect/*` endpoints, tests (97 tests, mutation-checked). Done 2026-10-03; not released. |
-| **P1b** | Web: `connect` store, mirror mode, device picker, tests. |
-| **P1c** | Android: `ConnectService`, mirror/remote mode, tests. |
-| **P1d** | Resume (`savePlayQueue`/`getPlayQueue` wiring on both clients). |
-| **P1e** | Docs (README + proxy notes), real-domain verification, release `v0.2.0`. |
+| **P1a** ✔ | Server: `ConnectHub`, `/connect/*` endpoints, tests. |
+| **P1b** ✔ | Web: `connect` store, mirror mode, device picker, tests. |
+| **P1c** ✔ | Android: `ConnectNotifier`, mirror/remote mode, tests. |
+| **P1d** ✔ | Resume (`savePlayQueue`/`getPlayQueue` wiring on both clients). |
+| **P1e** ✔ | Docs (README + proxy notes), release `v0.2.0`. Real-domain verification of long-lived streams happens on the live server after the release. |
 
 Because old clients ignore the new endpoints, every step is backward compatible with Subsonic clients
 and with already-installed apps.
@@ -267,3 +268,24 @@ and with already-installed apps.
 3. Release naming: owner asked for a recommendation → **recommended `v0.2.0`**, cut once, after P1a–P1e are
    done and verified (no intermediate releases). Clients must treat a `404` from `/connect/*` (older server)
    as "feature unavailable" and simply hide the device picker, so a new app on an old server never breaks.
+
+## 15. Security review (2026-10-03)
+
+The hub, the routes and both clients were reviewed from an attacker's point of view; every finding has a regression
+test that fails without its fix (mutation-checked).
+
+| Area | Finding | Fix |
+|---|---|---|
+| Revocation | A stale connection's heartbeat revoked **all** of the user's streams, including ones opened after a password change. | Per-connection revocation (`revokeConnection`). |
+| Revocation | A revoked stream kept receiving events until its next heartbeat (≤ 20 s). | Before every delivery (≤ once a second) the stream re-validates its token and then gets only `revoked`. |
+| Wrong device | Commands went to "whoever plays when the request arrives"; a takeover in between made a "next" land on the wrong device. | Commands carry `targetDeviceId`; the server answers `409 target_changed`; both clients pass the device they saw playing and say so. |
+| Dedupe | System command ids (`takeover-n`, `transfer-n`) came from a counter that restarts with the server, so a client's dedupe silently dropped the new "pause". | Random ids. |
+| DoS | Full-queue read (up to 5000 lookups), renaming and (re)connecting were unthrottled; the latter two are broadcast to every device. 1 MB bodies on tiny endpoints; a client that never reads its stream grew server memory. | Per-user rate limits, 8 KB limit on small POSTs, backpressure limit (~1 MB) that drops a non-reading client, refused streams get a real HTTP 429. |
+| Robustness | Write-after-end / socket errors could become uncaught exceptions; a request whose socket was already gone left a device registered; a long-poll client whose registration timed out never saw an event again; held polls could pile up. | `connect/sse.ts` (guarded writes, error listener, cleanup that also runs for an already-gone socket), re-registration restarts at seq 0, one held poll per device. |
+| Input | Bidirectional-text controls in device names could disguise one device as another; absurd positions. | Stripped; positions capped at 7 days. |
+| Isolation, authentication | Cross-user commands/transfers, forged or deleted-user tokens, wrong Subsonic credentials, hostile names injecting SSE fields. | Verified by tests; no defect found. |
+
+Known and accepted: a user's own devices are trusted with each other (any of them can take over playback with its own
+queue); song JSON in the state includes the server file path (same as other endpoints); a browser tab that plays music
+must stay open (frozen background tabs look unreachable until the desktop app exists).
+

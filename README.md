@@ -31,6 +31,7 @@ A self-hosted music server with a polished first-party web client, an Android ap
 - **Play history** — every play logged from day one (`play_history` table); feeds recently-played, most-played, recommendations, and Wrapped
 - **Scrobbling** — Last.fm (with proper `api_sig` signing) and ListenBrainz, opt-in per-user; fires after confirmed plays
 - **JWT authentication** — `POST /api/v1/auth/login` issues a 90-day token; `/api/v1` routes accept Bearer JWT with Subsonic token fallback
+- **RiffPlayer Connect** — a user's devices see each other and hand playback over / remote-control it, Spotify-Connect style ([details](#riffplayer-connect)); in-memory relay over server-sent events, no database tables, nothing leaves your server
 
 ### Web client
 - **React + TypeScript PWA** — installable, responsive, dark-themed
@@ -46,6 +47,7 @@ A self-hosted music server with a polished first-party web client, an Android ap
 - **User settings** — per-user transcoding preferences, ListenBrainz token, Last.fm session key
 - **Discover / recommendations** — opt-in; similar-artist picks from Last.fm or fully local AI via Ollama; only suggests tracks already in your library, never external links
 - **Year-end Wrapped** — top tracks, artists, albums, total hours, plays-by-month chart; optional Ollama AI narrative summary
+- **Device picker** — speaker button in the player: see your other devices, send playback to one, or control what another device plays
 - **Media Session API** — lock-screen metadata and transport controls in supported browsers
 - **Workbox service worker** — cover art cached for offline browsing
 
@@ -55,6 +57,7 @@ A self-hosted music server with a polished first-party web client, an Android ap
 - **Full parity** with web: browse, search, queue, playlists, favourites
 - **Full-screen player** with seek slider, star/unstar, prev/play/next
 - **Per-tab navigation** with persistent mini-player across all screens
+- **Device picker** — control the PC's playback from the phone (or the other way round), or move what is playing between them
 
 ### Infrastructure
 - **Multi-user** — each user has their own play history, favourites, playlists, and scrobbling config; admin manages everything
@@ -102,6 +105,8 @@ docker compose logs riffplayer | grep "generated password"
 Open **http://localhost:4533** and sign in as `admin`. Change the password under **Admin → Users**, then [index your library](#index-your-library). The image is built for `amd64` and `arm64` and includes ffmpeg for transcoding.
 
 > **Exposing it to the internet?** Put it behind a reverse proxy with HTTPS. Don't publish port 4533 directly.
+
+> **Behind a reverse proxy?** [RiffPlayer Connect](#riffplayer-connect) keeps one long-lived HTTP response open per device, so the proxy must not buffer or time out streaming responses — see [Reverse proxy settings](#reverse-proxy-settings).
 
 ### 2. Get an app
 
@@ -255,6 +260,54 @@ ollama pull llama3.2
 ## Mobile app
 
 The Flutter app (Android) lives in [`mobile/`](mobile/README.md). It supports background playback with lock-screen controls, offline downloads (single tracks and whole playlists), and everything the web app does. For development: install Flutter ≥ 3.22, then `cd mobile && flutter pub get && flutter run`.
+
+## RiffPlayer Connect
+
+Your devices can see each other and work together, like Spotify Connect: start a song on the PC, pick up the phone and control it from there, or send what is playing to the phone with one tap. Only **one device plays at a time**; the others show what is playing and act as remote controls.
+
+**Using it**
+
+- Open RiffPlayer on two devices signed in as the same user (web in a browser tab, and/or the Android app).
+- Tap the **speaker button** in the player. You see your devices; tap one to move playback there. "Play here" on this device brings it back.
+- While another device plays, the player bar shows **Playing on <device>**; play/pause, next/previous and the seek bar control that device.
+- Starting a song on a device takes over from whichever device was playing.
+- If the playing device disappears (laptop asleep, tab closed) you get **"<device> is unreachable · Continue here"**: the queue and position move to the device you are holding.
+- Rename a device under **Settings → This device** (default: e.g. "Web · Firefox on Linux", or the phone model).
+
+**Good to know**
+
+- It works between RiffPlayer's own clients only (web and Android); third-party Subsonic apps can't take part.
+- You only ever see and control **your own** devices.
+- A browser tab that plays music has to stay open; a phone has to have the app open or playing. Paused, backgrounded apps disconnect after about three minutes to save battery. There are no push notifications and no third-party services involved.
+- Volume of another device and editing its queue remotely are not part of this first version.
+- Older servers without Connect simply don't show the speaker button; nothing else changes. Subsonic compatibility is untouched (everything lives under `/api/v1/connect`).
+
+**Privacy and security**
+
+Everything happens on your own server: device names, what is playing and the queue are held in the server's memory and relayed to your own devices over your own login. No database tables, no external service. Each stream is tied to your login token and is closed when the token is revoked (for example when you change your password); a device can't send commands to another user's devices.
+
+### Reverse proxy settings
+
+Each device keeps one server-sent-events response open (the server sends a small heartbeat every 20 seconds). If a proxy buffers or cuts such responses, the clients notice (no first message within 8 seconds, or silence for 45 seconds) and **fall back to long-polling automatically**, so Connect still works — only slightly slower. To get the instant behaviour, make sure streaming responses are not buffered:
+
+**nginx**
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:4533;
+    proxy_http_version 1.1;
+    proxy_buffering off;          # let events through immediately
+    proxy_read_timeout 1h;        # the stream is long-lived
+}
+```
+
+(RiffPlayer also sends `X-Accel-Buffering: no`, which nginx honours.)
+
+**Caddy** needs no special settings (`reverse_proxy 127.0.0.1:4533` streams by default).
+
+**Traefik** — avoid response-compression middleware on the RiffPlayer router; it buffers streams.
+
+**Cloudflare** (orange-cloud proxy or a named Tunnel) passes server-sent events as long as the origin keeps sending — the 20-second heartbeat is well inside Cloudflare's ~100-second limit. *Quick Tunnels* (`trycloudflare.com`) do **not** support server-sent events; Connect then uses the long-poll fallback.
 
 ## Principles
 

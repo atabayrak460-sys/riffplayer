@@ -7,30 +7,7 @@ import 'package:riffplayer_mobile/api/types.dart';
 import 'package:riffplayer_mobile/connect/connect_api.dart';
 import 'package:riffplayer_mobile/connect/connect_models.dart';
 
-class FakeAdapter implements HttpClientAdapter {
-  final List<RequestOptions> requests = [];
-  ResponseBody Function(RequestOptions) responder = (_) => json(200, {});
-
-  RequestOptions get last => requests.last;
-
-  @override
-  Future<ResponseBody> fetch(RequestOptions options,
-      Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
-    requests.add(options);
-    return responder(options);
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
-
-ResponseBody json(int status, Object body) => ResponseBody.fromString(
-      jsonEncode(body),
-      status,
-      headers: {
-        Headers.contentTypeHeader: [Headers.jsonContentType],
-      },
-    );
+import '../helpers/fake_http.dart';
 
 const creds = Credentials(
     serverUrl: 'http://srv:4533/', username: 'u', password: 'p', token: 'tok');

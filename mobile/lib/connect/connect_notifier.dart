@@ -7,6 +7,7 @@
 // It is the Dart counterpart of web/src/store/connect.ts and follows the same rules.
 
 import 'dart:async';
+import 'dart:math' show max;
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart' show LoopMode;
@@ -173,6 +174,14 @@ class ConnectNotifier extends StateNotifier<ConnectState>
   DateTime _takeoverUntil = DateTime.fromMillisecondsSinceEpoch(0);
   String? _lastQueueKey;
   bool _forceQueue = true;
+
+  /// Bumped by every start() and stop(): a connection loop that finds it changed belongs to a previous
+  /// session and ends.
+  int _generation = 0;
+
+  // Resume where you left off.
+  bool _resumeTried = false;
+  ({String key, int index, bool playing, DateTime at})? _lastSave;
   final List<String> _seenCommands = [];
   PlayerState _prevPlayer = const PlayerState();
   int _lastLocalMs = 0;
@@ -206,18 +215,27 @@ class ConnectNotifier extends StateNotifier<ConnectState>
       return;
     }
     // Flip play/pause at once so the button answers instantly; the real state follows.
-    final r = state.remote;
-    if ((type == CommandType.play || type == CommandType.pause) && r != null) {
-      state = state.copyWith(
-        remote: r.copyWith(
-          playing: type == CommandType.play,
-          positionMs: positionNowMs(r, _serverNowMs),
-          positionAtMs: _serverNowMs,
-        ),
+    final before = state.remote;
+    PublicState? optimistic;
+    if ((type == CommandType.play || type == CommandType.pause) &&
+        before != null) {
+      optimistic = before.copyWith(
+        playing: type == CommandType.play,
+        positionMs: positionNowMs(before, _serverNowMs),
+        positionAtMs: _serverNowMs,
       );
+      state = state.copyWith(remote: optimistic);
       _applyMirror();
     }
-    _sendRemoteCommand(type, positionMs);
+    _sendRemoteCommand(type, positionMs).then((delivered) {
+      // Not delivered: put the button back — unless the server has told us something newer meanwhile.
+      if (!delivered &&
+          optimistic != null &&
+          identical(state.remote, optimistic)) {
+        state = state.copyWith(remote: before);
+        _applyMirror();
+      }
+    });
   }
 
   @override
@@ -228,13 +246,14 @@ class ConnectNotifier extends StateNotifier<ConnectState>
     _player.leaveRemoteMirror(clear: false);
   }
 
-  Future<void> _sendRemoteCommand(CommandType type, int? positionMs) async {
+  /// Resolves to whether the command was delivered.
+  Future<bool> _sendRemoteCommand(CommandType type, int? positionMs) async {
     final api = _api;
-    if (api == null) return;
+    if (api == null) return false;
     // Aimed at the device we believe is playing; the server refuses it if another one has taken over.
     final result = await api.sendCommand(state.deviceId, type,
         positionMs: positionMs, targetDeviceId: state.activeDeviceId);
-    if (result == CommandResult.sent) return;
+    if (result == CommandResult.sent) return true;
     final active = state.activeDevice;
     _showMessage(
       result == CommandResult.targetChanged
@@ -244,6 +263,7 @@ class ConnectNotifier extends StateNotifier<ConnectState>
               ? "${active?.name ?? 'That device'} isn't reachable right now"
               : "Couldn't reach the server",
     );
+    return false;
   }
 
   // ── Mirror: show the remote device's playback through the normal player state ──
@@ -337,11 +357,90 @@ class ConnectNotifier extends StateNotifier<ConnectState>
       case ReportResult.unavailable:
         stop();
         state = state.copyWith(status: ConnectStatus.unavailable);
+        return;
       case ReportResult.notActive:
       case ReportResult.unknownDevice:
       case ReportResult.rateLimited:
       case ReportResult.error:
         break; // nothing useful to do
+    }
+    _saveResume();
+  }
+
+  // ── Resume where you left off ────────────────────────────────────────────────
+
+  static const _resumeWindow = 500;
+  static const _resumeLookBehind = 50;
+  static const _resumeMaxAge = Duration(days: 30);
+  // a little under the 10 s drift report, so that report always saves while playing
+  static const _saveEvery = Duration(seconds: 9);
+
+  /// The part of the queue worth saving: a window around the current song.
+  ({List<String> ids, String key}) _resumeIds() {
+    final p = _player.state;
+    final start = max(0, p.currentIndex - _resumeLookBehind);
+    final ids =
+        p.queue.skip(start).take(_resumeWindow).map((s) => s.id).toList();
+    return (ids: ids, key: ids.join(','));
+  }
+
+  /// Remembers the current queue on the server so any device can pick it up later (only the player saves).
+  void _saveResume() {
+    final client = _client;
+    if (client == null || isRemote || state.status != ConnectStatus.online) {
+      return;
+    }
+    final p = _player.state;
+    final song = p.currentSong;
+    if (p.queue.isEmpty || song == null) return;
+    final (:ids, :key) = _resumeIds();
+    final now = _now();
+    final last = _lastSave;
+    final changed = last == null ||
+        last.key != key ||
+        last.index != p.currentIndex ||
+        last.playing != p.playing;
+    if (!changed && !(p.playing && now.difference(last.at) >= _saveEvery)) {
+      return;
+    }
+    _lastSave = (key: key, index: p.currentIndex, playing: p.playing, at: now);
+    client
+        .savePlayQueue(ids,
+            current: song.id, positionMs: p.position.inMilliseconds)
+        .catchError((_) {/* best-effort */});
+  }
+
+  /// If nobody is playing and this device has nothing loaded, show the last queue again — paused.
+  Future<void> _maybeResume() async {
+    if (_resumeTried) return;
+    _resumeTried = true;
+    final client = _client;
+    if (client == null) return;
+    try {
+      final saved = await client.getPlayQueue();
+      if (saved == null) return;
+      final changed = saved.changed;
+      if (changed != null && _now().difference(changed) > _resumeMaxAge) return;
+      // Something may have started while the request was in flight.
+      if (_player.state.queue.isNotEmpty || state.activeDeviceId != null) {
+        return;
+      }
+      final index =
+          max(0, saved.songs.indexWhere((s) => s.id == saved.current));
+      await _player.restoreQueue(
+        saved.songs,
+        index,
+        Duration(milliseconds: saved.positionMs),
+        play: false,
+        counted: false,
+        client: client,
+        downloads: _downloads,
+      );
+      // What was just restored is already what the server has: don't write it straight back.
+      final key = _resumeIds().key;
+      _lastSave = (key: key, index: index, playing: false, at: _now());
+    } catch (_) {
+      // No saved queue to resume from; nothing else to do.
     }
   }
 
@@ -406,13 +505,30 @@ class ConnectNotifier extends StateNotifier<ConnectState>
     }
   }
 
+  static const _loadRetryFirst = Duration(milliseconds: 500);
+  static const _loadRetrySecond = Duration(milliseconds: 1500);
+
   Future<void> _handleLoad(LoadInstruction load) async {
     final api = _api;
     final client = _client;
     if (api == null || client == null) return;
     try {
-      final queue = await api.fetchQueue();
-      if (queue == null || queue.songs.isEmpty) return;
+      // By now the server already considers this device the active one, so a queue that fails to arrive
+      // would strand the handover: try a few times before giving up.
+      QueueResult? queue;
+      for (var attempt = 0;
+          attempt < 3 && (queue == null || queue.songs.isEmpty);
+          attempt++) {
+        if (attempt > 0) {
+          await Future<void>.delayed(
+              attempt == 1 ? _loadRetryFirst : _loadRetrySecond);
+        }
+        queue = await api.fetchQueue();
+      }
+      if (queue == null || queue.songs.isEmpty) {
+        _showMessage("Couldn't load the queue from the other device");
+        return;
+      }
       final previous = state.remote;
       await _player.applyModes(
           repeat: previous?.repeat ?? LoopMode.off,
@@ -450,6 +566,9 @@ class ConnectNotifier extends StateNotifier<ConnectState>
         // (Re)connected: let the server know our queue again (it may have restarted).
         _forceQueue = true;
         if (_shouldReport()) _scheduleReport(Duration.zero);
+        if (s.activeDeviceId == null && _player.state.queue.isEmpty) {
+          _maybeResume();
+        }
       case 'devices':
         final m = Map<String, dynamic>.from(data! as Map);
         state = state.copyWith(
@@ -551,10 +670,10 @@ class ConnectNotifier extends StateNotifier<ConnectState>
     return _Outcome.ended;
   }
 
-  Future<void> _connectionLoop() async {
+  Future<void> _connectionLoop(int mine) async {
     var attempt = 0;
     var silentStreams = 0;
-    while (_running) {
+    while (_running && mine == _generation) {
       final cancel = CancelToken();
       _cancel = cancel;
       if (state.status != ConnectStatus.online) {
@@ -569,7 +688,9 @@ class ConnectNotifier extends StateNotifier<ConnectState>
       } catch (_) {
         outcome = _Outcome.ended;
       }
-      if (!_running) return;
+      if (!_running || mine != _generation) {
+        return; // stopped (and maybe restarted) while we were waiting
+      }
 
       if (outcome == _Outcome.unavailable) {
         // An older server without /connect: hide the feature and stop trying.
@@ -622,6 +743,8 @@ class ConnectNotifier extends StateNotifier<ConnectState>
     _client = _clientFactory(credentials);
     _forceQueue = true;
     _lastQueueKey = null;
+    _resumeTried = false;
+    _lastSave = null;
     _prevPlayer = _player.state;
     _lastLocalMs = _player.state.position.inMilliseconds;
     _lastLocalAt = _now();
@@ -636,12 +759,13 @@ class ConnectNotifier extends StateNotifier<ConnectState>
         _sendReport();
       }
     });
-    _connectionLoop();
+    _connectionLoop(++_generation);
   }
 
   /// Signed out (or the feature is unavailable): disconnect and forget everything.
   void stop() {
     _running = false;
+    _generation++;
     _suspended = false;
     _cancel?.cancel();
     _cancel = null;

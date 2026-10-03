@@ -5,6 +5,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart' show LoopMode;
 import 'package:mocktail/mocktail.dart';
+import 'package:riffplayer_mobile/api/subsonic.dart' show SavedPlayQueue;
 import 'package:riffplayer_mobile/api/types.dart';
 import 'package:riffplayer_mobile/connect/connect_api.dart';
 import 'package:riffplayer_mobile/connect/connect_models.dart';
@@ -96,6 +97,14 @@ class FakeConnectApi implements ConnectApi {
   TransferResult transferResult = TransferResult.ok;
   QueueResult? queue;
   Object? queueError;
+
+  /// Answers handed out one per call before falling back to [queue] (null = "could not be fetched").
+  final queueSequence = <QueueResult?>[];
+  int queueCalls = 0;
+
+  /// When true, openStream waits until a test completes the attempt by hand.
+  bool manualOpen = false;
+  final pendingOpens = <Completer<StreamOpen>>[];
   int openStatus = 200;
   Object? openError;
   bool hang = true;
@@ -107,6 +116,11 @@ class FakeConnectApi implements ConnectApi {
     openCalls++;
     identities.add(identity);
     if (openError != null) throw openError!;
+    if (manualOpen) {
+      final c = Completer<StreamOpen>();
+      pendingOpens.add(c);
+      return c.future;
+    }
     if (hang) return Completer<StreamOpen>().future;
     if (openStatus != 200) return StreamOpen(openStatus, null);
     final c = StreamController<String>();
@@ -157,7 +171,9 @@ class FakeConnectApi implements ConnectApi {
 
   @override
   Future<QueueResult?> fetchQueue() async {
+    queueCalls++;
     if (queueError != null) throw queueError!;
+    if (queueSequence.isNotEmpty) return queueSequence.removeAt(0);
     return queue;
   }
 }
@@ -200,6 +216,10 @@ class Harness {
     when(() => handler.playQueue(any(), any(),
         position: any(named: 'position'),
         autoplay: any(named: 'autoplay'))).thenAnswer((_) async {});
+    when(() => client.getPlayQueue()).thenAnswer((_) async => null);
+    when(() => client.savePlayQueue(any(),
+        current: any(named: 'current'),
+        positionMs: any(named: 'positionMs'))).thenAnswer((_) async {});
     when(() => downloads.localPath(any())).thenAnswer((_) async => null);
     when(() => client.streamUrl(any())).thenReturn('http://test/stream');
     when(() => client.scrobble(any(), submission: any(named: 'submission')))
@@ -1499,6 +1519,390 @@ void main() {
       h.tick();
 
       expect(h.api.openCalls, 1);
+    });
+  });
+
+  // ── Code review follow-up ──────────────────────────────────────────────────
+
+  group('review: restarting the connection', () {
+    fakeTest(
+        'stop() followed at once by start() leaves exactly one connection loop (the old one must not wake up and carry on)',
+        (h) {
+      h.prefs.id = me;
+      h.prefs.name = 'My PC';
+      h.api.manualOpen = true;
+
+      h.connect.start(creds);
+      h.tick();
+      h.connect.stop();
+      h.connect.start(creds);
+      h.tick();
+      expect(h.api.openCalls, 2);
+
+      // the first, abandoned attempt now gets an answer: a stream that ends straight away
+      final ended = StreamController<String>()..close();
+      h.api.pendingOpens[0].complete(StreamOpen(200, ended.stream));
+      h.tick(const Duration(seconds: 10));
+
+      expect(h.api.openCalls, 2);
+      // ...and it must not have meddled with the new session either (it would mark the connection offline)
+      expect(h.state.status, ConnectStatus.connecting);
+    });
+  });
+
+  group('review: a failed play/pause command', () {
+    fakeTest('puts the play/pause button back', (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.api.commandResult = CommandResult.targetChanged;
+
+      h.player.pause(); // optimistic
+      expect(h.player.state.playing, isFalse);
+      h.tick();
+
+      expect(h.player.state.playing, isTrue);
+      expect(h.state.remote?.playing, isTrue);
+    });
+
+    fakeTest(
+        'does not undo a newer state that arrived while the command was in flight',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.api.commandResult = CommandResult.error;
+
+      h.player.pause();
+      h.handle('state', h.remoteJson(playing: false, positionMs: 20000));
+      h.tick();
+
+      expect(h.state.remote?.positionMs,
+          20000); // the server's state, not the pre-click one
+    });
+  });
+
+  group('review: a handover whose queue is slow to arrive', () {
+    Map<String, dynamic> load() => {
+          'queueVersion': 2,
+          'index': 0,
+          'positionMs': 5000,
+          'play': true,
+          'counted': false
+        };
+
+    fakeTest('retries (the device is already the active one by then)', (h) {
+      h.startOnline();
+      h.api.queueSequence.addAll([
+        null,
+        QueueResult(queueVersion: 2, index: 0, songs: [song('a')])
+      ]);
+
+      h.handle('load', load());
+      h.tick();
+      verifyNever(() => h.handler.playQueue(any(), any(),
+          position: any(named: 'position'), autoplay: any(named: 'autoplay')));
+
+      h.tick(const Duration(milliseconds: 600));
+
+      verify(() => h.handler.playQueue(any(), 0,
+          position: const Duration(seconds: 5), autoplay: true)).called(1);
+      expect(h.messages, isEmpty);
+    });
+
+    fakeTest(
+        'tells the user when the queue cannot be fetched after several tries',
+        (h) {
+      h.startOnline();
+      h.api.queue = null;
+
+      h.handle('load', load());
+      h.tick(const Duration(seconds: 5));
+
+      expect(h.api.queueCalls, 3);
+      expect(h.messages, ["Couldn't load the queue from the other device"]);
+    });
+  });
+
+  // ── Resume where you left off ──────────────────────────────────────────────
+
+  group('resume where you left off', () {
+    SavedPlayQueue saved({String? current = 'b', DateTime? changed}) =>
+        SavedPlayQueue(
+          songs: [song('a'), song('b'), song('c')],
+          current: current,
+          positionMs: 83000,
+          changed: changed ?? DateTime(2026, 1, 1),
+        );
+
+    void noOneIsPlaying(Harness h) => h.handle('snapshot', {
+          'devices': [deviceJson(me)],
+          'activeDeviceId': null,
+          'state': null
+        });
+
+    group('loading', () {
+      fakeTest(
+          'puts the saved queue back, paused, at the saved song and position — when nothing is playing anywhere',
+          (h) {
+        h.startOnline();
+        when(() => h.client.getPlayQueue()).thenAnswer((_) async => saved());
+
+        noOneIsPlaying(h);
+        h.tick();
+
+        verify(() => h.handler.playQueue(any(), 1,
+            position: const Duration(seconds: 83), autoplay: false)).called(1);
+        expect(h.player.state.queue.map((s) => s.id), ['a', 'b', 'c']);
+        expect(h.player.state.currentIndex, 1);
+        expect(h.player.state.playing, isFalse);
+      });
+
+      fakeTest(
+          'starts at the first song when the saved current song is no longer in the queue',
+          (h) {
+        h.startOnline();
+        when(() => h.client.getPlayQueue())
+            .thenAnswer((_) async => saved(current: 'gone'));
+        noOneIsPlaying(h);
+        h.tick();
+        verify(() => h.handler.playQueue(any(), 0,
+            position: any(named: 'position'), autoplay: false)).called(1);
+      });
+
+      fakeTest('does nothing when another device is already playing', (h) {
+        h.startOnline();
+        when(() => h.client.getPlayQueue()).thenAnswer((_) async => saved());
+        h.otherIsPlaying();
+        h.tick();
+
+        verifyNever(() => h.client.getPlayQueue());
+      });
+
+      fakeTest('does nothing when this device already has a queue', (h) {
+        h.startOnline();
+        when(() => h.client.getPlayQueue()).thenAnswer((_) async => saved());
+        h.playLocally();
+
+        noOneIsPlaying(h);
+        h.tick();
+
+        verifyNever(() => h.client.getPlayQueue());
+      });
+
+      fakeTest('only tries once per connection session', (h) {
+        h.startOnline();
+        noOneIsPlaying(h);
+        h.tick();
+        noOneIsPlaying(h);
+        h.tick();
+
+        verify(() => h.client.getPlayQueue()).called(1);
+      });
+
+      fakeTest('does nothing when no queue was saved', (h) {
+        h.startOnline();
+        noOneIsPlaying(h);
+        h.tick();
+        expect(h.player.state.queue, isEmpty);
+      });
+
+      fakeTest('ignores a queue saved more than 30 days ago', (h) {
+        h.startOnline();
+        final old =
+            h.base.add(h.async.elapsed).subtract(const Duration(days: 31));
+        when(() => h.client.getPlayQueue())
+            .thenAnswer((_) async => saved(changed: old));
+        noOneIsPlaying(h);
+        h.tick();
+        expect(h.player.state.queue, isEmpty);
+      });
+
+      fakeTest(
+          'does not overwrite something the user started while the saved queue was being fetched',
+          (h) {
+        h.startOnline();
+        final answer = Completer<SavedPlayQueue?>();
+        when(() => h.client.getPlayQueue()).thenAnswer((_) => answer.future);
+
+        noOneIsPlaying(h);
+        h.playLocally(queue: [song('local')]);
+        answer.complete(saved(changed: h.base));
+        h.tick();
+
+        verifyNever(() => h.handler.playQueue(any(), any(),
+            position: any(named: 'position'),
+            autoplay: any(named: 'autoplay')));
+        expect(h.player.state.queue.single.id, 'local');
+      });
+
+      fakeTest('survives a failing request', (h) {
+        h.startOnline();
+        when(() => h.client.getPlayQueue())
+            .thenAnswer((_) async => throw StateError('offline'));
+        noOneIsPlaying(h);
+        h.tick();
+        expect(h.player.state.queue, isEmpty);
+      });
+
+      fakeTest('is tried again after the connection is stopped and started',
+          (h) {
+        h.startOnline();
+        noOneIsPlaying(h);
+        h.tick();
+        h.connect.stop();
+        h.startOnline();
+        noOneIsPlaying(h);
+        h.tick();
+
+        verify(() => h.client.getPlayQueue()).called(2);
+      });
+    });
+
+    group('saving', () {
+      void play(Harness h,
+              {int index = 1,
+              bool playing = true,
+              double seconds = 12.3,
+              List<Song>? queue}) =>
+          h.playLocally(
+            index: index,
+            playing: playing,
+            position: Duration(milliseconds: (seconds * 1000).round()),
+            queue: queue ?? [song('a'), song('b'), song('c')],
+          );
+
+      fakeTest(
+          'saves the queue, the current song and the position once this device plays',
+          (h) {
+        h.startOnline();
+        h.meIsActive();
+        play(h);
+        h.tick(const Duration(milliseconds: 250));
+
+        verify(() => h.client.savePlayQueue(['a', 'b', 'c'],
+            current: 'b', positionMs: 12300)).called(1);
+      });
+
+      fakeTest(
+          'saves at once when playback is paused or the track changes, even right after a save',
+          (h) {
+        h.startOnline();
+        h.meIsActive();
+        final queue = [song('a'), song('b'), song('c')];
+        play(h, queue: queue);
+        h.tick(const Duration(milliseconds: 250));
+
+        play(h, queue: queue, playing: false);
+        h.tick(const Duration(milliseconds: 250));
+        play(h, queue: queue, index: 2);
+        h.tick(const Duration(milliseconds: 250));
+
+        // playing, paused (same song), then the next song: three saves, none held back by the throttle
+        verify(() => h.client.savePlayQueue(any(),
+            current: 'b', positionMs: any(named: 'positionMs'))).called(2);
+        verify(() => h.client.savePlayQueue(any(),
+            current: 'c', positionMs: any(named: 'positionMs'))).called(1);
+      });
+
+      fakeTest(
+          'does not save again for mere playback progress until ten seconds have passed',
+          (h) {
+        h.startOnline();
+        h.meIsActive();
+        final queue = [song('a'), song('b'), song('c')];
+        play(h, queue: queue);
+        h.tick(const Duration(milliseconds: 250));
+        h.tick(const Duration(seconds: 9));
+
+        play(h, queue: queue, seconds: 22);
+        h.tick(const Duration(seconds: 2)); // the 10 s drift report
+
+        verify(() => h.client.savePlayQueue(['a', 'b', 'c'],
+            current: 'b', positionMs: 22000)).called(1);
+        verify(() => h.client.savePlayQueue(['a', 'b', 'c'],
+            current: 'b', positionMs: 12300)).called(1);
+      });
+
+      fakeTest(
+          'saves nothing while another device is the one playing, or without a queue, or while offline',
+          (h) {
+        h.startOnline();
+        h.otherIsPlaying();
+        h.tick(const Duration(seconds: 11));
+        h.meIsActive();
+        h.player.setPlayerState(const PlayerState(playing: true));
+        h.tick(const Duration(seconds: 11));
+
+        h.handle('error', {'error': 'x'});
+        play(h);
+        h.tick(const Duration(seconds: 11));
+
+        verifyNever(() => h.client.savePlayQueue(any(),
+            current: any(named: 'current'),
+            positionMs: any(named: 'positionMs')));
+      });
+
+      fakeTest('keeps the saved queue to a window around the current song',
+          (h) {
+        h.startOnline();
+        h.meIsActive();
+        final queue = List.generate(800, (i) => song('s$i'));
+
+        play(h, queue: queue, index: 700);
+        h.tick(const Duration(milliseconds: 250));
+        final first = verify(() => h.client.savePlayQueue(captureAny(),
+                current: any(named: 'current'),
+                positionMs: any(named: 'positionMs'))).captured.single
+            as List<String>;
+        expect(first.length, 150); // 650 .. 799
+        expect([first.first, first.last], ['s650', 's799']);
+        expect(first, contains('s700'));
+
+        play(h, queue: queue, index: 10);
+        h.tick(const Duration(milliseconds: 250));
+        final second = verify(() => h.client.savePlayQueue(captureAny(),
+                current: any(named: 'current'),
+                positionMs: any(named: 'positionMs'))).captured.single
+            as List<String>;
+        expect(second.length, 500);
+        expect(second.first, 's0');
+        expect(second, contains('s10'));
+      });
+
+      fakeTest('survives a failing save', (h) {
+        h.startOnline();
+        h.meIsActive();
+        when(() => h.client.savePlayQueue(any(),
+                current: any(named: 'current'),
+                positionMs: any(named: 'positionMs')))
+            .thenAnswer((_) async => throw StateError('offline'));
+
+        play(h);
+        h.tick(const Duration(milliseconds: 250));
+
+        expect(h.state.status, ConnectStatus.online);
+      });
+
+      fakeTest('does not immediately write back the queue it just restored',
+          (h) {
+        h.startOnline();
+        when(() => h.client.getPlayQueue()).thenAnswer((_) async =>
+            SavedPlayQueue(
+                songs: [song('a'), song('b'), song('c')],
+                current: 'b',
+                positionMs: 83000,
+                changed: h.base));
+
+        h.handle('snapshot', {
+          'devices': [deviceJson(me)],
+          'activeDeviceId': null,
+          'state': null
+        });
+        h.tick(const Duration(seconds: 1));
+
+        verifyNever(() => h.client.savePlayQueue(any(),
+            current: any(named: 'current'),
+            positionMs: any(named: 'positionMs')));
+      });
     });
   });
 }

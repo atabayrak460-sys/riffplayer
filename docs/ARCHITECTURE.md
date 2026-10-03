@@ -33,6 +33,9 @@ Two namespaces sharing one database, one auth source, one set of files:
 
 Rule: a feature missing from Subsonic goes on `/api/v1`. Never fork/break Subsonic semantics.
 
+### RiffPlayer Connect (`/api/v1/connect/*`)
+Multi-device control lives entirely on the custom API, with **no schema change**: `server/src/connect/hub.ts` is an in-memory registry + relay (clock-injectable, no timers of its own), `server/src/connect/sse.ts` the safe writing side of a stream, `server/src/routes/api/connect.ts` the HTTP surface (`GET /stream` server-sent events over a Bearer-authenticated `fetch`, `GET /poll` long-poll fallback, `GET /state`, `GET /queue`, `POST /state`, `POST /command`, `POST /transfer`, `PATCH /device`). One process holds the hub (as deployed today); after a restart clients reconnect and the active device re-reports its state. See [`CONNECT-DESIGN.md`](CONNECT-DESIGN.md).
+
 ### Minimum Subsonic endpoints for Phase 1
 `ping`, `getLicense`, `getMusicFolders`, `getIndexes`, `getMusicDirectory`, `getAlbumList2`, `getAlbum`, `getArtist`, `getArtists`, `getSong`, `search3`, `stream`, `download`, `getCoverArt`, `scrobble`, `star`/`unstar`, `getStarred2`, `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`.
 

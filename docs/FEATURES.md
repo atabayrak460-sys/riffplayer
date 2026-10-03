@@ -24,7 +24,7 @@ Priority tiers. "Phase" maps to `ROADMAP.md`. Build MVP (Phases 0–3) first; ti
 | Last.fm / ListenBrainz scrobbling | 4 | Opt-in; self-hosting crowd loves it. |
 
 ## Tier 2 — nice, later
-Smart playlists (rule-based, auto-updating) · gapless playback + crossfade · equalizer · sleep timer · dynamic theming from album art · radio mode (station from a song/artist) · cross-device "resume where you left off" · Chromecast / AirPlay.
+Smart playlists (rule-based, auto-updating) · gapless playback + crossfade · equalizer · sleep timer · dynamic theming from album art · radio mode (station from a song/artist) · cross-device "resume where you left off" _(done as part of Connect — see below)_ · Chromecast / AirPlay.
 
 ## Tier 3 — out of scope for now (scope traps)
 Podcasts / audiobooks (separate domain) · real-time collaborative playlists · social / friend activity (needs central server; breaks self-hosting) · anything sourcing external audio.
@@ -47,3 +47,8 @@ Podcasts / audiobooks (separate domain) · real-time collaborative playlists · 
 - Always-available, quiet "Support" link in the UI (never blocks playback).
 - At most an occasional gentle banner (e.g. once after ~30 days of use, or alongside Wrapped) with a permanent **"Don't show again."**
 - **Admin can disable the prompt server-wide** (for family servers where end users aren't the donor).
+
+---
+
+## RiffPlayer Connect (multi-device control) — implemented
+A user's devices register with the server, see each other, mirror what is playing and control it; only one device plays at a time (Spotify-Connect semantics). Web and Android; third-party Subsonic clients can't take part. Phase 1 scope: device list, transfer playback, remote play/pause/next/previous/seek, live "now playing" mirror, "Continue here" when the playing device disappears, resume of the last session. Later: remote volume, remote queue view/edit; never: shared sessions between users, smart-speaker protocols, push wake-up of a closed app (needs a third-party push service). Full design, decisions and the security review: [`CONNECT-DESIGN.md`](CONNECT-DESIGN.md).

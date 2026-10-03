@@ -96,3 +96,21 @@ Build **phase by phase**. Do not start a phase until the previous phase's *Done 
 - [x] Year-end "Wrapped": stats from `play_history` (top songs/artists, minutes, genres); AI optionally writes the personalized summary text. _Requires a year of logged data — already collected since Phase 1._
 
 **Done when:** a user can opt into recommendations and a yearly recap, with no data leaving their server.
+
+---
+
+## Phase 7 — RiffPlayer Connect (multi-device control)
+**Goal:** a user's devices see each other and hand playback over / remote-control it (design: [`CONNECT-DESIGN.md`](CONNECT-DESIGN.md)).
+
+- [x] P1a Server: `ConnectHub`, `/api/v1/connect/*` (SSE + long-poll fallback), tests.
+- [x] P1b Web: connection store, mirror mode, remote transport, device picker.
+- [x] P1c Android: connection notifier, mirror mode, remote transport, device picker.
+- [x] Security review of server, web and Android (revocation, isolation, DoS limits, races, wrong-device commands).
+- [x] P1d Resume where you left off (via the existing `savePlayQueue`/`getPlayQueue`).
+- [x] P1e Docs, reverse-proxy notes, release.
+- [ ] Phase 2: remote volume, remote queue view/edit.
+- [ ] Desktop app (Windows/macOS/Linux) as an always-available player device.
+- [ ] Verify long-lived streams through the real Cloudflare-proxied domain.
+
+**Done when:** you can start music on one device and control or take it over from another, on a stock server behind a typical reverse proxy.
+
