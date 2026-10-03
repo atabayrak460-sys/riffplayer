@@ -231,15 +231,18 @@ class ConnectNotifier extends StateNotifier<ConnectState>
   Future<void> _sendRemoteCommand(CommandType type, int? positionMs) async {
     final api = _api;
     if (api == null) return;
-    final result =
-        await api.sendCommand(state.deviceId, type, positionMs: positionMs);
+    // Aimed at the device we believe is playing; the server refuses it if another one has taken over.
+    final result = await api.sendCommand(state.deviceId, type,
+        positionMs: positionMs, targetDeviceId: state.activeDeviceId);
     if (result == CommandResult.sent) return;
     final active = state.activeDevice;
     _showMessage(
-      result == CommandResult.noActiveDevice ||
-              result == CommandResult.unknownDevice
-          ? "${active?.name ?? 'That device'} isn't reachable right now"
-          : "Couldn't reach the server",
+      result == CommandResult.targetChanged
+          ? 'Another device just took over — try again'
+          : result == CommandResult.noActiveDevice ||
+                  result == CommandResult.unknownDevice
+              ? "${active?.name ?? 'That device'} isn't reachable right now"
+              : "Couldn't reach the server",
     );
   }
 
@@ -407,23 +410,27 @@ class ConnectNotifier extends StateNotifier<ConnectState>
     final api = _api;
     final client = _client;
     if (api == null || client == null) return;
-    final queue = await api.fetchQueue();
-    if (queue == null || queue.songs.isEmpty) return;
-    final previous = state.remote;
-    await _player.applyModes(
-        repeat: previous?.repeat ?? LoopMode.off,
-        shuffle: previous?.shuffle ?? false);
-    // We are the player now: the next local state report carries the whole queue again.
-    _forceQueue = true;
-    await _player.restoreQueue(
-      queue.songs,
-      queue.index,
-      Duration(milliseconds: load.positionMs),
-      play: load.play,
-      counted: load.counted,
-      client: client,
-      downloads: _downloads,
-    );
+    try {
+      final queue = await api.fetchQueue();
+      if (queue == null || queue.songs.isEmpty) return;
+      final previous = state.remote;
+      await _player.applyModes(
+          repeat: previous?.repeat ?? LoopMode.off,
+          shuffle: previous?.shuffle ?? false);
+      // We are the player now: the next local state report carries the whole queue again.
+      _forceQueue = true;
+      await _player.restoreQueue(
+        queue.songs,
+        queue.index,
+        Duration(milliseconds: load.positionMs),
+        play: load.play,
+        counted: load.counted,
+        client: client,
+        downloads: _downloads,
+      );
+    } catch (_) {
+      // A handover that cannot be loaded (network, malformed queue) leaves things as they were.
+    }
   }
 
   /// Entry point for server events — public so tests can drive the notifier without a network.

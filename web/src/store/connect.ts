@@ -256,13 +256,17 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
   }
 
   async function handleLoad(load: LoadInstruction): Promise<void> {
-    const queue = await api.fetchQueue();
-    if (!queue || queue.songs.length === 0) return;
-    const previous = get().remote;
-    usePlayerStore.setState({ repeatMode: previous?.repeat ?? 'off', shuffle: previous?.shuffle ?? false });
-    // We are the player now: the next local state report carries the whole queue again.
-    forceQueue = true;
-    usePlayerStore.getState().restoreQueue(queue.songs, queue.index, load.positionMs, load.play, load.counted);
+    try {
+      const queue = await api.fetchQueue();
+      if (!queue || queue.songs.length === 0) return;
+      const previous = get().remote;
+      usePlayerStore.setState({ repeatMode: previous?.repeat ?? 'off', shuffle: previous?.shuffle ?? false });
+      // We are the player now: the next local state report carries the whole queue again.
+      forceQueue = true;
+      usePlayerStore.getState().restoreQueue(queue.songs, queue.index, load.positionMs, load.play, load.counted);
+    } catch {
+      // A handover that cannot be loaded (network, malformed queue) leaves things as they were.
+    }
   }
 
   function handle(name: string, data: unknown): void {
@@ -312,13 +316,16 @@ export const useConnectStore = create<ConnectState>()((set, get) => {
   // ── Commands this device sends while it is only a remote ─────────────────────
 
   async function sendRemoteCommand(type: Parameters<RemoteController['command']>[0], positionMs?: number): Promise<void> {
-    const result = await api.sendCommand(get().deviceId, type, positionMs);
+    // Aimed at the device we believe is playing; the server refuses it if another one has taken over.
+    const result = await api.sendCommand(get().deviceId, type, positionMs, get().activeDeviceId ?? undefined);
     if (result === 'sent') return;
     const active = get().devices.find((d) => d.id === get().activeDeviceId);
     useToastStore.getState().show(
-      result === 'no_active_device' || result === 'unknown_device'
-        ? `${active?.name ?? 'That device'} isn't reachable right now`
-        : 'Couldn\'t reach the server',
+      result === 'target_changed'
+        ? 'Another device just took over — try again'
+        : result === 'no_active_device' || result === 'unknown_device'
+          ? `${active?.name ?? 'That device'} isn't reachable right now`
+          : 'Couldn\'t reach the server',
     );
   }
 

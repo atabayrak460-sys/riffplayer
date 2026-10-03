@@ -140,21 +140,32 @@ export async function reportState(report: StateReport): Promise<ReportResult> {
   return body.accepted ? { kind: 'ok', takeover: body.takeover === true } : { kind: 'not_active' };
 }
 
-export type CommandResult = 'sent' | 'no_active_device' | 'self' | 'unknown_device' | 'rate_limited' | 'unavailable' | 'error';
+export type CommandResult =
+  | 'sent' | 'no_active_device' | 'self' | 'target_changed' | 'unknown_device' | 'rate_limited' | 'unavailable' | 'error';
 
-export async function sendCommand(deviceId: string, type: CommandType, positionMs?: number): Promise<CommandResult> {
+/**
+ * `targetDeviceId` is the device the sender saw playing; the server refuses the command ("target_changed")
+ * if another device has taken over since, rather than letting it land on the wrong one.
+ */
+export async function sendCommand(
+  deviceId: string,
+  type: CommandType,
+  positionMs?: number,
+  targetDeviceId?: string,
+): Promise<CommandResult> {
   const res = await post('command', {
     deviceId,
     commandId: newId(),
     type,
     ...(positionMs !== undefined ? { positionMs: Math.round(positionMs) } : {}),
+    ...(targetDeviceId !== undefined ? { targetDeviceId } : {}),
   });
   if (!res) return 'error';
   if (res.status === 404) return 'unavailable';
   if (res.status === 429) return 'rate_limited';
   if (res.status === 409) {
     const code = await errorCode(res);
-    return code === 'no_active_device' || code === 'self' ? code : 'unknown_device';
+    return code === 'no_active_device' || code === 'self' || code === 'target_changed' ? code : 'unknown_device';
   }
   return res.ok ? 'sent' : 'error';
 }

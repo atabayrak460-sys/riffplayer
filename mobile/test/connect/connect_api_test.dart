@@ -133,7 +133,26 @@ void main() {
       expect(first['commandId'], isNot(second['commandId']));
     });
 
+    test(
+        'names the device it saw playing, so the server can refuse the command if another one took over',
+        () async {
+      adapter.responder = (_) => json(202, {'delivered': true});
+
+      await api.sendCommand('dev-12345678', CommandType.next,
+          targetDeviceId: 'playing-dev-01');
+      expect((adapter.last.data as Map)['targetDeviceId'], 'playing-dev-01');
+
+      await api.sendCommand('dev-12345678', CommandType.seek,
+          positionMs: 5000, targetDeviceId: 'playing-dev-01');
+      expect((adapter.last.data as Map)['positionMs'], 5000);
+      expect((adapter.last.data as Map)['targetDeviceId'], 'playing-dev-01');
+
+      await api.sendCommand('dev-12345678', CommandType.next);
+      expect((adapter.last.data as Map).containsKey('targetDeviceId'), isFalse);
+    });
+
     final cases = <(int, Object, CommandResult)>[
+      (409, {'error': 'target_changed'}, CommandResult.targetChanged),
       (409, {'error': 'no_active_device'}, CommandResult.noActiveDevice),
       (409, {'error': 'self'}, CommandResult.self),
       (409, {'error': 'unknown_device'}, CommandResult.unknownDevice),

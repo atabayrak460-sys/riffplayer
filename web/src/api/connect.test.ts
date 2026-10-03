@@ -68,7 +68,21 @@ describe('sendCommand', () => {
     expect(first.commandId).not.toBe(second.commandId);
   });
 
+  it('names the device it saw playing, so the server can refuse the command if another one took over', async () => {
+    vi.mocked(fetch).mockResolvedValue(json(202, { delivered: true }));
+
+    await sendCommand('dev-12345678', 'next', undefined, 'playing-dev-01');
+    expect(lastCall().body.targetDeviceId).toBe('playing-dev-01');
+
+    await sendCommand('dev-12345678', 'seek', 5000, 'playing-dev-01');
+    expect(lastCall().body).toMatchObject({ type: 'seek', positionMs: 5000, targetDeviceId: 'playing-dev-01' });
+
+    await sendCommand('dev-12345678', 'next');
+    expect('targetDeviceId' in lastCall().body).toBe(false);
+  });
+
   it.each([
+    [409, { error: 'target_changed' }, 'target_changed'],
     [409, { error: 'no_active_device' }, 'no_active_device'],
     [409, { error: 'self' }, 'self'],
     [409, { error: 'unknown_device' }, 'unknown_device'],

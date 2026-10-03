@@ -67,10 +67,11 @@ enum CommandResult {
   sent,
   noActiveDevice,
   self,
+  targetChanged,
   unknownDevice,
   rateLimited,
   unavailable,
-  error
+  error,
 }
 
 enum TransferResult {
@@ -112,8 +113,11 @@ abstract class ConnectApi {
   Future<PollResult> pollOnce(
       DeviceIdentity identity, int? since, CancelToken cancel);
   Future<ReportResult> reportState(StateReport report);
+
+  /// [targetDeviceId] is the device the sender saw playing; the server refuses the command
+  /// ([CommandResult.targetChanged]) if another device has taken over since.
   Future<CommandResult> sendCommand(String deviceId, CommandType type,
-      {int? positionMs});
+      {int? positionMs, String? targetDeviceId});
   Future<TransferResult> transfer(String deviceId, String toDeviceId,
       {bool play = true});
   Future<bool> renameDevice(String deviceId, String name);
@@ -227,12 +231,13 @@ class HttpConnectApi implements ConnectApi {
 
   @override
   Future<CommandResult> sendCommand(String deviceId, CommandType type,
-      {int? positionMs}) async {
+      {int? positionMs, String? targetDeviceId}) async {
     final res = await _send('POST', 'command', {
       'deviceId': deviceId,
       'commandId': newDeviceId(),
       'type': type.name,
       if (positionMs != null) 'positionMs': positionMs,
+      if (targetDeviceId != null) 'targetDeviceId': targetDeviceId,
     });
     if (res == null) return CommandResult.error;
     switch (res.statusCode) {
@@ -244,6 +249,7 @@ class HttpConnectApi implements ConnectApi {
         return switch (_errorCode(res)) {
           'no_active_device' => CommandResult.noActiveDevice,
           'self' => CommandResult.self,
+          'target_changed' => CommandResult.targetChanged,
           _ => CommandResult.unknownDevice,
         };
     }

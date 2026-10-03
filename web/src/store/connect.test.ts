@@ -237,13 +237,13 @@ describe('controlling the other device', () => {
     usePlayerStore.getState().togglePlay();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'pause', undefined);
+    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'pause', undefined, OTHER);
     expect(usePlayerStore.getState().playing).toBe(false);
     expect(connectState().remote?.playing).toBe(false);
 
     usePlayerStore.getState().togglePlay();
     await vi.advanceTimersByTimeAsync(0);
-    expect(api.sendCommand).toHaveBeenLastCalledWith(ME, 'play', undefined);
+    expect(api.sendCommand).toHaveBeenLastCalledWith(ME, 'play', undefined, OTHER);
     expect(usePlayerStore.getState().playing).toBe(true);
   });
 
@@ -260,8 +260,8 @@ describe('controlling the other device', () => {
     usePlayerStore.getState().prev();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'next', undefined);
-    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'previous', undefined);
+    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'next', undefined, OTHER);
+    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'previous', undefined, OTHER);
   });
 
   it('a slider drag sends only the position where it comes to rest', async () => {
@@ -276,7 +276,28 @@ describe('controlling the other device', () => {
     await vi.advanceTimersByTimeAsync(150);
 
     expect(api.sendCommand).toHaveBeenCalledTimes(1);
-    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'seek', 90_000);
+    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'seek', 90_000, OTHER);
+  });
+
+  it('names the device it believes is playing in every command', async () => {
+    usePlayerStore.getState().next();
+    usePlayerStore.getState().togglePlay();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'next', undefined, OTHER);
+    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'pause', undefined, OTHER);
+
+    usePlayerStore.getState().seek(30);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(api.sendCommand).toHaveBeenCalledWith(ME, 'seek', 30_000, OTHER);
+  });
+
+  it('when another device has taken over since, says so instead of acting on the new one', async () => {
+    vi.mocked(api.sendCommand).mockResolvedValue('target_changed');
+    usePlayerStore.getState().next();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(useToastStore.getState().message).toBe('Another device just took over — try again');
   });
 
   it('says so when the other device cannot be reached', async () => {
@@ -397,6 +418,17 @@ describe('load (handover to this device)', () => {
     expect(restoreQueue.mock.calls[0][0].map((s: Song) => s.id)).toEqual(['a', 'b', 'c']);
     expect(usePlayerStore.getState().repeatMode).toBe('all');
     expect(usePlayerStore.getState().shuffle).toBe(true);
+  });
+
+  it('survives a handover whose queue cannot be loaded', async () => {
+    const restoreQueue = vi.fn();
+    usePlayerStore.setState({ restoreQueue });
+    vi.mocked(api.fetchQueue).mockRejectedValue(new TypeError('Failed to fetch'));
+
+    expect(() => handle('load', load)).not.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(restoreQueue).not.toHaveBeenCalled();
   });
 
   it('does nothing when the server has no queue to give', async () => {

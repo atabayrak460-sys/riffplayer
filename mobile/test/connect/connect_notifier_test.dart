@@ -83,7 +83,7 @@ class FakePrefs implements ConnectPrefs {
 
 class FakeConnectApi implements ConnectApi {
   final reports = <StateReport>[];
-  final commands = <(CommandType, int?)>[];
+  final commands = <(CommandType, int?, String?)>[];
   final transfers = <(String, String)>[];
   final renames = <(String, String)>[];
   final identities = <DeviceIdentity>[];
@@ -95,6 +95,7 @@ class FakeConnectApi implements ConnectApi {
   CommandResult commandResult = CommandResult.sent;
   TransferResult transferResult = TransferResult.ok;
   QueueResult? queue;
+  Object? queueError;
   int openStatus = 200;
   Object? openError;
   bool hang = true;
@@ -136,8 +137,8 @@ class FakeConnectApi implements ConnectApi {
 
   @override
   Future<CommandResult> sendCommand(String deviceId, CommandType type,
-      {int? positionMs}) async {
-    commands.add((type, positionMs));
+      {int? positionMs, String? targetDeviceId}) async {
+    commands.add((type, positionMs, targetDeviceId));
     return commandResult;
   }
 
@@ -155,7 +156,10 @@ class FakeConnectApi implements ConnectApi {
   }
 
   @override
-  Future<QueueResult?> fetchQueue() async => queue;
+  Future<QueueResult?> fetchQueue() async {
+    if (queueError != null) throw queueError!;
+    return queue;
+  }
 }
 
 /// A real [PlayerNotifier] whose state tests can set directly, as if the audio player had changed it.
@@ -588,8 +592,34 @@ void main() {
 
       h.tick(const Duration(milliseconds: 150));
 
-      expect(h.api.commands, [(CommandType.seek, 90000)]);
+      expect(h.api.commands, [(CommandType.seek, 90000, other)]);
       verifyNever(() => h.handler.seek(any()));
+    });
+
+    fakeTest('names the device it believes is playing in every command', (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+
+      h.player.next();
+      h.player.pause();
+      h.tick();
+      h.player.seek(const Duration(seconds: 30));
+      h.tick(const Duration(milliseconds: 200));
+
+      expect(h.api.commands.map((c) => c.$3), [other, other, other]);
+    });
+
+    fakeTest(
+        'when another device has taken over since, says so instead of acting on the new one',
+        (h) {
+      h.startOnline();
+      h.otherIsPlaying();
+      h.api.commandResult = CommandResult.targetChanged;
+
+      h.player.next();
+      h.tick();
+
+      expect(h.messages.last, 'Another device just took over — try again');
     });
 
     fakeTest(
@@ -761,6 +791,17 @@ void main() {
       verify(() => h.handler.playQueue(any(), 0,
           position: const Duration(seconds: 83), autoplay: false)).called(1);
       verifyNever(() => h.client.scrobble(any(), submission: false));
+    });
+
+    fakeTest('survives a handover whose queue cannot be loaded', (h) {
+      h.startOnline();
+      h.api.queueError = StateError('boom');
+
+      h.handle('load', load());
+      h.tick();
+
+      verifyNever(() => h.handler.playQueue(any(), any(),
+          position: any(named: 'position'), autoplay: any(named: 'autoplay')));
     });
 
     fakeTest('does nothing when the server has no queue to give', (h) {
